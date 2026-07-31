@@ -114,7 +114,7 @@ class _FeiniuHomeScreenState extends ConsumerState<FeiniuHomeScreen> {
       body: RefreshIndicator(
         onRefresh: _load,
         child: _libraries.isEmpty
-            ? const ListView(
+            ? ListView(
                 physics: AlwaysScrollableScrollPhysics(),
                 children: [
                   SizedBox(height: 260),
@@ -262,7 +262,7 @@ class _FeiniuLibraryScreenState extends State<FeiniuLibraryScreen> {
               : RefreshIndicator(
                   onRefresh: _load,
                   child: _items.isEmpty
-                      ? const ListView(
+                      ? ListView(
                           physics: AlwaysScrollableScrollPhysics(),
                           children: [
                             SizedBox(height: 240),
