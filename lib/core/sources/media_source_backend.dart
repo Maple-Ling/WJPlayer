@@ -67,6 +67,13 @@ class ResolvedPlay {
   final String? userAgentOverride;
   final List<SourceSubtitle> subtitles;
 
+  /// 来源后端附带的播放上下文（如飞牛 play/info 的媒体 GUID），仅供来源自身
+  /// 做进度回传等协议操作；通用播放器不解释字段。
+  final Map<String, dynamic> sourceMetadata;
+
+  /// 来源服务端给出的续播点。显式指定的播放器起点仍应优先于此值。
+  final Duration? resumePosition;
+
   /// 该文件可选的全部清晰度档（转码源才有；非转码源为空）。
   final List<PlayQuality> qualities;
 
@@ -79,6 +86,8 @@ class ResolvedPlay {
     this.httpHeaders = const {},
     this.userAgentOverride,
     this.subtitles = const [],
+    this.sourceMetadata = const {},
+    this.resumePosition,
     this.qualities = const [],
     this.selectedQualityId,
   });

@@ -9,6 +9,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   double? _sliderDragValue;
   Timer? _longPressTimer;
   Timer? _sleepTimer;
+  Timer? _sourceProgressTimer;
+  Map<String, dynamic>? _sourcePlayMetadata;
+  bool _sourceProgressWriteInFlight = false;
+  int _lastSourceProgressSecond = -1;
+  bool _sourceCompletionReported = false;
   double? _initialVideoAspectRatio;
   // 当前 Anime4K 超分档位（off/modeA/…/modeAC），供顶栏面板高亮选中项。
   String _anime4kMode = 'off';
@@ -575,10 +580,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         ref.read(sourceSelectedQualityProvider.notifier).state =
             play.selectedQualityId;
       }
+      _sourcePlayMetadata = play.sourceMetadata.isEmpty
+          ? null
+          : Map<String, dynamic>.from(play.sourceMetadata);
+      final effectiveStart = startPosition ?? play.resumePosition;
       await _playerService.initialize(
         videoUrl: play.url,
         itemId: sp.syntheticItemId,
-        startPosition: startPosition,
+        startPosition: effectiveStart,
         coreType: cfg.coreType,
         hardwareDecoding: cfg.hardwareDecoding,
         useLibass: cfg.useLibass,
@@ -596,6 +605,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         streamUrlTtl: const Duration(minutes: 3),
       );
       await _playerService.play();
+      _startSourceProgressReporting(sp);
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
       SystemChrome.setPreferredOrientations([
         DeviceOrientation.landscapeLeft,
@@ -619,6 +629,49 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             kind: AppToastKind.error, position: AppToastPosition.topCenter);
         Navigator.of(context).maybePop();
       }
+    }
+  }
+
+  void _startSourceProgressReporting(SourcePlayback sp) {
+    _sourceProgressTimer?.cancel();
+    _lastSourceProgressSecond = -1;
+    _sourceCompletionReported = false;
+    if (sp.server.sourceKind != SourceKind.feiniu ||
+        _sourcePlayMetadata == null) {
+      return;
+    }
+    _sourceProgressTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      unawaited(_reportSourceProgress(sp));
+    });
+  }
+
+  Future<void> _reportSourceProgress(SourcePlayback sp,
+      {bool force = false}) async {
+    if (sp.server.sourceKind != SourceKind.feiniu ||
+        _sourcePlayMetadata == null ||
+        _sourceProgressWriteInFlight) {
+      return;
+    }
+    final position = _playerService.position;
+    final duration = _playerService.duration;
+    if (duration <= Duration.zero) return;
+    final second = position.inSeconds;
+    if (!force && second == _lastSourceProgressSecond) return;
+
+    _sourceProgressWriteInFlight = true;
+    try {
+      await FeiniuBackend().recordPlayback(
+        sp.server,
+        playMetadata: _sourcePlayMetadata!,
+        position: position,
+        duration: duration,
+      );
+      _lastSourceProgressSecond = second;
+    } catch (error, stackTrace) {
+      AppLogger().eWithStack(
+          'FeiniuProgress', '飞牛播放进度回传失败', error, stackTrace);
+    } finally {
+      _sourceProgressWriteInFlight = false;
     }
   }
 
@@ -1451,6 +1504,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     setState(() {});
     _checkSkipOpening();
     _introSkip.onPosition(_playerService.position);
+    final sp = widget.sourcePlay;
+    if (sp != null &&
+        _playerService.isCompleted &&
+        !_sourceCompletionReported) {
+      _sourceCompletionReported = true;
+      unawaited(_reportSourceProgress(sp, force: true));
+    }
   }
 
   /// 点按「跳过片头/片尾」：片尾且开启自动连播则切下一集，否则 seek 到段末。
@@ -1507,6 +1567,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
+      final sp = widget.sourcePlay;
+      if (sp != null) unawaited(_reportSourceProgress(sp, force: true));
       _playerService.pause();
     }
   }
@@ -1520,6 +1582,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     if (_activeState == this) _activeState = null;
     _activePlayerService = null;
     _playerService.removeListener(_onPlayerUpdate);
+    _sourceProgressTimer?.cancel();
+    final sp = widget.sourcePlay;
+    if (sp != null) unawaited(_reportSourceProgress(sp, force: true));
     unawaited(PrefetchProxy.instance.stop());
     _playerService.dispose();
     _longPressTimer?.cancel();

@@ -391,7 +391,8 @@ class ExoPlayerAdapter implements PlayerAdapter {
         _callbacks?.onCompleted?.call();
         break;
       case 'error':
-        _errorMessage = event['value'] as String?;
+        _errorMessage = event['value']?.toString() ?? 'ExoPlayer 播放失败';
+        _logger.e('ExoPlayer', '播放错误: $_errorMessage');
         _callbacks?.onError?.call();
         break;
       case 'duration':

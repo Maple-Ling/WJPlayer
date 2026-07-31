@@ -104,8 +104,11 @@ class ExoPlayerPlugin(
                 val dolbyVisionFix = call.argument<Boolean>("dolbyVisionFix") ?: false
                 val preferredSubtitleLanguage = call.argument<String>("preferredSubtitleLanguage")
                 val enableAssSupport = call.argument<Boolean>("enableAssSupport") ?: false
-                // 统一 UA：部分 CDN 拒绝默认 UA 导致取流失败。
+                // 统一 UA + 逐流鉴权头：飞牛/OpenList/夸克等直链依赖
+                // Authorization、Cookie、Referer，必须传给 Media3 DataSource。
                 val userAgent = call.argument<String>("userAgent")
+                val httpHeaders = call.argument<Map<String, String>>("httpHeaders")
+                    ?: emptyMap()
                 createPlayer(
                     videoUrl,
                     startPositionMs,
@@ -113,6 +116,7 @@ class ExoPlayerPlugin(
                     preferredSubtitleLanguage,
                     enableAssSupport,
                     userAgent,
+                    httpHeaders,
                     result
                 )
             }
@@ -249,6 +253,7 @@ class ExoPlayerPlugin(
         preferredSubtitleLanguage: String?,
         enableAssSupport: Boolean,
         userAgent: String?,
+        httpHeaders: Map<String, String>,
         result: MethodChannel.Result
     ) {
         mainHandler.post {
@@ -281,17 +286,26 @@ class ExoPlayerPlugin(
                 val playerBuilder = ExoPlayer.Builder(context)
                     .setTrackSelector(trackSelector)
 
+                // 无论是否覆盖 UA 都显式使用 HTTP factory，确保逐流请求头不会丢失。
+                // setDefaultRequestProperties 会应用到初始请求、Range seek 与重定向后的请求。
+                val httpDataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
+                    .setAllowCrossProtocolRedirects(true)
                 if (!userAgent.isNullOrEmpty()) {
-                    val httpDataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
-                        .setUserAgent(userAgent)
-                        .setAllowCrossProtocolRedirects(true)
-                    val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(
-                        context, httpDataSourceFactory
-                    )
-                    playerBuilder.setMediaSourceFactory(
-                        androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory)
+                    httpDataSourceFactory.setUserAgent(userAgent)
+                }
+                if (httpHeaders.isNotEmpty()) {
+                    httpDataSourceFactory.setDefaultRequestProperties(httpHeaders)
+                    android.util.Log.i(
+                        "ExoPlayerPlugin",
+                        "Applied ${httpHeaders.size} HTTP headers: ${httpHeaders.keys.sorted()}"
                     )
                 }
+                val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(
+                    context, httpDataSourceFactory
+                )
+                playerBuilder.setMediaSourceFactory(
+                    androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory)
+                )
 
                 val exoPlayer = if (enableAssSupport) {
                     android.util.Log.i("ExoPlayerPlugin", "Creating ExoPlayer with ass-media subtitle pipeline")
@@ -306,16 +320,6 @@ class ExoPlayerPlugin(
                         .build()
                 }
                 exoPlayer.setVideoSurface(surface)
-
-                val mediaItem = MediaItem.Builder()
-                    .setUri(videoUrl)
-                    .build()
-                exoPlayer.setMediaItem(mediaItem)
-                exoPlayer.prepare()
-
-                if (startPositionMs > 0) {
-                    exoPlayer.seekTo(startPositionMs.toLong())
-                }
 
                 val eventChannel = EventChannel(
                     binaryMessenger,
@@ -333,6 +337,16 @@ class ExoPlayerPlugin(
 
                 exoPlayer.addListener(instance)
                 players[playerId] = instance
+
+                val mediaItem = MediaItem.Builder()
+                    .setUri(videoUrl)
+                    .build()
+                exoPlayer.setMediaItem(mediaItem)
+                if (startPositionMs > 0) {
+                    exoPlayer.seekTo(startPositionMs.toLong())
+                }
+                // 先注册 Player.Listener，再 prepare，确保任何同步/极快失败都被捕获。
+                exoPlayer.prepare()
 
                 result.success(mapOf(
                     "playerId" to playerId,
@@ -370,6 +384,7 @@ class ExoPlayerPlugin(
     ) : Player.Listener {
 
         private var eventSink: EventChannel.EventSink? = null
+        private val pendingEvents = java.util.ArrayDeque<Map<String, Any?>>()
         private val instanceHandler = Handler(Looper.getMainLooper())
 
         private var subtitleDelayMs: Long = 0
@@ -381,6 +396,9 @@ class ExoPlayerPlugin(
             eventChannel.setStreamHandler(object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
                     eventSink = events
+                    while (pendingEvents.isNotEmpty()) {
+                        events?.success(pendingEvents.removeFirst())
+                    }
                 }
                 override fun onCancel(arguments: Any?) {
                     eventSink = null
@@ -636,7 +654,16 @@ class ExoPlayerPlugin(
 
         private fun emitEvent(type: String, value: Any?) {
             instanceHandler.post {
-                eventSink?.success(mapOf("type" to type, "value" to value))
+                val event = mapOf<String, Any?>("type" to type, "value" to value)
+                val sink = eventSink
+                if (sink != null) {
+                    sink.success(event)
+                } else {
+                    // prepare() 早于 Dart EventChannel 订阅；缓存极快的鉴权错误/READY，
+                    // 否则首个关键事件会永久丢失。
+                    if (pendingEvents.size >= 32) pendingEvents.removeFirst()
+                    pendingEvents.addLast(event)
+                }
             }
         }
 
@@ -901,7 +928,14 @@ class ExoPlayerPlugin(
         }
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-            emitEvent("error", error.message)
+            val causeChain = generateSequence<Throwable>(error) { it.cause }
+                .take(6)
+                .joinToString(" <- ") { cause ->
+                    "${cause.javaClass.simpleName}: ${cause.message ?: "unknown"}"
+                }
+            val diagnostic = "code=${error.errorCodeName}; $causeChain"
+            android.util.Log.e("ExoPlayerPlugin", "Playback failed: $diagnostic", error)
+            emitEvent("error", diagnostic)
         }
     }
 }
