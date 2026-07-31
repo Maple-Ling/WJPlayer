@@ -9,6 +9,7 @@ import '../../../core/sources/media_source_backend.dart';
 import '../../../core/sources/source_browse_controller.dart';
 import '../../../core/sources/source_playback.dart';
 import '../../../core/theme/app_motion.dart';
+import 'feiniu_media_screens.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../widgets/common/media_widgets.dart';
 
@@ -64,6 +65,10 @@ class _SourceBrowseScreenState extends ConsumerState<SourceBrowseScreen> {
     if (c == null) return;
     if (e.isDir) {
       c.enterDir(e);
+    } else if (c.server.sourceKind == SourceKind.feiniu) {
+      Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (_) => FeiniuDetailScreen(server: c.server, entry: e),
+      ));
     } else if (e.isVideo) {
       context.push('/source-player',
           extra: SourcePlayback(server: c.server, entry: e));
@@ -309,7 +314,8 @@ class _EntryTile extends StatelessWidget {
               width: 64,
               height: 40,
               fit: BoxFit.cover,
-              useDefaultUserAgent: true,
+              httpHeaders: entry.thumbHeaders,
+              useDefaultUserAgent: entry.thumbHeaders == null,
             ),
           )
         : Icon(_icon, color: _iconColor(context), size: 30);
@@ -365,7 +371,8 @@ class _EntryCard extends StatelessWidget {
                     ? MediaImage(
                         imageUrl: entry.thumbUrl,
                         fit: BoxFit.cover,
-                        useDefaultUserAgent: true,
+                        httpHeaders: entry.thumbHeaders,
+                        useDefaultUserAgent: entry.thumbHeaders == null,
                       )
                     : Center(child: Icon(icon, color: iconColor, size: 44)),
               ),

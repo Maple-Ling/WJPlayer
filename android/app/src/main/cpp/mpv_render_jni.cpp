@@ -79,7 +79,7 @@ static void on_mpv_update(void *ctx_ptr) {
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_example_wjplayer_1mobile_MpvTexture_nativeCreateRenderContext(
+Java_com_mapleling_wjplayer_MpvTexture_nativeCreateRenderContext(
     JNIEnv *env, jobject thiz, jlong mpv_handle_ptr, jobject surface) {
     
     auto *mpv = reinterpret_cast<mpv_handle*>(mpv_handle_ptr);
@@ -208,7 +208,7 @@ Java_com_example_wjplayer_1mobile_MpvTexture_nativeCreateRenderContext(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_wjplayer_1mobile_MpvTexture_nativeDestroyRenderContext(
+Java_com_mapleling_wjplayer_MpvTexture_nativeDestroyRenderContext(
     JNIEnv *env, jobject thiz, jlong render_ctx_handle) {
     
     auto *ctx = reinterpret_cast<RenderContext*>(render_ctx_handle);

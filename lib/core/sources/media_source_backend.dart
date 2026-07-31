@@ -12,6 +12,9 @@ class SourceEntry {
   final int? size;
   final String? thumbUrl;
 
+  /// 缩略图请求头（Authorization/Authx/Cookie 等）。
+  final Map<String, String>? thumbHeaders;
+
   /// 源原始数据，供 resolvePlay 复用（避免二次请求）。
   final Map<String, dynamic>? raw;
 
@@ -22,6 +25,7 @@ class SourceEntry {
     this.isVideo = false,
     this.size,
     this.thumbUrl,
+    this.thumbHeaders,
     this.raw,
   });
 }

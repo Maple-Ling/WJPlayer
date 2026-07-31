@@ -43,7 +43,9 @@ class _SourceLoginScreenState extends ConsumerState<SourceLoginScreen> {
     ref.read(serverListProvider.notifier).addServer(server);
     ref.read(currentServerProvider.notifier).state = server;
     ref.read(authStateProvider.notifier).state = AuthState.authenticated;
-    if (mounted) context.go('/browse');
+    if (mounted) {
+      context.go(server.sourceKind == SourceKind.feiniu ? '/home' : '/browse');
+    }
   }
 
   @override

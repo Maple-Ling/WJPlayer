@@ -34,10 +34,10 @@ class EmbyApiClient implements ApiClientFactory {
         'Accept': 'application/json',
         'User-Agent': kAppUserAgent,
         'X-Emby-Authorization':
-            'MediaBrowser Client="WJPlayer", Device="Mobile", DeviceId="wjplayer-mobile", Version="$kAppVersion"',
+            'MediaBrowser Client="$kEmbyProtocolClient", Device="Mobile", DeviceId="$kEmbyProtocolDeviceId", Version="$kAppVersion"',
         'X-Emby-Device-Name': 'Mobile',
-        'X-Emby-Device-Id': 'wjplayer-mobile',
-        'X-Emby-Client': 'WJPlayer',
+        'X-Emby-Device-Id': kEmbyProtocolDeviceId,
+        'X-Emby-Client': kEmbyProtocolClient,
         'X-Emby-Client-Version': kAppVersion,
         if (authToken != null) 'X-Emby-Token': authToken,
       },
@@ -384,10 +384,10 @@ class EmbyServerApi implements ServerApi {
         'Accept': 'application/json',
         'User-Agent': kAppUserAgent,
         'X-Emby-Authorization':
-            'MediaBrowser Client="WJPlayer", Device="Mobile", DeviceId="wjplayer-mobile", Version="$kAppVersion"',
+            'MediaBrowser Client="$kEmbyProtocolClient", Device="Mobile", DeviceId="$kEmbyProtocolDeviceId", Version="$kAppVersion"',
         'X-Emby-Device-Name': 'Mobile',
-        'X-Emby-Device-Id': 'wjplayer-mobile',
-        'X-Emby-Client': 'WJPlayer',
+        'X-Emby-Device-Id': kEmbyProtocolDeviceId,
+        'X-Emby-Client': kEmbyProtocolClient,
         'X-Emby-Client-Version': kAppVersion,
       },
     ));
@@ -431,10 +431,10 @@ class EmbyServerApi implements ServerApi {
           'Accept': 'application/json',
           'User-Agent': kAppUserAgent,
           'X-Emby-Authorization':
-              'MediaBrowser Client="WJPlayer", Device="Mobile", DeviceId="wjplayer-mobile", Version="$kAppVersion"',
+              'MediaBrowser Client="$kEmbyProtocolClient", Device="Mobile", DeviceId="$kEmbyProtocolDeviceId", Version="$kAppVersion"',
           'X-Emby-Device-Name': 'Mobile',
-          'X-Emby-Device-Id': 'wjplayer-mobile',
-          'X-Emby-Client': 'WJPlayer',
+          'X-Emby-Device-Id': kEmbyProtocolDeviceId,
+          'X-Emby-Client': kEmbyProtocolClient,
           'X-Emby-Client-Version': kAppVersion,
         },
       ));
