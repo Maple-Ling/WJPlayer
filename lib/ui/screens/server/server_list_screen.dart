@@ -145,8 +145,11 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
             if (server.authToken != null || server.isFileBrowse) {
               ref.read(authStateProvider.notifier).state = AuthState.authenticated;
             }
-            // 网盘/聚合源 → 文件浏览页；Emby → 原首页。
-            context.go(server.isFileBrowse ? '/browse' : '/home');
+            // 飞牛影视拥有媒体化首页；其它文件源进入浏览页；Emby 进入原首页。
+            final destination = server.sourceKind == SourceKind.feiniu
+                ? '/home'
+                : (server.isFileBrowse ? '/browse' : '/home');
+            context.go(destination);
           },
           onMoreTap: () => _showServerMenu(context, ref, server),
         );

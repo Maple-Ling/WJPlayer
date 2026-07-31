@@ -10,15 +10,21 @@ library;
 const String kAppVersion =
     String.fromEnvironment('APP_VERSION', defaultValue: '1.0.0');
 
-/// 统一 User-Agent：`WJPlayer/<版本号>`。
-const String kAppUserAgent = 'WJPlayer/$kAppVersion';
+/// Emby 协议兼容身份。UI 品牌仍为 WJPlayer/无界影视。
+const String kEmbyProtocolClient = 'LinPlayer';
+const String kEmbyProtocolDeviceId = 'linplayer-mobile';
 
-/// 预加载 User-Agent：`WJPlayerPreload/<版本号>`。
+/// 兼容上游 557 的网络协议 User-Agent。
+///
+/// 这是部分 Emby 服务端/反代用于放行流媒体请求的协议标识，不等同于 UI 品牌。
+const String kAppUserAgent = 'LinPlayer/$kAppVersion';
+
+/// 兼容上游 557 的预加载 User-Agent。
 ///
 /// 详情页（集/电影）开启「预加载」后，会用此 UA 对真实播放流发起规范的
 /// Range 预取请求，提前预热服务端/CDN 缓存，与正常播放（[kAppUserAgent]）
 /// 区分开，便于服务端按 UA 识别/统计预加载流量。
-const String kPreloadUserAgent = 'WJPlayerPreload/$kAppVersion';
+const String kPreloadUserAgent = 'LinplayerPreload/$kAppVersion';
 
 /// 中立浏览器 User-Agent。
 ///

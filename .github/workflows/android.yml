@@ -74,6 +74,11 @@ jobs:
       - name: Resolve dependencies
         run: flutter pub get
 
+      - name: Run protocol and source regression tests
+        run: |
+          flutter test test/android_playback_feiniu_regression_test.dart
+          flutter test test/playback_url_resolver_test.dart
+
       - name: Normalize Android plugin toolchains
         shell: bash
         run: |

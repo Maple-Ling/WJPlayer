@@ -45,9 +45,12 @@ class MediaImage extends StatelessWidget {
   final bool gaplessPlayback;
   final Alignment alignment;
 
-  /// 用中立浏览器 UA 请求（而非 App 的 `WJPlayer/x.x.x`）。
+  /// 用中立浏览器 UA 请求（而非 App 网络协议 UA）。
   /// 服务器图标等第三方 CDN 资源需要，否则可能被拒导致图标损坏。
   final bool useDefaultUserAgent;
+
+  /// 图片请求专用认证头（例如飞牛影视 Authorization/Authx/Cookie）。
+  final Map<String, String>? httpHeaders;
 
   /// 图片解码完成后回调其真实宽高比（width/height）。
   /// 给"按原图比例自适应尺寸"的卡片用，避免裁剪/留白。
@@ -69,6 +72,7 @@ class MediaImage extends StatelessWidget {
     this.gaplessPlayback = true,
     this.alignment = Alignment.center,
     this.useDefaultUserAgent = false,
+    this.httpHeaders,
     this.onAspectRatio,
   });
 
@@ -98,6 +102,7 @@ class MediaImage extends StatelessWidget {
             cacheHeight: cacheHeight,
             gaplessPlayback: gaplessPlayback,
             useDefaultUserAgent: useDefaultUserAgent,
+            httpHeaders: httpHeaders,
             onAspectRatio: onAspectRatio,
             placeholderBuilder: () => placeholder ?? _buildPlaceholder(context),
             errorBuilder: () => errorWidget ?? _buildError(context),
@@ -185,6 +190,7 @@ class _FallbackNetworkImage extends StatefulWidget {
   final int? cacheHeight;
   final bool gaplessPlayback;
   final bool useDefaultUserAgent;
+  final Map<String, String>? httpHeaders;
   final ValueChanged<double>? onAspectRatio;
   final Widget Function() placeholderBuilder;
   final Widget Function() errorBuilder;
@@ -199,6 +205,7 @@ class _FallbackNetworkImage extends StatefulWidget {
     required this.cacheHeight,
     required this.gaplessPlayback,
     required this.useDefaultUserAgent,
+    this.httpHeaders,
     this.onAspectRatio,
     required this.placeholderBuilder,
     required this.errorBuilder,
@@ -288,9 +295,11 @@ class _FallbackNetworkImageState extends State<_FallbackNetworkImage> {
           requestKey: '$_requestEpoch:$_retryRound:$_currentIndex',
           // 中立资源（服务器图标等）用浏览器 UA，覆盖共享 HttpClient 的 App UA，
           // 避免被第三方 CDN 拒绝导致图标损坏。
-          headers: widget.useDefaultUserAgent
-              ? const {'User-Agent': kDefaultBrowserUserAgent}
-              : null,
+          headers: {
+            ...?widget.httpHeaders,
+            if (widget.useDefaultUserAgent)
+              'User-Agent': kDefaultBrowserUserAgent,
+          },
         );
         // 以推导出的小尺寸解码并缓存。maxBytes/compressionRatio 必须显式置 null，
         // 否则 ExtendedResizeImage 默认 maxBytes=50KB 会无视 width/height 把图压成

@@ -22,6 +22,20 @@ import 'source_http.dart';
 /// 服务端对流请求校验签名时间戳，长片播到中途可能因签名过期而断——届时需改为本地
 /// 重签代理（同 fntv-electron 的 127.0.0.1 代理做法）。首版按直连做，待真机验证。
 // ponytail: 静态 authx；若长播断流，升级为本地重签代理（见类注释）。
+class FeiniuItemDetail {
+  final SourceEntry entry;
+  final Map<String, dynamic> item;
+  final Map<String, dynamic> playInfo;
+  final List<SourceEntry> seasons;
+
+  const FeiniuItemDetail({
+    required this.entry,
+    required this.item,
+    required this.playInfo,
+    this.seasons = const [],
+  });
+}
+
 class FeiniuBackend implements MediaSourceBackend {
   @override
   SourceKind get kind => SourceKind.feiniu;
@@ -101,6 +115,35 @@ class FeiniuBackend implements MediaSourceBackend {
     return token;
   }
 
+  String imageUrl(ServerConfig server, String? posterPath, {int width = 480}) {
+    final raw = posterPath?.trim() ?? '';
+    if (raw.isEmpty) return '';
+    final path = raw.startsWith('/') ? raw : '/$raw';
+    final base = normalizeBaseUrl(server.activeLineUrl);
+    return '$base$_apiPrefix/sys/img$path?w=$width';
+  }
+
+  Future<Map<String, String>> imageHeaders(ServerConfig server) async {
+    final token = await _ensureToken(server);
+    const signPath = '$_apiPrefix/sys/img';
+    return {
+      'Authorization': token,
+      'Cookie': 'mode=relay',
+      'Authx': _authx(signPath, ''),
+    };
+  }
+
+  String? _posterOf(Map<dynamic, dynamic> item) {
+    final poster = item['poster']?.toString() ?? '';
+    if (poster.isNotEmpty) return poster;
+    final posters = item['posters'];
+    if (posters is List && posters.isNotEmpty) {
+      final first = posters.first?.toString() ?? '';
+      if (first.isNotEmpty) return first;
+    }
+    return null;
+  }
+
   /// 带鉴权请求。[suffix] 不含 `/v/api/v1` 前缀。非零 code 视作失败，首个错误自动
   /// 重登一次再试（飞牛不明确区分鉴权错误码，统一重登兜底）。
   Future<dynamic> _authed(
@@ -112,12 +155,9 @@ class FeiniuBackend implements MediaSourceBackend {
     final token = await _ensureToken(server, force: retried);
     final path = '$_apiPrefix$suffix';
     final isPost = data != null;
-    final body = isPost
-        ? jsonEncode({
-            ...data,
-            'nonce': (100000 + _rand.nextInt(900000)).toString(),
-          })
-        : '';
+    // 除登录外，普通 POST 请求体必须原样参与 Authx 计算；额外注入 nonce 会
+    // 改变 play/info、item/list 等接口的参数和签名，导致详情或播放失败。
+    final body = isPost ? jsonEncode(data) : '';
     final headers = <String, dynamic>{
       'Authorization': token,
       'Cookie': 'mode=relay',
@@ -176,12 +216,16 @@ class FeiniuBackend implements MediaSourceBackend {
     // 普通用户端点，管理员账号同样可见其可访问的库。
     final data = await _authed(server, '/mediadb/list');
     final list = (data as List?) ?? const [];
+    final headers = await imageHeaders(server);
     return list.map<SourceEntry>((e) {
-      final m = e as Map;
+      final m = Map<String, dynamic>.from(e as Map);
       return SourceEntry(
         id: 'lib:${m['guid']}',
         name: (m['title'] ?? m['name'] ?? '未命名媒体库').toString(),
         isDir: true,
+        thumbUrl: imageUrl(server, _posterOf(m), width: 640),
+        thumbHeaders: headers,
+        raw: m,
       );
     }).toList();
   }
@@ -199,15 +243,19 @@ class FeiniuBackend implements MediaSourceBackend {
       'page_size': 500,
     });
     final list = ((data as Map?)?['list'] as List?) ?? const [];
-    return list.map<SourceEntry>(_itemToEntry).toList();
+    final headers = await imageHeaders(server);
+    return list
+        .map<SourceEntry>((e) => _itemToEntry(server, e, headers))
+        .toList();
   }
 
   Future<List<SourceEntry>> _listSeasons(
       ServerConfig server, String tvGuid) async {
     final data = await _authed(server, '/season/list/$tvGuid');
     final list = (data as List?) ?? const [];
+    final headers = await imageHeaders(server);
     return list.map<SourceEntry>((e) {
-      final m = e as Map;
+      final m = Map<String, dynamic>.from(e as Map);
       final n = m['season_number'];
       return SourceEntry(
         id: 'season:${m['guid']}',
@@ -215,6 +263,9 @@ class FeiniuBackend implements MediaSourceBackend {
             ? m['title'].toString()
             : (n != null ? '第 $n 季' : '季'),
         isDir: true,
+        thumbUrl: imageUrl(server, _posterOf(m), width: 480),
+        thumbHeaders: headers,
+        raw: m,
       );
     }).toList();
   }
@@ -223,30 +274,43 @@ class FeiniuBackend implements MediaSourceBackend {
       ServerConfig server, String seasonGuid) async {
     final data = await _authed(server, '/episode/list/$seasonGuid');
     final list = (data as List?) ?? const [];
-    return list.map<SourceEntry>(_itemToEntry).toList();
+    final headers = await imageHeaders(server);
+    return list
+        .map<SourceEntry>((e) => _itemToEntry(server, e, headers))
+        .toList();
   }
 
-  /// 单个 item → 目录（TV/季/Directory）或可播文件（电影/视频/分集）。
-  SourceEntry _itemToEntry(dynamic e) {
-    final m = e as Map;
-    final guid = m['guid'].toString();
+  /// 单个 item → 媒体条目。只有真正的 Directory 继续按文件夹下钻；
+  /// TV/Movie/Episode/Video 都进入媒体详情或播放流程。
+  SourceEntry _itemToEntry(
+    ServerConfig server,
+    dynamic value,
+    Map<String, String> headers,
+  ) {
+    final m = Map<String, dynamic>.from(value as Map);
+    final guid = m['guid']?.toString() ?? '';
     final type = m['type']?.toString() ?? 'Video';
-    switch (type) {
-      case 'TV':
-        return SourceEntry(id: 'tv:$guid', name: _title(m), isDir: true);
-      case 'Directory':
-        return SourceEntry(id: 'dir:$guid', name: _title(m), isDir: true);
-      case 'Season':
-        return SourceEntry(id: 'season:$guid', name: _title(m), isDir: true);
-      default: // Movie / Video / Episode → 可播
-        return SourceEntry(
-          id: guid,
-          name: _episodeTitle(m),
-          isDir: false,
-          isVideo: true,
-          size: (m['file_size'] as num?)?.toInt(),
-        );
+    final poster = _posterOf(m);
+    if (type == 'Directory') {
+      return SourceEntry(
+        id: 'dir:$guid',
+        name: _title(m),
+        isDir: true,
+        thumbUrl: imageUrl(server, poster),
+        thumbHeaders: headers,
+        raw: m,
+      );
     }
+    return SourceEntry(
+      id: guid,
+      name: _episodeTitle(m),
+      isDir: false,
+      isVideo: type == 'Movie' || type == 'Video' || type == 'Episode',
+      size: (m['file_size'] as num?)?.toInt(),
+      thumbUrl: imageUrl(server, poster),
+      thumbHeaders: headers,
+      raw: m,
+    );
   }
 
   String _title(Map m) =>
@@ -264,13 +328,76 @@ class FeiniuBackend implements MediaSourceBackend {
     return t;
   }
 
+  Future<List<SourceEntry>> libraries(ServerConfig server) =>
+      _listLibraries(server);
+
+  Future<List<SourceEntry>> libraryItems(
+    ServerConfig server,
+    String libraryId, {
+    int pageSize = 100,
+  }) {
+    final guid = libraryId.startsWith('lib:')
+        ? libraryId.substring(4)
+        : libraryId;
+    return _listItems(server, guid);
+  }
+
+  Future<List<SourceEntry>> episodes(
+    ServerConfig server,
+    String seasonId,
+  ) {
+    final guid = seasonId.startsWith('season:')
+        ? seasonId.substring(7)
+        : seasonId;
+    return _listEpisodes(server, guid);
+  }
+
+  Future<FeiniuItemDetail> itemDetail(
+    ServerConfig server,
+    SourceEntry entry,
+  ) async {
+    final guid = entry.id.contains(':')
+        ? entry.id.substring(entry.id.indexOf(':') + 1)
+        : entry.id;
+    final results = await Future.wait<dynamic>([
+      _authed(server, '/item/$guid'),
+      _authed(server, '/play/info', data: {'item_guid': guid}),
+    ]);
+    final item = results[0] is Map
+        ? Map<String, dynamic>.from(results[0] as Map)
+        : <String, dynamic>{};
+    final playInfo = results[1] is Map
+        ? Map<String, dynamic>.from(results[1] as Map)
+        : <String, dynamic>{};
+    final merged = <String, dynamic>{...item};
+    final nested = playInfo['item'];
+    if (nested is Map) merged.addAll(Map<String, dynamic>.from(nested));
+    final type = (playInfo['type'] ?? merged['type'] ?? entry.raw?['type'])
+        ?.toString();
+    final headers = await imageHeaders(server);
+    final enriched = _itemToEntry(server, {
+      ...?entry.raw,
+      ...merged,
+      'guid': guid,
+      'type': type ?? 'Video',
+    }, headers);
+    final seasons = type == 'TV' ? await _listSeasons(server, guid) : const <SourceEntry>[];
+    return FeiniuItemDetail(
+      entry: enriched,
+      item: merged,
+      playInfo: playInfo,
+      seasons: seasons,
+    );
+  }
+
   @override
   Future<List<SourceEntry>> search(ServerConfig server, String query) async {
-    final data = await _authed(server, '/search/list?q=${Uri.encodeQueryComponent(query)}');
+    final data = await _authed(
+        server, '/search/list?q=${Uri.encodeQueryComponent(query)}');
     final list = (data as List?) ?? const [];
+    final headers = await imageHeaders(server);
     return list
-        .map<SourceEntry>(_itemToEntry)
-        .where((e) => !e.isDir || e.id.startsWith('tv:'))
+        .map<SourceEntry>((e) => _itemToEntry(server, e, headers))
         .toList();
   }
 
@@ -289,17 +416,18 @@ class FeiniuBackend implements MediaSourceBackend {
     final token = _tokenCache[server.id] ?? server.authToken ?? '';
     final base = normalizeBaseUrl(server.activeLineUrl);
     final streamPath = '$_apiPrefix/media/range/$mediaGuid';
+    // 长视频 range 请求与官方/参考客户端一致，只携带 token 与 relay Cookie。
+    // Authx 是一次性时间戳签名，固定在长流请求中可能过期并导致中途断流。
     final headers = {
       'Authorization': token,
       'Cookie': 'mode=relay',
-      'authx': _authx(streamPath, ''),
     };
 
     return ResolvedPlay(
       url: '$base$streamPath',
       title: entry.name,
       httpHeaders: headers,
-      subtitles: await _externalSubs(server, entry.id, base, token),
+      subtitles: await _externalSubs(server, mediaGuid, base, token),
     );
   }
 
@@ -321,7 +449,6 @@ class FeiniuBackend implements MediaSourceBackend {
           httpHeaders: {
             'Authorization': token,
             'Cookie': 'mode=relay',
-            'authx': _authx(subPath, ''),
           },
         );
       }).toList();

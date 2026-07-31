@@ -25,5 +25,6 @@ Prominent changes include:
 5. Replaced application artwork and Android launcher icons.
 6. Replaced upstream build/release workflows with an Android ARM64-only workflow.
 7. Disabled the upstream Sentry telemetry endpoint by default.
+8. Improved the Feiniu/fnOS media integration using API behavior documented and implemented by `jimboo7339/fntv_danmu_all` (GPL-3.0): https://github.com/jimboo7339/fntv_danmu_all
 
 The complete corresponding source is distributed under AGPL-3.0. See `LICENSE`.

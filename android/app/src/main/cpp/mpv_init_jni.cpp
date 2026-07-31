@@ -26,7 +26,7 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
  * libavcodec.so) to avoid Android linker namespace isolation issues.
  */
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_wjplayer_1mobile_MpvInitBridge_nativeRegisterJavaVm(
+Java_com_mapleling_wjplayer_MpvInitBridge_nativeRegisterJavaVm(
     JNIEnv *env, jclass clazz) {
     if (!g_cached_vm) {
         LOGE("nativeRegisterJavaVm: no cached JavaVM!");

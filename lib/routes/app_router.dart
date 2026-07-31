@@ -29,6 +29,7 @@ import '../ui/screens/settings/settings_screen.dart';
 import '../core/sources/anirss/anirss_nav_args.dart';
 import '../ui/screens/anirss/anirss_detail_screen.dart';
 import '../ui/screens/anirss/anirss_shell_screen.dart';
+import '../ui/screens/source/feiniu_media_screens.dart';
 import '../ui/screens/source/source_browse_screen.dart';
 import '../ui/screens/source/source_login_screen.dart';
 import '../ui/screens/source/source_picker_screen.dart';
@@ -93,7 +94,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                   GoRoute(
                     path: 'home',
                     pageBuilder: (context, state) => _buildHorizontalPage(
-                      child: const HomeScreen(),
+                      child: Consumer(
+                        builder: (context, ref, _) {
+                          final server = ref.watch(currentServerProvider);
+                          return server?.sourceKind == SourceKind.feiniu
+                              ? const FeiniuHomeScreen()
+                              : const HomeScreen();
+                        },
+                      ),
                       state: state,
                       direction: _PageTransitionDirection.forward,
                     ),

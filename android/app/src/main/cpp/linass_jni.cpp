@@ -105,7 +105,7 @@ static char g_libass_path[512] = {0};
 static char g_libmpv_path[512] = {0};
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_wjplayer_1mobile_LibassBridge_nativeSetLibraryPaths(JNIEnv *env, jobject thiz, jstring libassPath, jstring libmpvPath) {
+Java_com_mapleling_wjplayer_LibassBridge_nativeSetLibraryPaths(JNIEnv *env, jobject thiz, jstring libassPath, jstring libmpvPath) {
     const char *assPath = env->GetStringUTFChars(libassPath, NULL);
     const char *mpvPath = env->GetStringUTFChars(libmpvPath, NULL);
     if (assPath) {
@@ -214,13 +214,13 @@ static void init_libass() {
 // ============================================================================
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_example_wjplayer_1mobile_LibassBridge_nativeIsAvailable(JNIEnv *env, jobject thiz) {
+Java_com_mapleling_wjplayer_LibassBridge_nativeIsAvailable(JNIEnv *env, jobject thiz) {
     init_libass();
     return g_ass.available ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_example_wjplayer_1mobile_LibassBridge_nativeInit(JNIEnv *env, jobject thiz, jint width, jint height) {
+Java_com_mapleling_wjplayer_LibassBridge_nativeInit(JNIEnv *env, jobject thiz, jint width, jint height) {
     init_libass();
     if (!g_ass.available) {
         LOGE("libass not available");
@@ -263,7 +263,7 @@ Java_com_example_wjplayer_1mobile_LibassBridge_nativeInit(JNIEnv *env, jobject t
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_example_wjplayer_1mobile_LibassBridge_nativeLoadFile(JNIEnv *env, jobject thiz, jlong handle, jstring path) {
+Java_com_mapleling_wjplayer_LibassBridge_nativeLoadFile(JNIEnv *env, jobject thiz, jlong handle, jstring path) {
     if (!g_ass.available || !g_ctx.library) return 0;
     const char *cpath = env->GetStringUTFChars(path, NULL);
     g_ctx.track = g_ass.ass_read_file(g_ctx.library, (char *)cpath, NULL);
@@ -277,7 +277,7 @@ Java_com_example_wjplayer_1mobile_LibassBridge_nativeLoadFile(JNIEnv *env, jobje
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_example_wjplayer_1mobile_LibassBridge_nativeLoadMemory(JNIEnv *env, jobject thiz, jlong handle, jbyteArray data, jstring codec) {
+Java_com_mapleling_wjplayer_LibassBridge_nativeLoadMemory(JNIEnv *env, jobject thiz, jlong handle, jbyteArray data, jstring codec) {
     if (!g_ass.available || !g_ctx.library) return 0;
     jsize len = env->GetArrayLength(data);
     jbyte *buf = env->GetByteArrayElements(data, NULL);
@@ -297,13 +297,13 @@ Java_com_example_wjplayer_1mobile_LibassBridge_nativeLoadMemory(JNIEnv *env, job
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_wjplayer_1mobile_LibassBridge_nativeSetFontSize(JNIEnv *env, jobject thiz, jlong handle, jint size) {
+Java_com_mapleling_wjplayer_LibassBridge_nativeSetFontSize(JNIEnv *env, jobject thiz, jlong handle, jint size) {
     if (!g_ass.available || !g_ctx.renderer) return;
     g_ass.ass_set_font_scale(g_ctx.renderer, (double)size / 48.0);
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_wjplayer_1mobile_LibassBridge_nativeSetFontName(JNIEnv *env, jobject thiz, jlong handle, jstring name) {
+Java_com_mapleling_wjplayer_LibassBridge_nativeSetFontName(JNIEnv *env, jobject thiz, jlong handle, jstring name) {
     if (!g_ass.available || !g_ctx.renderer) return;
     const char *cname = env->GetStringUTFChars(name, NULL);
     g_ass.ass_set_default_font(g_ctx.renderer, cname, NULL);
@@ -311,7 +311,7 @@ Java_com_example_wjplayer_1mobile_LibassBridge_nativeSetFontName(JNIEnv *env, jo
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_example_wjplayer_1mobile_LibassBridge_nativeRenderFrame(JNIEnv *env, jobject thiz, jlong rhandle, jlong thandle, jlong ptsMs) {
+Java_com_mapleling_wjplayer_LibassBridge_nativeRenderFrame(JNIEnv *env, jobject thiz, jlong rhandle, jlong thandle, jlong ptsMs) {
     if (!g_ass.available || !g_ctx.renderer || !g_ctx.track) return NULL;
 
     int changed = 0;
@@ -367,7 +367,7 @@ Java_com_example_wjplayer_1mobile_LibassBridge_nativeRenderFrame(JNIEnv *env, jo
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_wjplayer_1mobile_LibassBridge_nativeDispose(JNIEnv *env, jobject thiz, jlong lhandle, jlong rhandle, jlong thandle) {
+Java_com_mapleling_wjplayer_LibassBridge_nativeDispose(JNIEnv *env, jobject thiz, jlong lhandle, jlong rhandle, jlong thandle) {
     if (!g_ass.available) return;
     if (g_ctx.track) {
         g_ass.ass_free_track(g_ctx.track);
