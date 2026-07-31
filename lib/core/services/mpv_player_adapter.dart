@@ -1,0 +1,2309 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math' show max, min;
+import 'dart:typed_data';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:path_provider/path_provider.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
+import '../app_identity.dart';
+import 'anime4k_shaders.dart';
+import 'player_adapter.dart';
+import 'app_logger.dart';
+import 'cache_service.dart';
+import 'mpv_config_manager.dart';
+import 'subtitle_track_matcher.dart';
+import 'subtitle_processor.dart';
+import '../network/proxy_settings.dart';
+
+class MpvPlayerAdapter implements PlayerAdapter {
+  static final _logger = AppLogger();
+  static final _configManager = MpvConfigManager();
+  static const _subtitleTrackTypes = <String>{'subtitle', 'text', 'bitmap'};
+  static const _startupSeekAttemptLimit = 8;
+  static const _startupSeekRetryDelay = Duration(milliseconds: 120);
+  static const _startupSeekPollInterval = Duration(milliseconds: 40);
+  static const _startupSeekPollTimeout = Duration(milliseconds: 240);
+  static const _startupSeekTolerance = Duration(milliseconds: 750);
+  // 兜底续播前等 demuxer 就绪（duration 落定）。网络 4K 冷启动可能数秒，
+  // 给足耐心，避免“还没加载完就判失败”从头播放；start 选项命中后会立即返回。
+  static const _demuxerReadyTimeout = Duration(seconds: 15);
+
+  Player? _player;
+  VideoController? _videoController;
+  // 缓存 Video Widget，保证每次 build 返回同一实例。
+  // 否则播放页 setState（显示控制栏/选项）会重建 Video，
+  // 触发 media_kit 纹理重新挂载并瞬时呈现空白帧，造成画面闪现。
+  Widget? _videoWidget;
+
+  bool _isInitialized = false;
+  // 本适配器是否已被 dispose。用于「初始化途中被顶替/销毁」的孤儿守卫：initialize 是
+  // 异步长流程，若期间外部调用了 dispose（如播放页被顶替），init 若继续跑完会留下一个
+  // 无人引用却在后台出声的孤儿 Player。收尾前回读此标志，被销毁则销掉刚建的 Player 再退。
+  bool _adapterDisposed = false;
+  bool _isPlaying = false;
+  bool _isBuffering = false;
+  bool _isCompleted = false;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  double _speed = 1.0;
+  double _volume = 1.0;
+  String? _errorMessage;
+
+  double _subtitleDelay = 0.0;
+  double _audioDelay = 0.0;
+  double _subtitleScale = 1.0;
+  double _subtitlePosition = 100.0;
+  String? _subtitleFont;
+  // 逐流取流鉴权（网盘/聚合源直链）：open 与 reload 共用，保证重签后仍带 Cookie/Token。
+  Map<String, String>? _httpHeaders;
+  String? _userAgentOverride;
+  String? _aspectRatio;
+  List<String>? _glslShaders;
+  // 当前是否硬件解码（initialize 传入，供 applyZeroCopyHwdec 决定是否可切）。
+  bool _hardwareDecoding = true;
+  // Windows 硬解「零拷贝」实验：true=d3d11va(解码帧直接共享进 ANGLE，不每帧拷回内存)，
+  // false=auto-copy(默认，兼容性最好但每帧 GPU→内存拷回，是卡的一大来源)。会话级、不落盘：
+  // 部分显卡 d3d11va-egl 交互可能失败/黑屏，重启回默认 auto-copy 保证不 brick 启动。
+  bool _zeroCopyHwdec = false;
+  // 当前 VideoController 是否走软件纹理（Win/macOS 消闪屏用）。软件纹理的 SW 渲染
+  // 管线不跑 GLSL shader，故此时无法即时开超分——需下次播放用硬件纹理重建才生效。
+  bool _softwareTextureActive = false;
+  // 上次应用后 mpv 实际持有的 glsl-shader 数（回读值），供 UI 显示「真的生效了吗」。
+  int _activeGlslShaderCount = 0;
+  bool _subtitleBackground = false;
+  String? _secondarySid;
+  bool _hasBitmapSubtitle = false;
+  // PGS/SUP 图形字幕的 mpv blend-subtitles 模式（'no'/'video'/'yes'），默认覆盖层。
+  String _subtitleBlendMode = 'no';
+  bool _currentSubIsAss = false;
+  bool _usingExternalSubtitle = false;
+  bool _pgsDecoderAvailable = true;
+  String _lastSubtitleCueText = '';
+  bool _isSeekBuffering = false;
+  Timer? _seekBufferingFallbackTimer;
+  Timer? _seekBufferingPollTimer;
+  bool _isSeekInFlight = false;
+
+  List<Map<String, dynamic>> _tracks = [];
+  List<SubtitleTrack> _subtitleTracks = [];
+  List<AudioTrack> _audioTracks = [];
+  String? _selectedSubtitleTrackId;
+  String? _selectedNativeSubtitleSid;
+  String? _selectedAudioTrackId;
+
+  PlayerStateCallbacks? _callbacks;
+  final List<StreamSubscription> _subscriptions = [];
+
+  @override
+  bool get isInitialized => _isInitialized;
+  @override
+  bool get isPlaying => _isPlaying;
+  @override
+  bool get isBuffering => _isBuffering;
+
+  @override
+  Duration get bufferedPosition => _player?.state.buffer ?? Duration.zero;
+  @override
+  bool get isCompleted => _isCompleted;
+  @override
+  Duration get position => _position;
+  @override
+  Duration get duration => _duration;
+  @override
+  double get speed => _speed;
+  @override
+  double get volume => _volume;
+  @override
+  double get progress {
+    final dur = _duration.inMilliseconds;
+    if (dur <= 0) return 0.0;
+    return _position.inMilliseconds / dur;
+  }
+
+  @override
+  bool get hasError => _errorMessage != null;
+  @override
+  String? get errorMessage => _errorMessage;
+  bool get pgsDecoderAvailable => _pgsDecoderAvailable;
+  // 软件纹理下无法即时切换 GLSL 超分（SW 渲染不跑 shader）。
+  bool get isSoftwareTexture => _softwareTextureActive;
+  // mpv 实际持有的 Anime4K shader 数；软件纹理下即使>0 也不会渲染，需一并看 isSoftwareTexture。
+  int get activeGlslShaderCount => _activeGlslShaderCount;
+  @override
+  bool get libassReady => true;
+  @override
+  int? get textureId => null;
+  @override
+  List<Map<String, dynamic>> getTracksInfo() => _tracks;
+  @override
+  void setCallbacks(PlayerStateCallbacks callbacks) {
+    _callbacks = callbacks;
+  }
+
+  NativePlayer? get _nativePlayer {
+    final platform = _player?.platform;
+    if (platform is NativePlayer) return platform;
+    return null;
+  }
+
+  bool get _isDesktopPlatform =>
+      Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+
+  bool _isHttpUrl(String path) =>
+      path.startsWith('http://') || path.startsWith('https://');
+
+  String _extractExtension(String path) {
+    var clean = path;
+    final qIndex = clean.indexOf('?');
+    if (qIndex >= 0) clean = clean.substring(0, qIndex);
+    final hashIndex = clean.indexOf('#');
+    if (hashIndex >= 0) clean = clean.substring(0, hashIndex);
+    final dotIndex = clean.lastIndexOf('.');
+    if (dotIndex < 0 || dotIndex < clean.lastIndexOf('/')) return '';
+    return clean.substring(dotIndex + 1).toLowerCase();
+  }
+
+  String _shaderFileName(String shaderRef) {
+    final normalized = shaderRef.replaceAll('\\', '/');
+    final slashIndex = normalized.lastIndexOf('/');
+    return slashIndex >= 0 ? normalized.substring(slashIndex + 1) : normalized;
+  }
+
+  /// 把本地字幕路径转成 mpv `sub-add` 能稳定识别的 URI。
+  ///
+  /// Windows 下直接把 `C:\\foo\\bar.sup` 传给 mpv 可能被当成相对路径，
+  /// 用 `file:///C:/foo/bar.sup` 可以消除歧义；HTTP(S) 字幕保持原样。
+  String _toMpvSubtitleUri(String path) {
+    if (_isHttpUrl(path)) {
+      return path;
+    }
+    return Uri.file(path).toString();
+  }
+
+  Future<void> _openVideoSource(
+    String videoUrl, {
+    Duration? startPosition,
+  }) async {
+    // Keep media_kit's own open path as the primary entrypoint so the
+    // underlying player state and Flutter Video widget stay in sync.
+    // Network edge cases are handled one layer above via playback URL
+    // fallback instead of bypassing Player.open here.
+    final resumePosition =
+        (startPosition != null && startPosition > Duration.zero)
+            ? startPosition
+            : null;
+
+    // 续播：优先通过 mpv 的 start 选项让加载时直接定位到续播点，
+    // 避免 open 之后再 seek 的竞态（慢速/网络源下 seek 可能落空导致从头播放）。
+    final np = _nativePlayer;
+
+    // 用户自定义代理：仅 HTTP 代理且开启「代理媒体流」时生效（mpv 不支持 SOCKS）。
+    // 每次 open 都显式写入，空串表示清除（直连），确保切换配置后即时反映。
+    if (np != null) {
+      final mediaProxy = ProxyRuntime.instance.current;
+      final proxyValue =
+          mediaProxy.appliesToMedia ? (mediaProxy.mpvHttpProxy ?? '') : '';
+      try {
+        await np.setProperty('http-proxy', proxyValue);
+      } catch (_) {
+        // 代理属性设置失败不应阻断播放。
+      }
+      // 统一 UA：部分 CDN 会拒绝 mpv/libavformat 默认 UA 导致取流失败（403/空响应）。
+      // 网盘源（夸克等）可要求特定 UA，用 _userAgentOverride 覆盖。
+      try {
+        await np.setProperty('user-agent', _userAgentOverride ?? kAppUserAgent);
+      } catch (_) {
+        // UA 设置失败不应阻断播放。
+      }
+      // 逐流 HTTP 头（Cookie/Authorization/Referer）：网盘/聚合源直链取流必需。
+      // mpv 用 http-header-fields（逗号分隔的 "Key: Value" 列表，不含 User-Agent，
+      // UA 已单独走 user-agent 属性）。
+      try {
+        final headers = _httpHeaders;
+        if (headers != null && headers.isNotEmpty) {
+          final fields = headers.entries
+              .where((e) => e.key.toLowerCase() != 'user-agent')
+              .map((e) => '${e.key}: ${e.value}')
+              .toList();
+          await np.setProperty('http-header-fields', fields.join(','));
+        } else {
+          await np.setProperty('http-header-fields', '');
+        }
+      } catch (_) {
+        // header 设置失败不应阻断播放。
+      }
+    }
+
+    // 续播定位统一交给 mpv 的 start 选项（等价于 mpv.exe 的 --start=），在 loadfile
+    // 阶段原生生效，最稳——与 Android 原生 mpv 走同一套路。每次 open 都显式写入：
+    // 有续播点写秒数，无续播点写 none 清掉上一次的残留，避免续播点泄漏到下一集
+    // （没历史也跳着播）。注意 open 之后绝不复位 start：复位会与 loadfile 读取 start
+    // 抢跑，慢速/4K 网络源下把续播点清掉导致从头播放，这正是“经常续不上”的根因。
+    if (np != null) {
+      try {
+        await np.setProperty(
+          'start',
+          resumePosition != null
+              ? '${resumePosition.inMilliseconds / 1000.0}'
+              : 'none',
+        );
+      } catch (_) {
+        // start 设置失败时继续走兜底 seek 流程。
+      }
+    }
+
+    // 复位缓存的 duration/position，让兜底续播按「新文件」判定就绪与落位。
+    // reload 复用同一 Player 不经 dispose，残留旧值会让 _waitForDemuxerReady
+    // 立即返回、_isNearStartupSeekTarget 误命中旧位置。stream 会在新文件加载后回填。
+    _duration = Duration.zero;
+    _position = Duration.zero;
+
+    final media = Media(videoUrl);
+    await _player!.open(media, play: false);
+
+    if (resumePosition != null) {
+      // 兜底校正：个别协议/解码路径下 start 选项可能不生效，等加载就绪后补一次 seek。
+      await _applyStartupSeek(resumePosition);
+    }
+  }
+
+  @override
+  Future<void> reload(String url, {Duration? startPosition}) async {
+    final player = _player;
+    if (player == null) {
+      throw StateError('播放器未就绪，无法重载');
+    }
+    // 网络/缓存/重连等选项已在 initialize 时写入同一 player 实例，重载只需重新 open。
+    // 复用 _openVideoSource：内含代理/UA 重写 + start 定位 + 兜底续播 seek。
+    _errorMessage = null;
+    await _openVideoSource(url, startPosition: startPosition);
+    _isInitialized = true;
+    _callbacks?.onDurationChanged?.call();
+  }
+
+  /// 探测当前 libmpv 是否包含 PGS/SUP 解码器。
+  ///
+  /// media-kit 的 Windows 预编译包为了体积会 `--disable-decoders` 并漏掉
+  /// `hdmv_pgs_subtitle`，这是 PC 端不显示 PGS/SUP 的根因。
+  /// 探测结果只用于日志/诊断，真正的修复需要替换为完整版 libmpv-2.dll。
+  Future<void> _applyStartupSeek(Duration startPosition) async {
+    // 先等 demuxer 就绪：mpv 的 start 选项在加载时生效，就绪后位置通常已在续播点。
+    // 不等加载完就盲目重试 seek，会在固定短预算内对“尚未加载的播放器”空发 seek
+    // 然后判失败——这是慢速/4K 网络源续播失败的主因。
+    await _waitForDemuxerReady();
+
+    for (var attempt = 1; attempt <= _startupSeekAttemptLimit; attempt++) {
+      // start 选项已命中则无需再 seek，直接收工。
+      if (_isNearStartupSeekTarget(_position, startPosition)) {
+        return;
+      }
+
+      // 播放器可能在等待/重开途中被 dispose（如 EGL 兜底重开），_player 置空后
+      // 继续 seek 会空指针崩溃并刷屏。捕获此刻的实例,为空即安静收工。
+      final player = _player;
+      if (player == null) return;
+
+      try {
+        await player.seek(startPosition);
+      } catch (error, stackTrace) {
+        // seek 失败不抛出中断播放：start 选项多半已定位，最坏从头播也好过整页报错。
+        _logger.w(
+          'MpvAdapter',
+          'media_kit 启动续播 seek 异常(attempt=$attempt): $error\n$stackTrace',
+        );
+      }
+
+      if (await _waitForStartupSeekPosition(startPosition)) {
+        if (attempt > 1) {
+          _logger.i(
+            'MpvAdapter',
+            'media_kit 启动续播已命中，attempt=$attempt, position=${startPosition.inMilliseconds}ms',
+          );
+        }
+        return;
+      }
+
+      if (attempt < _startupSeekAttemptLimit) {
+        await Future.delayed(_startupSeekRetryDelay);
+      }
+    }
+
+    _logger.w(
+      'MpvAdapter',
+      'media_kit 启动续播未在预期时间内落位，target=${startPosition.inMilliseconds}ms, current=${_position.inMilliseconds}ms',
+    );
+  }
+
+  /// 等待 demuxer 就绪（duration > 0 表示已开始解复用）。超时则继续走兜底 seek。
+  Future<void> _waitForDemuxerReady() async {
+    final stopwatch = Stopwatch()..start();
+    while (stopwatch.elapsed < _demuxerReadyTimeout) {
+      if (_duration > Duration.zero) return;
+      await Future.delayed(_startupSeekPollInterval);
+    }
+  }
+
+  Future<bool> _waitForStartupSeekPosition(Duration target) async {
+    final stopwatch = Stopwatch()..start();
+    while (stopwatch.elapsed < _startupSeekPollTimeout) {
+      if (_isNearStartupSeekTarget(_position, target)) {
+        return true;
+      }
+      await Future.delayed(_startupSeekPollInterval);
+    }
+    return _isNearStartupSeekTarget(_position, target);
+  }
+
+  bool _isNearStartupSeekTarget(Duration current, Duration target) {
+    return (current - target).inMilliseconds.abs() <=
+        _startupSeekTolerance.inMilliseconds;
+  }
+
+  Future<void> _probePgsDecoderAvailability() async {
+    if (!_isDesktopPlatform) return;
+    try {
+      // 注意：mpv 的 `decoder-list` 只含音视频解码器，不含字幕解码器，
+      // 故不能据它判断 PGS。改用「libmpv 是否完整版」判定。
+      if (Platform.isWindows) {
+        final bytes = _activeLibmpvDllBytes();
+        // 完整版 libmpv（含 ffmpeg/pgssub，约 117MB）才能解 PGS；
+        // media-kit 预编译桩约 30MB。阈值取 60MB。
+        _pgsDecoderAvailable = bytes != null && bytes > 60 * 1024 * 1024;
+        final evidence = _describeWindowsLibmpvRuntimeEvidence();
+        if (_pgsDecoderAvailable) {
+          _logger.i('MpvAdapter',
+              '检测到完整版 libmpv，PGS/SUP 图形字幕可渲染。运行时证据: $evidence');
+        } else {
+          _logger.w(
+            'MpvAdapter',
+            '当前 libmpv 为精简版（无 PGS/SUP 解码器）。'
+                '请运行 windows/scripts/upgrade_libmpv_for_pgs.ps1 替换完整版 libmpv-2.dll。'
+                '运行时证据: $evidence',
+          );
+        }
+        return;
+      }
+      // macOS/Linux：随包 Mpv.framework 或系统 libmpv 通常含 pgssub，默认可用。
+      _pgsDecoderAvailable = true;
+      _logger.i('MpvAdapter',
+          '非 Windows 桌面，默认 libmpv 含 PGS/SUP 解码器。运行时证据: ${_describeLibmpvRuntimeEvidence()}');
+    } catch (e) {
+      _logger.w('MpvAdapter', '探测 PGS 解码器失败: $e');
+    }
+  }
+
+  /// 当前运行目录下 libmpv-2.dll 的字节数（无法获取返回 null）。
+  int? _activeLibmpvDllBytes() {
+    try {
+      final dir = File(Platform.resolvedExecutable).parent;
+      final dll =
+          File('${dir.path}${Platform.pathSeparator}libmpv-2.dll');
+      if (dll.existsSync()) return dll.lengthSync();
+    } catch (_) {}
+    return null;
+  }
+
+  String _describeWindowsLibmpvRuntimeEvidence() {
+    try {
+      final executablePath = Platform.resolvedExecutable;
+      final executableDir = File(executablePath).parent;
+      final dllFile =
+          File('${executableDir.path}${Platform.pathSeparator}libmpv-2.dll');
+      final backupFile = File(
+          '${executableDir.path}${Platform.pathSeparator}libmpv-2.dll.orig');
+      final manifestFile = File(
+          '${executableDir.path}${Platform.pathSeparator}libmpv-upgrade.json');
+
+      final parts = <String>[
+        'exe=$executablePath',
+        'dir=${executableDir.path}',
+        'dll=${dllFile.existsSync()}',
+        'backup=${backupFile.existsSync()}',
+        'manifest=${manifestFile.existsSync()}',
+      ];
+      if (dllFile.existsSync()) {
+        parts.add('dllBytes=${dllFile.lengthSync()}');
+      }
+      if (backupFile.existsSync()) {
+        parts.add('backupBytes=${backupFile.lengthSync()}');
+      }
+      final parentDir = executableDir.parent;
+      final grandParentDir = parentDir.parent;
+      if (executableDir.path.isNotEmpty &&
+          parentDir.path.isNotEmpty &&
+          grandParentDir.path.isNotEmpty &&
+          parentDir.path
+              .toLowerCase()
+              .endsWith('${Platform.pathSeparator}runner')) {
+        final sharedLibmpvDir =
+            Directory('${grandParentDir.path}${Platform.pathSeparator}libmpv');
+        final sharedDllFile = File(
+            '${sharedLibmpvDir.path}${Platform.pathSeparator}libmpv-2.dll');
+        final sharedManifestFile = File(
+            '${sharedLibmpvDir.path}${Platform.pathSeparator}libmpv-upgrade.json');
+        parts.add('sharedDir=${sharedLibmpvDir.path}');
+        parts.add('sharedDll=${sharedDllFile.existsSync()}');
+        parts.add('sharedManifest=${sharedManifestFile.existsSync()}');
+        if (sharedDllFile.existsSync()) {
+          parts.add('sharedDllBytes=${sharedDllFile.lengthSync()}');
+        }
+      }
+      return parts.join(', ');
+    } catch (e) {
+      return 'runtime-evidence-error=$e';
+    }
+  }
+
+  String _describeLibmpvRuntimeEvidence() {
+    if (Platform.isWindows) {
+      return _describeWindowsLibmpvRuntimeEvidence();
+    }
+    if (Platform.isMacOS) {
+      return _describeMacosLibmpvRuntimeEvidence();
+    }
+    return _describeGenericDesktopLibmpvRuntimeEvidence();
+  }
+
+  String _describeMacosLibmpvRuntimeEvidence() {
+    try {
+      final executablePath = Platform.resolvedExecutable;
+      final executableDir = File(executablePath).parent;
+      final contentsDir = executableDir.parent;
+      final frameworkFile = File(
+        '${contentsDir.path}${Platform.pathSeparator}Frameworks'
+        '${Platform.pathSeparator}Mpv.framework${Platform.pathSeparator}Mpv',
+      );
+
+      final parts = <String>[
+        'exe=$executablePath',
+        'dir=${executableDir.path}',
+        'framework=${frameworkFile.existsSync()}',
+      ];
+      if (frameworkFile.existsSync()) {
+        parts.add('frameworkBytes=${frameworkFile.lengthSync()}');
+      }
+      return parts.join(', ');
+    } catch (e) {
+      return 'runtime-evidence-error=$e';
+    }
+  }
+
+  String _describeGenericDesktopLibmpvRuntimeEvidence() {
+    try {
+      final executablePath = Platform.resolvedExecutable;
+      final executableDir = File(executablePath).parent;
+      return [
+        'exe=$executablePath',
+        'dir=${executableDir.path}',
+        'os=${Platform.operatingSystemVersion}',
+      ].join(', ');
+    } catch (e) {
+      return 'runtime-evidence-error=$e';
+    }
+  }
+
+  Future<String> _ensureShaderAssetFile(String shaderRef) async {
+    final fileName = _shaderFileName(shaderRef);
+    final assetPath = 'assets/mpv/shaders/$fileName';
+    final supportDir = await getApplicationSupportDirectory();
+    final shaderDir = Directory('${supportDir.path}/shaders');
+    if (!shaderDir.existsSync()) {
+      shaderDir.createSync(recursive: true);
+    }
+
+    final shaderFile = File('${shaderDir.path}/$fileName');
+    final shaderData = await rootBundle.load(assetPath);
+    final bytes = shaderData.buffer.asUint8List(
+      shaderData.offsetInBytes,
+      shaderData.lengthInBytes,
+    );
+
+    if (!shaderFile.existsSync() || await shaderFile.length() != bytes.length) {
+      await shaderFile.writeAsBytes(bytes, flush: true);
+    }
+
+    return shaderFile.path.replaceAll('\\', '/');
+  }
+
+  // 回读 mpv 的 glsl-shaders 属性，数其中 .glsl 出现次数（Windows 路径含盘符冒号，
+  // 不能按分隔符切，数 .glsl 最稳）。失败则退回期望值，不误报 0。
+  Future<int> _readbackShaderCount(NativePlayer np, int expected) async {
+    try {
+      final raw = await np.getProperty('glsl-shaders');
+      return '.glsl'.allMatches(raw).length;
+    } catch (_) {
+      return expected;
+    }
+  }
+
+  Future<void> _applyShaderList(List<String>? shaderRefs) async {
+    final np = _nativePlayer;
+    if (np == null) {
+      return;
+    }
+
+    try {
+      await np.command(['change-list', 'glsl-shaders', 'clr', '']);
+    } catch (_) {
+      await np.setProperty('glsl-shaders', '');
+    }
+
+    if (shaderRefs == null || shaderRefs.isEmpty) {
+      _activeGlslShaderCount = 0;
+      _logger.i('MpvAdapter', 'Anime4K 已关闭');
+      return;
+    }
+
+    final resolvedPaths = <String>[];
+    for (final shaderRef in shaderRefs) {
+      try {
+        resolvedPaths.add(await _ensureShaderAssetFile(shaderRef));
+      } catch (e) {
+        throw StateError(
+            '缺少 Anime4K shader 资源: ${_shaderFileName(shaderRef)} ($e)');
+      }
+    }
+
+    for (final shaderPath in resolvedPaths) {
+      await np.command(['change-list', 'glsl-shaders', 'append', shaderPath]);
+    }
+    // 回读 mpv 实际持有的 glsl-shaders，确认命令真的落到内核（而非静默丢弃）。
+    // 软件纹理(SW 渲染)下即便回读非空，libmpv SW 管线也不会执行 shader → 画面无变化，
+    // 所以回读数 + 纹理模式一起看才能判断「到底有没有生效」。
+    _activeGlslShaderCount = await _readbackShaderCount(np, resolvedPaths.length);
+    _logger.i('MpvAdapter',
+        'Anime4K shaders 已应用(回读 $_activeGlslShaderCount/${resolvedPaths.length}, '
+        '软件纹理=$_softwareTextureActive): ${resolvedPaths.join(', ')}');
+  }
+  // ⚠️ 已彻底删除 _applyMpvRenderSizeForShaders（media_kit setSize 抬渲染尺寸）：
+  // 用户机 dxva2-egl 交互本就损坏（每次启动 EGL surface 创建失败），再 resize 渲染面 →
+  // GPU 驱动击穿 → 蓝屏。2026-07-13 三次 BSOD 全部紧跟 setSize 后 ~100ms（日志 3/3 铁证）。
+  // 结论：media_kit 上**永不 setSize**。超分只在源分辨率跑纯锐化(CAS/RCAS)，放大类(FSR EASU)
+  // 因需 setSize 而放弃。见 anime4k_shaders.dart。
+
+  @override
+  Future<void> initialize({
+    required String videoUrl,
+    Duration? startPosition,
+    bool dolbyVisionFix = false,
+    bool useLibass = false,
+    bool hardwareDecoding = true,
+    String? preferredSubtitleLanguage,
+    int? surfaceViewId, // Not used by media_kit, only for native mpv
+    bool useGpuNext = false, // Not used by media_kit, only for native mpv
+    Map<String, String>? httpHeaders,
+    String? userAgentOverride,
+    String? superResolutionLevel, // Anime4K 档位：决定 shader 链 + 纹理渲染模式
+    bool zeroCopyHwdec = false, // Windows 硬解零拷贝(d3d11va)实验开关
+  }) async {
+    _logger.i('MpvAdapter', '开始初始化 media_kit 内核');
+    _hardwareDecoding = hardwareDecoding;
+    _zeroCopyHwdec = zeroCopyHwdec;
+    // Anime4K 超分档位在建控制器前定下：GLSL user shader 只能在硬件(OpenGL)渲染
+    // 管线里跑；软件纹理(MPV_RENDER_API_TYPE_SW)会静默忽略 glsl-shaders，超分开了
+    // 也毫无变化。因此开超分时强制走硬件纹理（代价是 Win 弹面板可能有轻微闪一下，
+    // 但那是用户主动开超分才付出的、可接受的取舍）。
+    if (superResolutionLevel != null) {
+      _glslShaders = isAnime4KLevelEnabled(superResolutionLevel)
+          ? kAnime4KShaderPresets[superResolutionLevel]
+          : null;
+    }
+    try {
+      await dispose();
+      _adapterDisposed = false; // 本次初始化开始；dispose() 刚把它置真，这里复位
+      _errorMessage = null;
+      _isCompleted = false;
+      _tracks = [];
+      _subtitleTracks = [];
+      _audioTracks = [];
+      _secondarySid = null;
+      _usingExternalSubtitle = false;
+      _httpHeaders = (httpHeaders != null && httpHeaders.isNotEmpty)
+          ? Map<String, String>.from(httpHeaders)
+          : null;
+      _userAgentOverride = userAgentOverride;
+
+      await _configManager.initialize();
+      await _configManager.writeConfig(
+        subtitleFont: _subtitleFont,
+        subtitleScale: _subtitleScale,
+        subtitlePosition: _subtitlePosition,
+        subtitleDelay: _subtitleDelay,
+        audioDelay: _audioDelay,
+        aspectRatio: _aspectRatio,
+        glslShaders: _glslShaders,
+        subtitleBackground: _subtitleBackground,
+      );
+
+      // 启用 native mpv 字幕管线，并关闭 Flutter 侧字幕 overlay。
+      // media_kit 在 libass=false 时会把 sub-visibility 预设为 no，
+      // 这会让内封/外挂 PGS/SUP 即便选中轨道也无法稳定显示。
+      _player = Player(
+        configuration: PlayerConfiguration(
+          libass: true,
+          // macOS 临时提到 info：抓「有声无画」时的 vo/hwdec interop 报错，
+          // 其余平台仍用 warn 避免日志噪音。定位到问题后回退。
+          logLevel: Platform.isMacOS ? MPVLogLevel.info : MPVLogLevel.warn,
+        ),
+      );
+      // macOS 黑屏(有声无画)根因：硬件纹理走 TextureHW(OpenGL 渲染上下文)，
+      // 反复 create/dispose 播放器后 GL 上下文泄漏/损坏→第 N 次播放纹理不出帧→
+      // 黑屏(音频不受影响)，老 macOS(12.x/Intel)尤甚。改用软件纹理 TextureSW
+      // (CVPixelBuffer 拷贝，不用 GL 上下文)彻底免疫该泄漏；解码仍是硬解
+      // (videotoolbox-copy)，只是最终一帧上传走 CPU，代价可接受。
+      //
+      // Windows 同用软件纹理，但为的是另一个症状：弹选集/设置面板(showGeneralDialog
+      // push 路由)时 Flutter 重组图层，ANGLE 硬件纹理会瞬间黑帧→「画面闪一下」。
+      // 移动端 SurfaceTexture 缓存末帧故不闪。软件纹理由 Flutter 托管、末帧常驻，
+      // 重组图层不掉帧→消除闪现；代价同 macOS：4K 每帧 CPU 上传。若 4K 掉帧明显，
+      // 回退本行即可(仅去掉 isWindows)。解码仍是硬解(dxva2/d3d11)。
+      // 桌面三端恒硬件纹理，让 Anime4K 超分即时生效、六档随手切、关掉立即不卡——
+      // 体验与 Android/移动端一致（用户明确要求三端一致）。原因：GLSL user shader 只能在
+      // 硬件(OpenGL)渲染管线里跑；软件纹理的 SW 渲染管线根本不跑 shader。而纹理模式在建
+      // VideoController 时就定死、无法运行时切换（media_kit 一个 Player 只挂一个渲染上下文，
+      // VideoController 也没有单独 dispose 接口）。要即时超分，只能从起播就恒硬件纹理，
+      // 二者不可兼得。取舍（用户已确认接受）：
+      //   Windows — 弹选集/设置面板时画面可能闪一下（ANGLE 重组图层丢末帧）；
+      //   macOS   — 硬件纹理走 GL 上下文，反复 create/dispose 后或泄漏 → 第 N 次播放黑屏
+      //             有声（老 macOS/Intel 尤甚，Apple Silicon/新系统未必复现，见
+      //             macos-no-video-hwdec）。⚠️若 macOS 真机出现黑屏，把下面这行换成
+      //             `Platform.isMacOS && (_glslShaders?.isEmpty ?? true)`，并把下面
+      //             VideoController 的 configuration 换成按该值三元选择软/硬件纹理。
+      const softwareTexture = false;
+      _softwareTextureActive = softwareTexture;
+      _videoController = VideoController(_player!);
+      _videoWidget = null; // 新控制器，丢弃旧的缓存 Video 实例
+      _setupStreamListeners();
+
+      {
+        final np = _nativePlayer;
+        if (np != null) {
+          final fontsDir = _configManager.fontsDirectory;
+          const systemFontsDir = '/system/fonts';
+          final dir = Directory(fontsDir);
+          if (dir.listSync().isNotEmpty) {
+            await np.setProperty('sub-fonts-dir', fontsDir);
+          } else {
+            await np.setProperty('sub-fonts-dir', systemFontsDir);
+          }
+          // 默认关闭次字幕可见性，只有用户明确选择次字幕时才开启
+          // 避免同时显示两个字幕（主字幕+次字幕）
+          await np.setProperty('secondary-sub-visibility', 'no');
+          // 图形字幕(PGS/SUP)混合模式由用户实验开关控制（默认 'no'=OSD 覆盖层）。
+          // 'no' 覆盖层渲染不混入视频帧；'video'/'yes' 把字幕混合进帧——不同显卡/
+          // libmpv 构建下闪现表现不同，故做成可切换项让用户挑不闪的那个。
+          _subtitleBlendMode = await CacheService.getPgsBlendMode();
+          await np.setProperty('blend-subtitles', _subtitleBlendMode);
+          await np.setProperty('sub-visibility', 'yes');
+          // 硬解直通(zero-copy interop)在两个桌面平台会击穿:
+          // - macOS: videotoolbox 直通产出的 CVPixelBuffer 映射不进纹理 → 有声无画;
+          // - Windows: hwdec=auto-safe 选 dxva2,mpv 走 `dxva2-egl` 交互把解码帧
+          //   共享进 ANGLE 的 EGL surface,某些 GPU/驱动下建 EGL surface 失败
+          //   (日志 `libmpv_render/dxva2-egl Failed to create EGL surface`),
+          //   首帧渲染时踩空 → 黑屏/缓冲中原生闪退。
+          // 两者统一用 copy-back 变体:仍 GPU 硬解,但把帧拷回内存再由 media_kit
+          // 正常上传纹理(不建 interop surface),画面稳定、不崩;代价是每帧一次
+          // GPU→内存拷贝,可接受。Linux 直通零拷贝正常,仍用 auto-safe 省一次拷贝。
+          final hwdecValue = !hardwareDecoding
+              ? 'no'
+              : (Platform.isMacOS
+                  ? 'videotoolbox-copy'
+                  : Platform.isWindows
+                      // 零拷贝实验开时用 d3d11va（与 ANGLE 同 D3D11 后端，解码帧直接
+                      // 共享、免每帧拷回）；默认 auto-copy（拷回，兼容性最好、防 EGL 崩）。
+                      ? (_zeroCopyHwdec ? 'd3d11va' : 'auto-copy')
+                      : 'auto-safe');
+          await np.setProperty('hwdec', hwdecValue);
+          // 安全加固 · CVE-2026-8461 (PixelSmash)：libavcodec 的 magicyuv 解码器
+          // 存在堆越界写（攻击者构造的 slice_height 多写一行 chroma 越界），恶意
+          // AVI/MKV/MOV 即可触发崩溃乃至 RCE。修复随 FFmpeg 8.1.2(2026-06-17)发布，
+          // 但桌面端预编译 libmpv（Windows shinchiro 完整版 / macOS·Linux 系统库）
+          // 仍可能内置旧版 ffmpeg。MagicYUV 是冷门无损录屏编码，正常影视/番剧绝不会
+          // 用到，故直接在 mpv 解码层拒绝该解码器（前缀 '-' 仅黑名单这一个，其余编码
+          // 仍走自动选择），无需等待各平台 libmpv 重新打包即可消除攻击面。
+          await np.setProperty('vd', '-magicyuv');
+          if (dolbyVisionFix) {
+            // 杜比视界软件修正：media_kit 走 vo=libmpv(gpu 渲染管线)，无独立 gpu-next vo，
+            // 无法对 DV RPU 做 libplacebo 映射；这里以色彩空间提示 + 色调映射尽量还原，
+            // 配合软解(hwdec=no)避免硬解杜比视界整体偏色/发绿。
+            await np.setProperty('target-colorspace-hint', 'yes');
+            await np.setProperty('tone-mapping', 'spline');
+            // 关键修复(画面闪)：hdr-compute-peak=yes 会逐帧扫描像素重算 HDR 峰值亮度，
+            // 表现为画面亮度忽明忽暗(就是"闪")，且每帧全画面扫描吃 GPU/CPU 加剧卡顿。
+            // 关掉改用固定峰值，亮度稳定不再闪，负载也降下来。
+            await np.setProperty('hdr-compute-peak', 'no');
+            // 关键修复(软解卡顿)：DV 强制软解，4K 软解吃满 CPU 易掉帧。
+            // 桌面端放开解码线程并降一档环路滤波/允许非严格合规加速，
+            // 画质几乎无损但解码快很多，缓解 4K 杜比视界软解卡顿。
+            if (!hardwareDecoding && _isDesktopPlatform) {
+              await np.setProperty('vd-lavc-threads', '0'); // 0=按 CPU 核数自动
+              await np.setProperty('vd-lavc-fast', 'yes');
+              await np.setProperty('vd-lavc-skiploopfilter', 'nonref');
+            }
+          }
+          await _applyShaderList(_glslShaders);
+          if (_isHttpUrl(videoUrl)) {
+            // 视频播放缓存：写到磁盘而非内存，避免大缓冲吃满 RAM 导致卡顿/OOM。
+            // demuxer-max-bytes 是常驻 RAM 的解复用队列上限，已与磁盘缓存档位解耦、
+            // 按平台硬限（见 getDemuxerRamBudgetBytes），杜绝曾经的 2GB+ RAM 占用。
+            final ramBudget = await CacheService.getDemuxerRamBudgetBytes();
+            final forwardBytes = ramBudget.forward;
+            final backBytes = ramBudget.back;
+            final cacheDir = await CacheService.videoStreamCacheDirPath;
+
+            await np.setProperty('cache', 'yes');
+            // 关键：缓存落盘，不占内存。
+            await np.setProperty('cache-on-disk', 'yes');
+            await np.setProperty('cache-dir', cacheDir);
+            await np.setProperty('cache-pause', 'yes');
+            // Don't block startup on an aggressive initial cache fill.
+            // We still keep pause-on-underflow for mid-playback stability.
+            await np.setProperty('cache-pause-wait', '2.5');
+            await np.setProperty('cache-pause-initial', 'no');
+            await np.setProperty('cache-secs', '300');
+            await np.setProperty('demuxer-max-bytes', '$forwardBytes');
+            await np.setProperty('demuxer-max-back-bytes', '$backBytes');
+            await np.setProperty('demuxer-readahead-secs', '180');
+            await np.setProperty('demuxer-seekable-cache', 'yes');
+            await np.setProperty('demuxer-cache-wait', 'no');
+            await np.setProperty('network-timeout', '20');
+            // L1 预防层：让 libavformat 在「网络掉线」时透明重连(连当前 URL)，
+            // 跨境硬盘服的瞬断/抖动在缓冲区内消化，不冒错误、不黑屏。
+            // 关键：只开 reconnect_on_network_error，不开 reconnect_on_http_error——
+            // 网盘 302 签名过期返回的 4xx/5xx 必须冒出来交给 L2 重解析重签，
+            // 若让 ffmpeg 死磕过期链，错误永不上抛，L2 反而触发不了。
+            // ⚠️ 不要加 multiple_requests=1：本意是 HTTP keep-alive 复用连接省握手，
+            // 但对部分 Emby/服务器,libavformat 复用连接发 Range/seek 时会灾难性变慢——
+            // 实测 ffprobe 打开同一 MKV：默认 1.6s，加 multiple_requests=1 → 3m35s(×130)。
+            // 表现为 mpv 读 MKV 尾部 Cues 索引卡死十几秒→无画无声"加载不出来"。
+            // reconnect 系列实测 1.9s 无副作用,保留(治跨境断流)。
+            await np.setProperty('stream-lavf-o',
+                'reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=30');
+            await np.setProperty('stream-buffer-size', '33554432');
+            await np.setProperty('interpolation', 'no');
+            await np.setProperty('prefetch-playlist', 'no');
+            await np.setProperty('vd-lavc-threads', '0');
+            await np.setProperty('ad-lavc-threads', '0');
+          }
+        }
+      }
+
+      await _openVideoSource(videoUrl, startPosition: startPosition);
+
+      // 孤儿守卫：初始化这段异步期间若被 dispose 顶替，销掉刚建好的 Player 再退，
+      // 否则它无人引用却在后台继续出声（「双声音」的孤儿来源之一）。
+      if (_adapterDisposed) {
+        _logger.w('MpvAdapter', '初始化途中已被销毁，丢弃本次刚建的 Player 以免孤儿出声');
+        await _player?.dispose();
+        _player = null;
+        _videoController = null;
+        return;
+      }
+
+      _isInitialized = true;
+      _callbacks?.onDurationChanged?.call();
+      _logger.i('MpvAdapter', 'media_kit 初始化完成');
+
+      // 异步探测 PGS 解码器，不阻塞初始化。
+      unawaited(_probePgsDecoderAvailability());
+    } catch (e, stackTrace) {
+      _errorMessage = e.toString();
+      _isInitialized = false;
+      _logger.eWithStack('MpvAdapter', '初始化失败', e, stackTrace);
+      _callbacks?.onError?.call();
+    }
+  }
+
+  /// 读取当前 cue 的起止时间并回调（供流式翻译）。
+  Future<void> _emitSubtitleCue(String text) async {
+    Duration? start, end;
+    final np = _nativePlayer;
+    if (np != null) {
+      try {
+        start = _parseSecondsToDuration(await np.getProperty('sub-start'));
+        end = _parseSecondsToDuration(await np.getProperty('sub-end'));
+      } catch (_) {}
+    }
+    _callbacks?.onSubtitleCue?.call(text, start, end);
+  }
+
+  Duration? _parseSecondsToDuration(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    final s = double.tryParse(raw);
+    if (s == null) return null;
+    return Duration(milliseconds: (s * 1000).round());
+  }
+
+  void _setupStreamListeners() {
+    if (_player == null) return;
+
+    _subscriptions.add(_player!.stream.playing.listen((playing) {
+      _isPlaying = playing;
+      _callbacks?.onPlayingStateChanged?.call();
+    }));
+    _subscriptions.add(_player!.stream.position.listen((position) {
+      _position = position;
+      if (_isSeekBuffering &&
+          position.inMilliseconds >= 0 &&
+          (_duration == Duration.zero || position <= _duration)) {
+        _isSeekInFlight = false;
+      }
+      _callbacks?.onPositionChanged?.call();
+    }));
+    _subscriptions.add(_player!.stream.duration.listen((duration) {
+      _duration = duration;
+      _callbacks?.onDurationChanged?.call();
+    }));
+    _subscriptions.add(_player!.stream.buffering.listen((buffering) {
+      _setBufferingState(buffering);
+      if (_isSeekBuffering && !buffering) {
+        unawaited(() async {
+          try {
+            final stillBuffering = await _isCacheStillBuffering();
+            if (!stillBuffering) {
+              _completeSeekBuffering();
+            }
+          } catch (_) {
+            _completeSeekBuffering();
+          }
+        }());
+      }
+      _callbacks?.onBufferingStateChanged?.call();
+    }));
+    _subscriptions.add(_player!.stream.completed.listen((completed) {
+      if (completed) {
+        _isCompleted = true;
+        _callbacks?.onCompleted?.call();
+      }
+    }));
+    _subscriptions.add(_player!.stream.error.listen((error) {
+      _errorMessage = error.toString();
+      _logger.e('MpvAdapter', '播放器错误: $_errorMessage');
+      _callbacks?.onError?.call();
+    }));
+    // 转发 libmpv 原生日志（warn 及以上），以便捕获崩溃前的 native 报错。
+    _subscriptions.add(_player!.stream.log.listen((log) {
+      final level = log.level.toLowerCase();
+      final msg = 'mpv[${log.prefix}] ${log.text}'.trimRight();
+      if (level == 'error' || level == 'fatal') {
+        _logger.e('MpvNative', msg);
+      } else {
+        _logger.w('MpvNative', msg);
+      }
+    }));
+    // 当前字幕 cue 文本变化 → 供流式翻译实时取词（含起止时间）。
+    _subscriptions.add(_player!.stream.subtitle.listen((lines) {
+      final text =
+          lines.where((l) => l.trim().isNotEmpty).join('\n').trim();
+      if (text == _lastSubtitleCueText) return;
+      _lastSubtitleCueText = text;
+      if (text.isEmpty) return;
+      unawaited(_emitSubtitleCue(text));
+    }));
+    _subscriptions.add(_player!.stream.tracks.listen((tracks) {
+      _subtitleTracks = tracks.subtitle;
+      _audioTracks = tracks.audio;
+      var resolvedSubtitleKind =
+          !_usingExternalSubtitle ? SubtitleKind.text : null;
+
+      final trackList = <Map<String, dynamic>>[];
+      for (final track in tracks.video) {
+        trackList.add({
+          'id': track.id,
+          'type': 'video',
+          'title': track.title ?? '',
+          'language': track.language ?? '',
+          'codec': track.codec ?? '',
+        });
+      }
+      for (final track in tracks.audio) {
+        trackList.add({
+          'id': track.id,
+          'type': 'audio',
+          'title': track.title ?? '',
+          'language': track.language ?? '',
+          'codec': track.codec ?? '',
+          'selected': _trackIdEquals(track.id, _selectedAudioTrackId),
+        });
+      }
+      for (final track in tracks.subtitle) {
+        final id = track.id;
+        if (id == 'auto' || id == 'no') continue;
+        final kind = SubtitleTrackMatcher.classifyKind(
+          codec: track.codec,
+          title: track.title,
+        );
+        final isBitmap = kind == SubtitleKind.bitmap;
+        final isAss = kind == SubtitleKind.ass;
+        if (!_usingExternalSubtitle &&
+            _trackIdEquals(track.id, _selectedSubtitleTrackId)) {
+          resolvedSubtitleKind = kind;
+        }
+        trackList.add({
+          'id': track.id,
+          'type': isBitmap ? 'bitmap' : 'text',
+          'title': track.title ?? '',
+          'language': track.language ?? '',
+          'codec': track.codec ?? '',
+          'isBitmap': isBitmap,
+          'isAss': isAss,
+          'selected': _trackIdEquals(track.id, _selectedSubtitleTrackId),
+        });
+      }
+      if (!_usingExternalSubtitle) {
+        _hasBitmapSubtitle = resolvedSubtitleKind == SubtitleKind.bitmap;
+        _currentSubIsAss = resolvedSubtitleKind == SubtitleKind.ass;
+      }
+      _tracks = trackList;
+      _logger.d('MpvAdapter',
+          '轨道变更: video=${tracks.video.length}, audio=${tracks.audio.length}, subtitle=${tracks.subtitle.length}');
+      _tryPendingSubtitleSelection();
+    }));
+  }
+
+  String? _pendingSubtitleLang;
+  String? _pendingSubtitleCodec;
+  String? _pendingSubtitleTitle;
+
+  void setPendingSubtitle(String codec, {String? title}) {
+    _pendingSubtitleLang = null;
+    setSubtitleSelectionHint(codec, title: title);
+  }
+
+  @override
+  void setSubtitleSelectionHint(String? codec, {String? title}) {
+    _pendingSubtitleCodec = codec?.toLowerCase();
+    _pendingSubtitleTitle = title;
+  }
+
+  void _setBufferingState(bool buffering) {
+    final effective = buffering || _isSeekBuffering;
+    if (_isBuffering == effective) {
+      return;
+    }
+    _isBuffering = effective;
+  }
+
+  void _beginSeekBuffering() {
+    _isSeekBuffering = true;
+    _isSeekInFlight = true;
+    _seekBufferingPollTimer?.cancel();
+    _seekBufferingFallbackTimer?.cancel();
+    _seekBufferingFallbackTimer = Timer(const Duration(seconds: 3), () {
+      _completeSeekBuffering();
+    });
+    _setBufferingState(true);
+    _callbacks?.onBufferingStateChanged?.call();
+  }
+
+  void _completeSeekBuffering() {
+    if (!_isSeekBuffering) {
+      _isSeekInFlight = false;
+      _seekBufferingPollTimer?.cancel();
+      _seekBufferingPollTimer = null;
+      return;
+    }
+    _isSeekBuffering = false;
+    _isSeekInFlight = false;
+    _seekBufferingPollTimer?.cancel();
+    _seekBufferingPollTimer = null;
+    _seekBufferingFallbackTimer?.cancel();
+    _seekBufferingFallbackTimer = null;
+    _setBufferingState(false);
+    _callbacks?.onBufferingStateChanged?.call();
+  }
+
+  Future<bool> _isCacheStillBuffering() async {
+    final np = _nativePlayer;
+    if (np == null) {
+      return false;
+    }
+    final pausedForCache =
+        (await np.getProperty('paused-for-cache')).toLowerCase();
+    final cacheBufferingState =
+        (await np.getProperty('cache-buffering-state')).toLowerCase();
+    final cacheDurationRaw = await np.getProperty('demuxer-cache-duration');
+    final cacheDuration = double.tryParse(cacheDurationRaw) ?? 0.0;
+    return pausedForCache == 'yes' ||
+        cacheBufferingState == 'yes' ||
+        cacheBufferingState == 'true' ||
+        cacheBufferingState == '1' ||
+        (_isSeekInFlight && cacheDuration <= 0.05);
+  }
+
+  void _startSeekBufferingMonitor() {
+    _seekBufferingPollTimer?.cancel();
+    _seekBufferingPollTimer = Timer.periodic(
+      const Duration(milliseconds: 180),
+      (_) async {
+        if (!_isSeekBuffering) {
+          _seekBufferingPollTimer?.cancel();
+          _seekBufferingPollTimer = null;
+          return;
+        }
+        try {
+          final stillBuffering = await _isCacheStillBuffering();
+          if (!stillBuffering) {
+            _completeSeekBuffering();
+          }
+        } catch (_) {
+          // Let the fallback timer close the buffering state.
+        }
+      },
+    );
+  }
+
+  SubtitleKind _classifySubtitleTrackKind(
+    SubtitleTrack track, {
+    String? hintedCodec,
+    String? hintedTitle,
+  }) {
+    final trackInfo =
+        _tracks.where((t) => t['id']?.toString() == track.id).firstOrNull;
+    return SubtitleTrackMatcher.classifyKind(
+      codec: track.codec,
+      title: track.title,
+      isBitmap:
+          trackInfo?['isBitmap'] == true || trackInfo?['type'] == 'bitmap',
+      isAss: trackInfo?['isAss'] == true,
+      expectedCodec: hintedCodec,
+      expectedTitle: hintedTitle,
+    );
+  }
+
+  bool _trackIdEquals(dynamic rawId, String? targetId) {
+    if (targetId == null) {
+      return false;
+    }
+    return rawId?.toString() == targetId;
+  }
+
+  bool _languagesMatch(String? expected, String? actual) {
+    final e = (expected ?? '').trim().toLowerCase();
+    final a = (actual ?? '').trim().toLowerCase();
+    if (e.isEmpty || a.isEmpty) {
+      return false;
+    }
+    if (e == a) {
+      return true;
+    }
+    const zhAliases = {'chi', 'zh', 'zho', 'chs', 'cht'};
+    if (zhAliases.contains(e) && zhAliases.contains(a)) {
+      return true;
+    }
+    return false;
+  }
+
+  Future<String?> _resolveNativeSubtitleSid(
+    SubtitleTrack target, {
+    String? hintedCodec,
+    String? hintedTitle,
+  }) async {
+    final np = _nativePlayer;
+    if (np == null) {
+      return null;
+    }
+    try {
+      final trackListJson = await np.getProperty('track-list');
+      if (trackListJson.isEmpty || trackListJson == 'null') {
+        return null;
+      }
+      final decoded = jsonDecode(trackListJson);
+      if (decoded is! List) {
+        return null;
+      }
+
+      final targetKind = _classifySubtitleTrackKind(
+        target,
+        hintedCodec: hintedCodec,
+        hintedTitle: hintedTitle,
+      );
+      final targetTitleLower =
+          (hintedTitle ?? target.title ?? '').toLowerCase();
+      final targetLang = target.language?.toLowerCase();
+      final targetCodecLower =
+          (hintedCodec ?? target.codec ?? '').toLowerCase();
+      final candidates = <Map<String, dynamic>>[];
+
+      for (final raw in decoded) {
+        if (raw is! Map) continue;
+        final type = raw['type']?.toString();
+        if (type != 'sub') continue;
+        final rawId = raw['id']?.toString();
+        if (rawId == null ||
+            rawId.isEmpty ||
+            rawId == 'no' ||
+            rawId == 'auto') {
+          continue;
+        }
+        final title = raw['title']?.toString() ?? '';
+        final lang =
+            raw['lang']?.toString() ?? raw['language']?.toString() ?? '';
+        final codec = raw['codec']?.toString() ?? '';
+        final bitmap = raw['image'] == true ||
+            raw['isBitmap'] == true ||
+            raw['albumart'] == true;
+        final ass = raw['isAss'] == true;
+        final kind = SubtitleTrackMatcher.classifyKind(
+          codec: codec,
+          title: title,
+          isBitmap: bitmap,
+          isAss: ass,
+          expectedCodec: targetCodecLower,
+          expectedTitle: targetTitleLower,
+        );
+        if (kind != targetKind) {
+          continue;
+        }
+        candidates.add({
+          'id': rawId,
+          'title': title,
+          'language': lang,
+          'codec': codec,
+        });
+      }
+
+      if (candidates.isEmpty) {
+        return null;
+      }
+      if (candidates.length == 1) {
+        return candidates.first['id']?.toString();
+      }
+
+      for (final candidate in candidates) {
+        final title = (candidate['title'] ?? '').toString();
+        if (targetTitleLower.isNotEmpty &&
+            title.isNotEmpty &&
+            _matchTitles(targetTitleLower, title.toLowerCase())) {
+          return candidate['id']?.toString();
+        }
+      }
+
+      for (final candidate in candidates) {
+        if (_languagesMatch(targetLang, candidate['language']?.toString())) {
+          return candidate['id']?.toString();
+        }
+      }
+
+      for (final candidate in candidates) {
+        final codec = (candidate['codec'] ?? '').toString().toLowerCase();
+        if (targetCodecLower.isNotEmpty && codec == targetCodecLower) {
+          return candidate['id']?.toString();
+        }
+      }
+
+      return candidates.first['id']?.toString();
+    } catch (e) {
+      _logger.w('MpvAdapter', '解析原生字幕 track-list 失败: $e');
+      return null;
+    }
+  }
+
+  void _markTrackSelected({
+    String? subtitleTrackId,
+    String? nativeSubtitleSid,
+    String? audioTrackId,
+  }) {
+    if (subtitleTrackId != null) {
+      _selectedSubtitleTrackId = subtitleTrackId;
+    }
+    if (nativeSubtitleSid != null) {
+      _selectedNativeSubtitleSid = nativeSubtitleSid;
+    }
+    if (audioTrackId != null) {
+      _selectedAudioTrackId = audioTrackId;
+    }
+    for (final track in _tracks) {
+      final type = track['type']?.toString();
+      if (_subtitleTrackTypes.contains(type)) {
+        track['selected'] =
+            _trackIdEquals(track['id'], _selectedSubtitleTrackId);
+      } else if (type == 'audio') {
+        track['selected'] = _trackIdEquals(track['id'], _selectedAudioTrackId);
+      }
+    }
+  }
+
+  Future<bool> _ensureNativeSubtitleTrackSelection(String trackId) async {
+    final np = _nativePlayer;
+    if (np == null) {
+      return true;
+    }
+    try {
+      for (var attempt = 1; attempt <= 6; attempt++) {
+        var sid = await np.getProperty('sid');
+        if (sid != trackId) {
+          await np.setProperty('sid', trackId);
+          sid = await np.getProperty('sid');
+        }
+        _logger.d(
+          'MpvAdapter',
+          '字幕轨道校验: attempt=$attempt, expected=$trackId, sid=$sid',
+        );
+        if (sid == trackId) {
+          return true;
+        }
+        await Future.delayed(const Duration(milliseconds: 120));
+      }
+      _logger.w('MpvAdapter', '字幕轨道校验失败: expected=$trackId');
+    } catch (e) {
+      _logger.w('MpvAdapter', '字幕轨道校验失败: $e');
+    }
+    return false;
+  }
+
+  Future<bool> waitForSubtitleTrackSelection(
+    String trackId, {
+    String? hintedCodec,
+    String? hintedTitle,
+  }) async {
+    var expectedSid = trackId;
+    if (_selectedSubtitleTrackId == trackId &&
+        _selectedNativeSubtitleSid != null &&
+        _selectedNativeSubtitleSid!.isNotEmpty) {
+      expectedSid = _selectedNativeSubtitleSid!;
+    } else {
+      final target = _subtitleTracks
+          .where((track) => track.id != 'auto' && track.id != 'no')
+          .where((track) => _trackIdEquals(track.id, trackId))
+          .firstOrNull;
+      if (target != null) {
+        expectedSid = await _resolveNativeSubtitleSid(
+              target,
+              hintedCodec: hintedCodec,
+              hintedTitle: hintedTitle,
+            ) ??
+            trackId;
+      }
+    }
+    return _ensureNativeSubtitleTrackSelection(expectedSid);
+  }
+
+  Future<void> _ensureBitmapExternalSubtitleSelection() async {
+    final np = _nativePlayer;
+    if (np == null || !_hasBitmapSubtitle || !_usingExternalSubtitle) {
+      return;
+    }
+    try {
+      String? candidateId;
+      for (var attempt = 1; attempt <= 6; attempt++) {
+        final trackListJson = await np.getProperty('track-list');
+        if (trackListJson.isEmpty || trackListJson == 'null') {
+          await Future.delayed(const Duration(milliseconds: 180));
+          continue;
+        }
+
+        final decoded = jsonDecode(trackListJson);
+        if (decoded is! List) {
+          _logger.w('MpvAdapter', '位图外挂字幕校验失败: track-list 不是数组');
+          return;
+        }
+
+        for (final raw in decoded.reversed) {
+          if (raw is! Map) continue;
+          final type = raw['type']?.toString();
+          if (type != 'sub') continue;
+          final external = raw['external'];
+          final title = raw['title']?.toString().toLowerCase() ?? '';
+          final id = raw['id']?.toString();
+          if (id == null || id.isEmpty) continue;
+          if (external == true || title.contains('external subtitle')) {
+            candidateId = id;
+            break;
+          }
+        }
+
+        if (candidateId == null) {
+          await Future.delayed(const Duration(milliseconds: 180));
+          continue;
+        }
+
+        var sid = await np.getProperty('sid');
+        if (sid != candidateId) {
+          await np.setProperty('sid', candidateId);
+          sid = await np.getProperty('sid');
+        }
+        _logger.d(
+          'MpvAdapter',
+          '位图外挂字幕轨道校验: attempt=$attempt, expected=$candidateId, sid=$sid',
+        );
+        if (sid == candidateId) {
+          await np.setProperty('sub-visibility', 'yes');
+          return;
+        }
+        await Future.delayed(const Duration(milliseconds: 180));
+      }
+
+      _logger.w(
+          'MpvAdapter', '位图外挂字幕轨道校验失败: 未选中外挂图形字幕轨道 candidate=$candidateId');
+    } catch (e) {
+      _logger.w('MpvAdapter', '位图外挂字幕轨道校验失败: $e');
+    }
+  }
+
+  Future<void> _removeExternalSubtitleTracks() async {
+    final np = _nativePlayer;
+    if (np == null) {
+      return;
+    }
+    try {
+      final trackListJson = await np.getProperty('track-list');
+      if (trackListJson.isEmpty || trackListJson == 'null') {
+        return;
+      }
+      final decoded = jsonDecode(trackListJson);
+      if (decoded is! List) {
+        return;
+      }
+      for (final raw in decoded.reversed) {
+        if (raw is! Map) continue;
+        final type = raw['type']?.toString();
+        final external = raw['external'] == true;
+        if (type != 'sub' || !external) {
+          continue;
+        }
+        final id = raw['id']?.toString();
+        if (id == null || id.isEmpty) {
+          continue;
+        }
+        try {
+          await np.command(['sub-remove', id]);
+        } catch (_) {
+          // Ignore if libmpv refuses to remove an already-detached track.
+        }
+      }
+    } catch (e) {
+      _logger.w('MpvAdapter', '清理外挂字幕轨道失败: $e');
+    }
+  }
+
+  Future<void> _logNativeSubtitleState(String context) async {
+    final np = _nativePlayer;
+    if (np == null) {
+      return;
+    }
+    try {
+      final sid = await np.getProperty('sid');
+      final subVisibility = await np.getProperty('sub-visibility');
+      final subAss = await np.getProperty('sub-ass');
+      final blendSubtitles = await np.getProperty('blend-subtitles');
+      _logger.i(
+        'MpvAdapter',
+        '字幕状态[$context]: sid=$sid, visible=$subVisibility, ass=$subAss, blend=$blendSubtitles, bitmap=$_hasBitmapSubtitle, external=$_usingExternalSubtitle',
+      );
+    } catch (e) {
+      _logger.w('MpvAdapter', '读取字幕状态失败[$context]: $e');
+    }
+  }
+
+  @override
+  Future<void> selectSubtitleTrack(String trackId) async {
+    if (_player == null || !_isInitialized) return;
+    _logger.i(
+        'MpvAdapter', '选择字幕轨道: id=$trackId, 已知轨道数=${_subtitleTracks.length}');
+    try {
+      final hintedCodec = _pendingSubtitleCodec;
+      final hintedTitle = _pendingSubtitleTitle;
+      final realTracks =
+          _subtitleTracks.where((t) => t.id != 'auto' && t.id != 'no').toList();
+      if (realTracks.isEmpty) {
+        _logger.w('MpvAdapter', '轨道列表为空，先用SubtitleTrack.auto()兜底');
+        await _player!.setSubtitleTrack(SubtitleTrack.auto());
+        _pendingSubtitleLang = trackId;
+        return;
+      }
+      var target = realTracks.where((t) => t.id == trackId).firstOrNull;
+      if (target == null) {
+        final trackInfo = _tracks
+            .where((t) =>
+                (t['type'] == 'text' || t['type'] == 'bitmap') &&
+                t['id']?.toString() == trackId)
+            .firstOrNull;
+        if (trackInfo != null) {
+          target = realTracks.where((t) => t.id == trackInfo['id']).firstOrNull;
+        }
+      }
+      if (target != null) {
+        final kind = _classifySubtitleTrackKind(
+          target,
+          hintedCodec: hintedCodec,
+          hintedTitle: hintedTitle,
+        );
+        _hasBitmapSubtitle = kind == SubtitleKind.bitmap;
+        _currentSubIsAss = kind == SubtitleKind.ass;
+        _usingExternalSubtitle = false;
+        _logger.i('MpvAdapter',
+            '字幕轨道已选择: id=${target.id}, title=${target.title}, lang=${target.language}, codec=${target.codec}, bitmap=$_hasBitmapSubtitle, ass=$_currentSubIsAss');
+        await _player!.setSubtitleTrack(target);
+        final nativeSid = await _resolveNativeSubtitleSid(
+          target,
+          hintedCodec: hintedCodec,
+          hintedTitle: hintedTitle,
+        );
+        if (nativeSid != null && nativeSid.isNotEmpty) {
+          final np = _nativePlayer;
+          if (np != null) {
+            await np.setProperty('sid', nativeSid);
+          }
+          await _ensureNativeSubtitleTrackSelection(nativeSid);
+          _markTrackSelected(
+            subtitleTrackId: target.id.toString(),
+            nativeSubtitleSid: nativeSid,
+          );
+          await _logNativeSubtitleState('select:$nativeSid');
+        } else {
+          await _ensureNativeSubtitleTrackSelection(target.id.toString());
+          _markTrackSelected(
+            subtitleTrackId: target.id.toString(),
+            nativeSubtitleSid: target.id.toString(),
+          );
+          await _logNativeSubtitleState('select:${target.id}');
+        }
+      } else {
+        _logger.w('MpvAdapter',
+            '未找到字幕轨道: id=$trackId, 可用: ${realTracks.map((t) => '${t.id}/${t.language}/${t.codec}').toList()}');
+        await _player!.setSubtitleTrack(SubtitleTrack.auto());
+        _selectedSubtitleTrackId = null;
+        _selectedNativeSubtitleSid = null;
+        _usingExternalSubtitle = false;
+        _markTrackSelected();
+      }
+      _pendingSubtitleCodec = null;
+      _pendingSubtitleTitle = null;
+      await _applySubtitleRuntimeProperties();
+    } catch (e, stackTrace) {
+      _logger.eWithStack('MpvAdapter', '选择字幕轨道失败', e, stackTrace);
+    }
+  }
+
+  Future<void> _tryPendingSubtitleSelection() async {
+    if (_pendingSubtitleLang == null) return;
+    final realTracks =
+        _subtitleTracks.where((t) => t.id != 'auto' && t.id != 'no').toList();
+    if (realTracks.isEmpty) return;
+    final targetId = _pendingSubtitleLang;
+    final targetCodec = _pendingSubtitleCodec;
+    final targetTitle = _pendingSubtitleTitle;
+    _pendingSubtitleLang = null;
+    _pendingSubtitleCodec = null;
+    _pendingSubtitleTitle = null;
+    _logger.i('MpvAdapter',
+        '延迟选择字幕轨道: id=$targetId, codec=$targetCodec, title=$targetTitle, 可用=${realTracks.length}个');
+
+    var target = realTracks.where((t) => t.id == targetId).firstOrNull;
+    if (target == null) {
+      final trackInfo = _tracks
+          .where((t) =>
+              (t['type'] == 'text' || t['type'] == 'bitmap') &&
+              t['id']?.toString() == targetId)
+          .firstOrNull;
+      if (trackInfo != null) {
+        target = realTracks.where((t) => t.id == trackInfo['id']).firstOrNull;
+      }
+    }
+
+    if (target == null && targetTitle != null && targetTitle.isNotEmpty) {
+      for (final t in realTracks) {
+        final tTitle = t.title?.toLowerCase() ?? '';
+        if (tTitle.isNotEmpty && _matchTitles(targetTitle, tTitle)) {
+          target = t;
+          break;
+        }
+      }
+    }
+
+    if (target == null && targetCodec != null) {
+      final isBitmap =
+          SubtitleTrackMatcher.isGraphicalSubtitleCodec(targetCodec);
+      final isAss = SubtitleTrackMatcher.isAssSubtitleCodec(targetCodec);
+      final candidates = <SubtitleTrack>[];
+      for (final t in realTracks) {
+        final kind = _classifySubtitleTrackKind(
+          t,
+          hintedCodec: targetCodec,
+          hintedTitle: targetTitle,
+        );
+        final tIsBitmap = kind == SubtitleKind.bitmap;
+        final tIsAss = kind == SubtitleKind.ass;
+        if (isBitmap && tIsBitmap) candidates.add(t);
+        if (isAss && tIsAss) candidates.add(t);
+      }
+      if (candidates.length == 1) {
+        target = candidates.first;
+      } else if (candidates.length > 1 &&
+          targetTitle != null &&
+          targetTitle.isNotEmpty) {
+        for (final t in candidates) {
+          final tTitle = t.title?.toLowerCase() ?? '';
+          if (tTitle.isNotEmpty && _matchTitles(targetTitle, tTitle)) {
+            target = t;
+            break;
+          }
+        }
+        target ??= candidates.first;
+      }
+      target ??= realTracks.first;
+    }
+
+    if (target != null) {
+      final kind = _classifySubtitleTrackKind(
+        target,
+        hintedCodec: targetCodec,
+        hintedTitle: targetTitle,
+      );
+      _hasBitmapSubtitle = kind == SubtitleKind.bitmap;
+      _currentSubIsAss = kind == SubtitleKind.ass;
+      _usingExternalSubtitle = false;
+      await _player!.setSubtitleTrack(target);
+      final nativeSid = await _resolveNativeSubtitleSid(
+        target,
+        hintedCodec: targetCodec,
+        hintedTitle: targetTitle,
+      );
+      if (nativeSid != null && nativeSid.isNotEmpty) {
+        final np = _nativePlayer;
+        if (np != null) {
+          await np.setProperty('sid', nativeSid);
+        }
+        await _ensureNativeSubtitleTrackSelection(nativeSid);
+        _markTrackSelected(
+          subtitleTrackId: target.id.toString(),
+          nativeSubtitleSid: nativeSid,
+        );
+        await _logNativeSubtitleState('deferred-select:$nativeSid');
+      } else {
+        await _ensureNativeSubtitleTrackSelection(target.id.toString());
+        _markTrackSelected(
+          subtitleTrackId: target.id.toString(),
+          nativeSubtitleSid: target.id.toString(),
+        );
+        await _logNativeSubtitleState('deferred-select:${target.id}');
+      }
+      await _applySubtitleRuntimeProperties();
+      _logger.i('MpvAdapter',
+          '延迟字幕选择成功: id=${target.id}, title=${target.title}, codec=${target.codec}');
+    }
+  }
+
+  bool _matchTitles(String embyTitle, String playerTitle) {
+    final e = embyTitle.toLowerCase();
+    final p = playerTitle.toLowerCase();
+    if (e == p) return true;
+    if (p.contains(e) || e.contains(p)) return true;
+    final simpKeywords = ['简', 'chs', '简体', '简日', 'gb', '简中'];
+    final tradKeywords = ['繁', 'cht', '繁体', '繁日', 'big5', '繁中'];
+    final eIsSimp = simpKeywords.any((k) => e.contains(k));
+    final eIsTrad = tradKeywords.any((k) => e.contains(k));
+    final pIsSimp = simpKeywords.any((k) => p.contains(k));
+    final pIsTrad = tradKeywords.any((k) => p.contains(k));
+    if (eIsSimp && pIsSimp) return true;
+    if (eIsTrad && pIsTrad) return true;
+    return false;
+  }
+
+  @override
+  Future<void> deselectSubtitleTrack() async {
+    if (_player == null || !_isInitialized) return;
+    try {
+      await _player!.setSubtitleTrack(SubtitleTrack.no());
+      await _removeExternalSubtitleTracks();
+      _selectedSubtitleTrackId = null;
+      _selectedNativeSubtitleSid = null;
+      _hasBitmapSubtitle = false;
+      _currentSubIsAss = false;
+      _usingExternalSubtitle = false;
+      _markTrackSelected();
+    } catch (e, stackTrace) {
+      _logger.eWithStack('MpvAdapter', '关闭字幕失败', e, stackTrace);
+    }
+  }
+
+  @override
+  Future<void> selectAudioTrack(String trackId) async {
+    if (_player == null || !_isInitialized) return;
+    try {
+      final target =
+          _audioTracks.where((t) => _trackIdEquals(t.id, trackId)).firstOrNull;
+      if (target != null) {
+        await _player!.setAudioTrack(target);
+        _markTrackSelected(audioTrackId: target.id.toString());
+      }
+    } catch (e, stackTrace) {
+      _logger.eWithStack('MpvAdapter', '选择音频轨道失败', e, stackTrace);
+    }
+  }
+
+  // ---- 原生 mpv 属性/命令直通（供流式翻译 sub-step 预读等高级用法）----
+
+  Future<String?> mpvGetProperty(String name) async {
+    final np = _nativePlayer;
+    if (np == null) return null;
+    try {
+      return await np.getProperty(name);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> mpvSetProperty(String name, String value) async {
+    final np = _nativePlayer;
+    if (np == null) return;
+    try {
+      await np.setProperty(name, value);
+    } catch (_) {}
+  }
+
+  Future<void> mpvCommand(List<String> args) async {
+    final np = _nativePlayer;
+    if (np == null) return;
+    try {
+      await np.command(args);
+    } catch (_) {}
+  }
+
+  @override
+  Future<void> loadLibassSubtitle(String path) async {
+    _logger.i('MpvAdapter', '加载外挂字幕: $path');
+    if (_player == null || !_isInitialized) return;
+
+    try {
+      if (!_isHttpUrl(path)) {
+        final file = File(path);
+        if (!file.existsSync()) {
+          throw StateError('字幕文件不存在: $path');
+        }
+        final fileSize = await file.length();
+        if (fileSize <= 0) {
+          throw StateError('字幕文件为空: $path');
+        }
+        _logger.i('MpvAdapter', '外挂字幕文件校验: path=$path, size=$fileSize bytes');
+      }
+
+      if (_isHttpUrl(path)) {
+        _logger.i('MpvAdapter', 'HTTP URL字幕，直接传给mpv加载');
+        final ext = _extractExtension(path);
+        final normalizedPath = path.toLowerCase();
+        final isAss = ext == 'ass' ||
+            ext == 'ssa' ||
+            normalizedPath.contains('format=ass') ||
+            normalizedPath.contains('codec=ass');
+        final isPgs = ext == 'pgs' ||
+            ext == 'sup' ||
+            normalizedPath.contains('format=pgs') ||
+            normalizedPath.contains('codec=pgs') ||
+            normalizedPath.contains('pgssub') ||
+            normalizedPath.contains('hdmv');
+        _currentSubIsAss = isAss;
+        _hasBitmapSubtitle = isPgs;
+        _usingExternalSubtitle = true;
+        _logger.i('MpvAdapter',
+            'HTTP字幕类型: ext=$ext, isAss=$_currentSubIsAss, isBitmap=$_hasBitmapSubtitle');
+        final np = _nativePlayer;
+        if (_hasBitmapSubtitle && np != null) {
+          await _removeExternalSubtitleTracks();
+          final subtitlePath = _toMpvSubtitleUri(path);
+          await np.command(
+              ['sub-add', subtitlePath, 'select', 'External Subtitle', 'und']);
+          await _ensureBitmapExternalSubtitleSelection();
+        } else {
+          await _player!.setSubtitleTrack(SubtitleTrack.uri(path));
+        }
+        _selectedSubtitleTrackId = 'external';
+        _selectedNativeSubtitleSid = 'external';
+        await _applySubtitleRuntimeProperties();
+        await _logNativeSubtitleState('load-http-external');
+        _logger.i('MpvAdapter', 'HTTP外挂字幕加载成功');
+        return;
+      }
+
+      final ext = _extractExtension(path);
+
+      if (ext == 'pgs' || ext == 'sup') {
+        _logger.i('MpvAdapter', '图形字幕 (PGS/SUP)，直接加载: $path');
+        _hasBitmapSubtitle = true;
+        _currentSubIsAss = false;
+        _usingExternalSubtitle = true;
+        // 强制关闭 libass 以允许 MPV 原生渲染位图字幕
+        final np = _nativePlayer;
+        if (np != null) {
+          await _removeExternalSubtitleTracks();
+          await np.setProperty('sub-ass', 'no');
+          await np.setProperty('sub-ass-override', 'no');
+          final subtitlePath = _toMpvSubtitleUri(path);
+          await np.command(
+              ['sub-add', subtitlePath, 'select', 'External Subtitle', 'und']);
+        } else {
+          await _player!.setSubtitleTrack(SubtitleTrack.uri(path));
+        }
+        _selectedSubtitleTrackId = 'external';
+        _selectedNativeSubtitleSid = 'external';
+        await _ensureBitmapExternalSubtitleSelection();
+        await _applySubtitleRuntimeProperties();
+        await _logNativeSubtitleState('load-bitmap-external');
+        _logger.i('MpvAdapter', '图形字幕加载完成，等待渲染');
+        return;
+      }
+
+      var processedPath = path;
+
+      if (_subtitleDelay != 0.0) {
+        processedPath =
+            await SubtitleProcessor.adjustTiming(processedPath, _subtitleDelay);
+      }
+
+      if (ext == 'ass' || ext == 'ssa') {
+        _currentSubIsAss = true;
+        _hasBitmapSubtitle = false;
+        _usingExternalSubtitle = true;
+        if (_subtitleFont != null && _subtitleFont != '默认') {
+          processedPath = await SubtitleProcessor.modifyAssStyle(
+            processedPath,
+            fontName: _subtitleFont,
+          );
+        }
+      } else {
+        _currentSubIsAss = false;
+        _hasBitmapSubtitle = false;
+        _usingExternalSubtitle = true;
+        _logger.i('MpvAdapter', '文本字幕 (SRT/VTT等)，isAss=false');
+      }
+
+      await _player!.setSubtitleTrack(SubtitleTrack.uri(processedPath));
+      _selectedSubtitleTrackId = 'external';
+      _selectedNativeSubtitleSid = 'external';
+      await _applySubtitleRuntimeProperties();
+      await _logNativeSubtitleState('load-text-external');
+
+      _logger.i('MpvAdapter', '外挂字幕加载成功: $processedPath');
+    } catch (e, stackTrace) {
+      _logger.eWithStack('MpvAdapter', '外挂字幕加载失败', e, stackTrace);
+      rethrow;
+    }
+  }
+
+  Future<void> _applySubtitleRuntimeProperties() async {
+    final np = _nativePlayer;
+    if (np == null) return;
+    try {
+      await np.setProperty('sub-visibility', 'yes');
+      await np.setProperty('sub-delay', _subtitleDelay.toStringAsFixed(3));
+
+      if (_hasBitmapSubtitle) {
+        // PGS/SUP 位图字幕必须走 OSD 覆盖层渲染：
+        // blend-subtitles=video 会把字幕混入视频帧，PGS 频繁的合成刷新
+        // (含清屏段) 会触发整帧重绘，在桌面端造成视频画面闪现。
+        await np.setProperty('blend-subtitles', 'no');
+        // PGS/SUP 等位图字幕：关闭 ASS 处理，避免 libass 干扰原生渲染
+        await np.setProperty('sub-ass', 'no');
+        await np.setProperty('sub-ass-override', 'no');
+        await np.setProperty('sub-back-color', '#00000000');
+        await np.setProperty('sub-visibility', 'yes');
+        if (_usingExternalSubtitle) {
+          await np.setProperty('sub-pos', '100');
+        }
+        // 位图字幕保留轨道原生布局，只应用缩放。
+        await np.setProperty('sub-scale', _subtitleScale.toStringAsFixed(2));
+        _logger.i(
+            'MpvAdapter', '已应用图形字幕(PGS/SUP)配置: scale=$_subtitleScale, ass=no');
+      } else if (_currentSubIsAss) {
+        await np.setProperty('blend-subtitles', 'video');
+        await np.setProperty('sub-ass', 'yes');
+        // 保留 ASS 原始样式、层级与布局，不用 sub-pos 覆盖内封排版。
+        await np.setProperty('sub-ass-override', 'no');
+        await np.setProperty('sub-scale', _subtitleScale.toStringAsFixed(2));
+        if (_subtitleFont != null &&
+            _subtitleFont!.isNotEmpty &&
+            _subtitleFont != '默认') {
+          await np.setProperty('sub-font', _subtitleFont!);
+        }
+        if (_subtitleBackground) {
+          await np.setProperty('sub-back-color', '#000000C0');
+        } else {
+          await np.setProperty('sub-back-color', '#00000000');
+        }
+      } else {
+        await np.setProperty('blend-subtitles', 'video');
+        // 普通文本字幕 (SRT/VTT)
+        await np.setProperty('sub-ass', 'yes');
+        await np.setProperty('sub-ass-override', 'strip');
+        await np.setProperty('sub-scale', _subtitleScale.toStringAsFixed(2));
+        // mpv 的 sub-pos 只接受整数，传 "100.0" 会报错并让字幕位置失效。
+        await np.setProperty('sub-pos', _subtitlePosition.round().toString());
+        if (_subtitleFont != null &&
+            _subtitleFont!.isNotEmpty &&
+            _subtitleFont != '默认') {
+          await np.setProperty('sub-font', _subtitleFont!);
+        }
+        if (_subtitleBackground) {
+          await np.setProperty('sub-back-color', '#000000C0');
+        } else {
+          await np.setProperty('sub-back-color', '#00000000');
+        }
+      }
+
+      if (_secondarySid != null) {
+        await np.setProperty('secondary-sid', _secondarySid!);
+        await np.setProperty('secondary-sub-visibility', 'yes');
+      } else {
+        // 确保没有次字幕时关闭次字幕显示，避免双字幕问题
+        await np.setProperty('secondary-sub-visibility', 'no');
+      }
+    } catch (e) {
+      _logger.e('MpvAdapter', '设置运行时字幕属性失败: $e');
+    }
+  }
+
+  @override
+  Future<void> loadLibassSubtitleMemory(Uint8List data,
+      {String codec = 'ass'}) async {
+    _logger.i('MpvAdapter', '加载内存字幕 - codec=$codec, size=${data.length} bytes');
+    if (_player == null) return;
+    try {
+      final dataStr = utf8.decode(data, allowMalformed: true);
+      _currentSubIsAss = codec.contains('ass') || codec.contains('ssa');
+      _hasBitmapSubtitle = codec.contains('pgs') ||
+          codec.contains('sup') ||
+          codec.contains('hdmv');
+      if (!_currentSubIsAss && !_hasBitmapSubtitle) {
+        _currentSubIsAss =
+            dataStr.contains('[V4+ Styles]') || dataStr.contains('[V4 Styles]');
+      }
+      await _player!.setSubtitleTrack(
+        SubtitleTrack.data(dataStr, title: 'subtitle', language: 'und'),
+      );
+      await _applySubtitleRuntimeProperties();
+    } catch (e, stackTrace) {
+      _logger.eWithStack('MpvAdapter', '内存字幕加载失败', e, stackTrace);
+    }
+  }
+
+  @override
+  Future<void> loadSecondarySubtitle(String path) async {
+    if (_player == null || !_isInitialized) return;
+    _logger.i('MpvAdapter', '加载次字幕: $path');
+    try {
+      final np = _nativePlayer;
+      if (np != null) {
+        await np.setProperty('secondary-sub-visibility', 'yes');
+
+        final subtitleTracks = _player!.state.tracks.subtitle;
+        final beforeCount = subtitleTracks.length;
+        await np.command(
+            ['sub-add', _toMpvSubtitleUri(path), 'auto', 'secondary', 'und']);
+
+        SubtitleTrack? newTrack;
+        for (int i = 0; i < 20; i++) {
+          await Future.delayed(const Duration(milliseconds: 200));
+          final afterTracks = _player!.state.tracks.subtitle;
+          if (afterTracks.length > beforeCount) {
+            newTrack = afterTracks.last;
+            break;
+          }
+        }
+
+        if (newTrack != null) {
+          final sid = newTrack.id;
+          _secondarySid = sid;
+          _logger.i('MpvAdapter', '次字幕轨道ID: $sid, 设置secondary-sid=$sid');
+          await np.setProperty('secondary-sid', sid);
+        } else {
+          _logger.w('MpvAdapter', '次字幕添加后未检测到新轨道，使用secondary-sid=auto兜底');
+          await np.setProperty('secondary-sid', 'auto');
+          _secondarySid = 'auto';
+        }
+      }
+      _logger.i('MpvAdapter', '次字幕加载成功: $path');
+    } catch (e, stackTrace) {
+      _logger.eWithStack('MpvAdapter', '次字幕加载失败', e, stackTrace);
+    }
+  }
+
+  @override
+  Future<void> deselectSecondarySubtitle() async {
+    if (_player == null || !_isInitialized) return;
+    _secondarySid = null;
+    try {
+      final np = _nativePlayer;
+      if (np != null) {
+        await np.setProperty('secondary-sid', 'no');
+        await np.setProperty('secondary-sub-visibility', 'no');
+      }
+    } catch (e, stackTrace) {
+      _logger.eWithStack('MpvAdapter', '取消次字幕失败', e, stackTrace);
+    }
+  }
+
+  @override
+  Future<void> selectSecondarySubtitleTrack(String trackId) async {
+    if (_player == null || !_isInitialized) return;
+    _logger.i('MpvAdapter', '选择内封次字幕轨道: id=$trackId');
+    try {
+      final np = _nativePlayer;
+      if (np != null) {
+        _secondarySid = trackId;
+        await np.setProperty('secondary-sub-visibility', 'yes');
+        await np.setProperty('secondary-sid', trackId);
+        _logger.i('MpvAdapter', '内封次字幕已设置: secondary-sid=$trackId');
+      }
+    } catch (e, stackTrace) {
+      _logger.eWithStack('MpvAdapter', '设置内封次字幕失败', e, stackTrace);
+    }
+  }
+
+  @override
+  Future<void> setSecondarySubtitlePosition(double position) async {
+    if (_player == null || !_isInitialized) return;
+    // UI 0.0(底)~1.0(顶) → mpv secondary-sub-pos 0(顶)~100(底)。仅整数。
+    final pos = ((1.0 - position) * 100).round().clamp(0, 100);
+    final np = _nativePlayer;
+    if (np != null) {
+      await np.setProperty('secondary-sub-pos', pos.toString());
+    }
+  }
+
+  @override
+  Future<void> setSecondarySubtitleDelay(double seconds) async {
+    if (_player == null || !_isInitialized) return;
+    final np = _nativePlayer;
+    if (np != null) {
+      await np.setProperty('secondary-sub-delay', seconds.toString());
+    }
+  }
+
+  @override
+  Future<void> setSubtitleDelay(double seconds) async {
+    _subtitleDelay = seconds;
+    _logger.i('MpvAdapter', '设置字幕延迟: ${seconds}s');
+    final np = _nativePlayer;
+    if (np != null) {
+      await np.setProperty('sub-delay', seconds.toStringAsFixed(3));
+    }
+    await _configManager.updateConfigValue(
+        'sub-delay', seconds.toStringAsFixed(3));
+  }
+
+  @override
+  Future<void> setAudioDelay(double seconds) async {
+    _audioDelay = seconds;
+    final np = _nativePlayer;
+    if (np != null) {
+      await np.setProperty('audio-delay', seconds.toStringAsFixed(3));
+    }
+    await _configManager.updateConfigValue(
+        'audio-delay', seconds.toStringAsFixed(3));
+  }
+
+  @override
+  Future<void> setSubtitleFont(String fontName) async {
+    _subtitleFont = fontName == '默认' ? null : fontName;
+    final np = _nativePlayer;
+    if (np != null && _subtitleFont != null && _subtitleFont!.isNotEmpty) {
+      await np.setProperty('sub-font', _subtitleFont!);
+    }
+    if (fontName.isNotEmpty && fontName != '默认') {
+      await _configManager.updateConfigValue('sub-font', '"$fontName"');
+    }
+  }
+
+  @override
+  Future<void> setSubtitleSize(double size) async {
+    _subtitleScale = 0.5 + size;
+    _logger.i('MpvAdapter', '设置字幕大小: scale=$_subtitleScale');
+    final np = _nativePlayer;
+    if (np != null) {
+      await np.setProperty('sub-scale', _subtitleScale.toStringAsFixed(2));
+    }
+    await _configManager.updateConfigValue(
+        'sub-scale', _subtitleScale.toStringAsFixed(2));
+  }
+
+  @override
+  Future<void> setSubtitlePosition(double position) async {
+    _subtitlePosition = (100 - position * 100).clamp(0.0, 100.0);
+    _logger.i('MpvAdapter', '设置字幕位置: pos=$_subtitlePosition');
+    final np = _nativePlayer;
+    if (np != null) {
+      // PGS/SUP 与 ASS 保留轨道自身布局，只有普通文本字幕才覆盖位置。
+      if (!_hasBitmapSubtitle && !_currentSubIsAss) {
+        // mpv 的 sub-pos 只接受整数，传小数会报错并让字幕位置失效。
+        await np.setProperty('sub-pos', _subtitlePosition.round().toString());
+      }
+    }
+    await _configManager.updateConfigValue(
+        'sub-pos', _subtitlePosition.round().toString());
+  }
+
+  @override
+  Future<void> setSubtitleBackground(bool enabled) async {
+    _subtitleBackground = enabled;
+    await _applySubtitleRuntimeProperties();
+    await _configManager.updateConfigValue(
+      'sub-back-color',
+      enabled ? '#000000C0' : '#00000000',
+    );
+  }
+
+  @override
+  Future<void> setSubtitleBlendMode(String mode) async {
+    final m = (mode == 'yes' || mode == 'video') ? mode : 'no';
+    _subtitleBlendMode = m;
+    final np = _nativePlayer;
+    if (np == null) return;
+    // 实时切换，便于现场 A/B 排查 PGS/SUP 闪现，无需重开视频。
+    await np.setProperty('blend-subtitles', m);
+  }
+
+  @override
+  Future<void> setAspectRatio(String ratio) async {
+    _aspectRatio = ratio;
+    String value = '-1';
+    bool keepAspect = true;
+    double panscan = 0.0;
+    switch (ratio) {
+      case '16:9':
+        value = '16/9';
+      case '4:3':
+        value = '4/3';
+      case '21:9':
+        value = '21/9';
+      case '原始':
+        value = '0';
+      case '拉伸': // 变形铺满
+        value = '-1';
+        keepAspect = false;
+      case '铺满': // 裁切铺满
+        value = '-1';
+        panscan = 1.0;
+      default: // 自适应 / 自动 / 全屏
+        value = '-1';
+    }
+    final np = _nativePlayer;
+    if (np != null) {
+      await np.setProperty('keepaspect', keepAspect ? 'yes' : 'no');
+      await np.setProperty('panscan', panscan.toString());
+      await np.setProperty('video-aspect-override', value);
+    }
+    await _configManager.updateConfigValue('video-aspect-override', value);
+  }
+
+  // Anime4K 档位→shader 链已抽到 anime4k_shaders.dart（kAnime4KShaderPresets），
+  // 与 Android 原生 mpv 适配器共用同一份映射。
+
+  @override
+  Future<void> applySuperResolution(bool enable) async {
+    _glslShaders = enable ? kAnime4KShaderPresets['modeB'] : null;
+    await _applyShaderList(_glslShaders);
+  }
+
+  @override
+  Future<void> applySuperResolutionLevel(String level) async {
+    _glslShaders =
+        isAnime4KLevelEnabled(level) ? kAnime4KShaderPresets[level] : null;
+    await _applyShaderList(_glslShaders);
+  }
+
+  bool get zeroCopyHwdec => _zeroCopyHwdec;
+
+  /// 运行时切换 Windows 硬解零拷贝(d3d11va)↔拷回(auto-copy)，无需重载流。
+  /// 仅在 Windows + 硬解开启时有意义；mpv 会就地重建解码器，画面短暂一顿属正常。
+  /// ⚠️d3d11va-egl 在个别显卡/驱动可能建 interop 失败→黑屏/闪退，属实验取舍。
+  Future<void> applyZeroCopyHwdec(bool enable) async {
+    _zeroCopyHwdec = enable;
+    final np = _nativePlayer;
+    if (np == null || !Platform.isWindows || !_hardwareDecoding) return;
+    try {
+      await np.setProperty('hwdec', enable ? 'd3d11va' : 'auto-copy');
+      _logger.i('MpvAdapter',
+          '硬解零拷贝已${enable ? '开启(d3d11va)' : '关闭(auto-copy)'}');
+    } catch (e) {
+      _logger.w('MpvAdapter', '切换硬解零拷贝失败: $e');
+    }
+  }
+
+  @override
+  Future<Map<String, String>> getPlaybackStats() async {
+    final np = _nativePlayer;
+    if (np == null) return {};
+
+    // 只取开播即定的常见视频/音频参数:统计面板查一次即可,不轮询。
+    // (实时指标如渲染帧率/丢帧/缓冲已去掉——高频轮询 mpv 会与渲染争用致画面闪。)
+    const props = [
+      'width', 'height', 'fps', 'container-fps',
+      'video-bitrate', 'audio-bitrate', 'video-codec', 'audio-codec',
+      'audio-params/channel-count', 'audio-params/sample-rate', 'file-size',
+      'hwdec-current', 'video-params/pixelformat',
+      'current-tracks/video/codec', 'current-tracks/audio/codec',
+      'current-tracks/video/default-bitrate',
+      'current-tracks/audio/default-bitrate',
+    ];
+
+    final stats = <String, String>{};
+    for (final prop in props) {
+      try {
+        final value = await np.getProperty(prop);
+        if (value.isNotEmpty && value != 'null') {
+          stats[prop] = value;
+        }
+      } catch (_) {
+        // 某些属性可能不存在，忽略错误
+      }
+    }
+    return stats;
+  }
+
+  @override
+  Widget buildVideo() {
+    if (_videoController != null) {
+      // 返回缓存实例：identical(old, new) 时 Flutter 会跳过该子树重建，
+      // 避免控制栏/选项弹出引起的视频纹理重挂载闪现。
+      // RepaintBoundary 进一步隔离上层覆盖层的重绘，不波及视频层。
+      return _videoWidget ??= RepaintBoundary(
+        child: Video(
+          controller: _videoController!,
+          fit: BoxFit.contain,
+          controls: null,
+          // Keep Flutter's text subtitle overlay disabled.
+          // We rely on mpv's native subtitle pipeline to avoid duplicate ASS
+          // rendering and to preserve bitmap subtitle support.
+          subtitleViewConfiguration:
+              const SubtitleViewConfiguration(visible: false),
+        ),
+      );
+    }
+    return const Center(child: CircularProgressIndicator());
+  }
+
+  @override
+  Future<void> play() async {
+    if (_player == null) return;
+    await _player!.play();
+    _isCompleted = false;
+  }
+
+  @override
+  Future<void> pause() async {
+    if (_player == null) return;
+    await _player!.pause();
+  }
+
+  @override
+  Future<void> seekTo(Duration position) async {
+    if (_player == null || !_isInitialized) return;
+    final clamped = Duration(
+      milliseconds:
+          max(0, min(position.inMilliseconds, _duration.inMilliseconds)),
+    );
+    _beginSeekBuffering();
+    _startSeekBufferingMonitor();
+    await _player!.seek(clamped);
+    final np = _nativePlayer;
+    if (np != null) {
+      try {
+        final stillBuffering = await _isCacheStillBuffering();
+        if (!stillBuffering) {
+          _completeSeekBuffering();
+        }
+      } catch (_) {
+        // Ignore property probing failures and let the fallback timer clear state.
+      }
+    }
+    _isCompleted = false;
+  }
+
+  @override
+  Future<void> setSpeed(double speed) async {
+    if (_player == null || !_isInitialized) return;
+    final clamped = speed.clamp(0.25, 4.0);
+    await _player!.setRate(clamped);
+    _speed = clamped;
+  }
+
+  @override
+  Future<void> setVolume(double volume) async {
+    if (_player == null || !_isInitialized) return;
+    final clamped = volume.clamp(0.0, 1.0);
+    await _player!.setVolume(clamped * 100);
+    _volume = clamped;
+  }
+
+  @override
+  Future<Uint8List?> screenshot() async {
+    final player = _player;
+    if (player == null) return null;
+    // HDR/杜比视界亮度修正：media_kit 的 screenshot() 写死 `screenshot-raw video`，
+    // 截的是解码后的原始帧——不经过 GPU 渲染管线的 tone-mapping/色彩管理，HDR/DV
+    // 片会明显过曝(比屏幕亮)。这里改用 mpv 的 `window` 模式截「渲染后的窗口」(已
+    // tone-map、与屏幕所见一致)，截到临时文件再读回。任一步失败都回退默认实现，
+    // 保证不比原来差。
+    final np = _nativePlayer;
+    if (np != null) {
+      File? shotFile;
+      try {
+        final dir = await getTemporaryDirectory();
+        final path =
+            '${dir.path}${Platform.pathSeparator}linshot_${DateTime.now().microsecondsSinceEpoch}.png';
+        await np.command(['screenshot-to-file', path, 'window']);
+        shotFile = File(path);
+        if (await shotFile.exists()) {
+          final bytes = await shotFile.readAsBytes();
+          if (bytes.isNotEmpty) return bytes;
+        }
+      } catch (e, stackTrace) {
+        _logger.eWithStack(
+            'MpvAdapter', 'window 模式截图失败，回退默认截图', e, stackTrace);
+      } finally {
+        if (shotFile != null) {
+          try {
+            if (await shotFile.exists()) await shotFile.delete();
+          } catch (_) {}
+        }
+      }
+    }
+    try {
+      return await player.screenshot();
+    } catch (e, stackTrace) {
+      _logger.eWithStack('MpvAdapter', '截图失败', e, stackTrace);
+      return null;
+    }
+  }
+
+  @override
+  Future<void> dispose() async {
+    _adapterDisposed = true; // 供 initialize 的孤儿守卫感知「初始化途中被销毁」
+    _seekBufferingPollTimer?.cancel();
+    _seekBufferingPollTimer = null;
+    _seekBufferingFallbackTimer?.cancel();
+    _seekBufferingFallbackTimer = null;
+    for (final sub in _subscriptions) {
+      await sub.cancel();
+    }
+    _subscriptions.clear();
+    if (_player != null) {
+      await _player!.dispose();
+      _player = null;
+    }
+    _videoController = null;
+    _videoWidget = null;
+    _isInitialized = false;
+    _isPlaying = false;
+    _isBuffering = false;
+    _position = Duration.zero;
+    _duration = Duration.zero;
+    _tracks = [];
+    _subtitleTracks = [];
+    _audioTracks = [];
+    _secondarySid = null;
+    _hasBitmapSubtitle = false;
+    _currentSubIsAss = false;
+    _usingExternalSubtitle = false;
+    _isSeekBuffering = false;
+    _isSeekInFlight = false;
+    _selectedSubtitleTrackId = null;
+    _selectedNativeSubtitleSid = null;
+    _selectedAudioTrackId = null;
+    _errorMessage = null;
+  }
+}

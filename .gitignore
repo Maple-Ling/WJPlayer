@@ -1,0 +1,81 @@
+# Secrets and signing
+.env
+.env.*
+*.env
+*.env.*
+*.keystore
+*.jks
+*.p12
+*.pem
+*.key
+key.properties
+android/key.properties
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub/
+.pub-cache/
+build/
+coverage/
+*.symbols
+*.map.json
+
+# Android
+android/.gradle/
+android/.kotlin/
+android/gradle-user-home/
+android/local.properties
+android/key.properties
+android/app/debug/
+android/app/profile/
+android/app/release/
+**/.cxx/
+**/.gradle/
+**/.kotlin/
+*.apk
+*.apks
+*.aab
+*.dex
+
+# Generated Dart
+*.g.dart
+*.freezed.dart
+*.mocks.dart
+
+# IDE and operating system
+.idea/
+.vscode/
+.cursor/
+.zed/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Local runtime and diagnostics
+*.log
+wjplayer_log_*.txt
+userdata/
+.tmp/
+.history
+.omo/
+devtools_options.yaml
+
+# Local plugin/build output
+third_party/**/.dart_tool/
+third_party/**/build/
+third_party/**/.cxx/
+third_party/**/example/
+dist/
+*.lpk
+
+# Local agent and planning files
+.agents/
+.claude/
+skills-lock.json
