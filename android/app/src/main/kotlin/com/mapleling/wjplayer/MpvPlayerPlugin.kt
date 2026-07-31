@@ -668,6 +668,17 @@ class MpvPlayerPlugin(
         // (mpv_player_adapter 已设 vd=-magicyuv)对齐,在 Android 侧一并拉黑该解码器。
         MPVLib.setOptionString("vd", "-magicyuv")
 
+        // 音画同步与倍速：对齐飞牛参考客户端。较小 AudioTrack 缓冲可降低倍速调整延迟，
+        // audio 主时钟 + pitch correction 避免非 1x 时频繁 underrun/追帧抖动。
+        MPVLib.setOptionString("hr-seek", "yes")
+        MPVLib.setOptionString("force-seekable", "yes")
+        MPVLib.setOptionString("audio-buffer", "0.15")
+        MPVLib.setOptionString("video-latency-hacks", "yes")
+        MPVLib.setOptionString("video-sync", "audio")
+        MPVLib.setOptionString("video-sync-max-video-change", "5")
+        MPVLib.setOptionString("video-sync-max-audio-change", "0.125")
+        MPVLib.setOptionString("audio-pitch-correction", "yes")
+
         // Audio output - 强制立体声降混，解决 TrueHD 等多声道音频无声问题
         MPVLib.setOptionString("ao", "audiotrack,opensles")
         MPVLib.setOptionString("audio-channels", "stereo")
@@ -709,6 +720,12 @@ class MpvPlayerPlugin(
         if (!videoCacheDir.isNullOrEmpty() && diskCacheForwardBytes > 0L) {
             File(videoCacheDir).mkdirs()
             MPVLib.setOptionString("cache", "yes")
+            MPVLib.setOptionString("cache-pause", "yes")
+            MPVLib.setOptionString("cache-pause-wait", "2.5")
+            MPVLib.setOptionString("cache-pause-initial", "no")
+            MPVLib.setOptionString("demuxer-seekable-cache", "yes")
+            MPVLib.setOptionString("demuxer-cache-wait", "no")
+            MPVLib.setOptionString("stream-buffer-size", "33554432")
             MPVLib.setOptionString("cache-on-disk", "yes")
             MPVLib.setOptionString("cache-dir", videoCacheDir)
             MPVLib.setOptionString("demuxer-max-bytes", diskCacheForwardBytes.toString())
@@ -842,7 +859,12 @@ class MpvPlayerPlugin(
         }
 
         fun setSpeed(speed: Double) {
-            MPVLib.setPropertyDouble("speed", speed.coerceIn(0.25, 8.0))
+            val rate = speed.coerceIn(0.25, 4.0)
+            // 倍速时始终以音频为主时钟并保留音调，避免视频追帧与 AudioTrack underrun
+            // 互相触发，表现为画面/进度条周期性卡顿。
+            MPVLib.setPropertyString("video-sync", "audio")
+            MPVLib.setPropertyString("audio-pitch-correction", "yes")
+            MPVLib.setPropertyDouble("speed", rate)
         }
 
         fun setVolume(volume: Double) {

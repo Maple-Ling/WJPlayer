@@ -436,8 +436,10 @@ class _SubtitleSettingsContentState
   @override
   Widget build(BuildContext context) {
     final item = ref.watch(currentPlayingItemProvider);
-    final subtitleAsync =
-        item != null ? ref.watch(playbackInfoProvider(item.id)) : null;
+    final isSourcePlayback = item?.id.startsWith('src:') == true;
+    final subtitleAsync = item != null && !isSourcePlayback
+        ? ref.watch(playbackInfoProvider(item.id))
+        : null;
     final subtitleOffset = ref.watch(subtitleDelayProvider);
     final subtitleSize = ref.watch(subtitleSizeProvider);
     final subtitlePosition = ref.watch(subtitlePositionProvider);
@@ -449,6 +451,60 @@ class _SubtitleSettingsContentState
         ref.watch(secondarySubtitlePositionProvider);
     final secondarySubtitleDelay = ref.watch(secondarySubtitleDelayProvider);
     final selectedMediaSourceId = ref.watch(selectedMediaSourceProvider);
+
+    if (isSourcePlayback) {
+      final tracks = _playerTracksOfType(const ['text', 'bitmap']);
+      return _SettingsSection(children: [
+        const _SectionTitle('字幕轨道'),
+        PanelOptionTile(
+          label: '关闭',
+          selected: tracks.every((t) => t['isSelected'] != true),
+          onTap: () => _PlayerScreenState.activePlayerService
+              ?.deselectSubtitleTrack(),
+        ),
+        if (tracks.isEmpty)
+          const _PanelEmpty(icon: Icons.subtitles_off, label: '等待字幕轨道…')
+        else
+          ...tracks.map((track) => PanelOptionTile(
+                label: _playerTrackLabel(track),
+                subtitle: track['codec']?.toString().isNotEmpty == true
+                    ? '编码: ${track['codec']}'
+                    : null,
+                selected: track['isSelected'] == true,
+                onTap: () => _PlayerScreenState.activePlayerService
+                    ?.selectSubtitleTrack(track['id'].toString()),
+              )),
+        const _Divider(),
+        const _SectionTitle('字幕同步'),
+        _SyncControl(
+          value: subtitleOffset,
+          onDecrease: () => ref.read(subtitleDelayProvider.notifier).state =
+              subtitleOffset - 0.5,
+          onIncrease: () => ref.read(subtitleDelayProvider.notifier).state =
+              subtitleOffset + 0.5,
+          onCustom: () => _showCustomOffsetDialog(context),
+          onReset: () => ref.read(subtitleDelayProvider.notifier).state = 0.0,
+        ),
+        PanelSliderRow(
+          label: '字幕大小',
+          value: subtitleSize,
+          min: 0.5,
+          max: 2.0,
+          valueLabel: '${subtitleSize.toStringAsFixed(1)}x',
+          onChanged: (value) =>
+              ref.read(subtitleSizeProvider.notifier).state = value,
+        ),
+        PanelSliderRow(
+          label: '字幕位置',
+          value: subtitlePosition.clamp(0.0, 1.0),
+          min: 0.0,
+          max: 1.0,
+          valueLabel: '${(subtitlePosition * 100).round()}%',
+          onChanged: (value) =>
+              ref.read(subtitlePositionProvider.notifier).state = value,
+        ),
+      ]);
+    }
 
     if (subtitleAsync == null) {
       return const _SettingsSection(children: [_PanelEmpty(label: '无播放信息')]);
@@ -1026,11 +1082,43 @@ class _AudioSettingsContentState extends ConsumerState<_AudioSettingsContent> {
   @override
   Widget build(BuildContext context) {
     final item = ref.watch(currentPlayingItemProvider);
-    final audioAsync =
-        item != null ? ref.watch(playbackInfoProvider(item.id)) : null;
+    final isSourcePlayback = item?.id.startsWith('src:') == true;
+    final audioAsync = item != null && !isSourcePlayback
+        ? ref.watch(playbackInfoProvider(item.id))
+        : null;
     final audioOffset = ref.watch(audioDelayProvider);
     final selectedIndex = ref.watch(audioTrackProvider);
     final selectedMediaSourceId = ref.watch(selectedMediaSourceProvider);
+
+    if (isSourcePlayback) {
+      final tracks = _playerTracksOfType(const ['audio']);
+      return _SettingsSection(children: [
+        const _SectionTitle('音频轨道'),
+        if (tracks.isEmpty)
+          const _PanelEmpty(icon: Icons.audiotrack, label: '等待音轨…')
+        else
+          ...tracks.map((track) => PanelOptionTile(
+                label: _playerTrackLabel(track),
+                subtitle: track['codec']?.toString().isNotEmpty == true
+                    ? '编码: ${track['codec']}'
+                    : null,
+                selected: track['isSelected'] == true,
+                onTap: () => _PlayerScreenState.activePlayerService
+                    ?.selectAudioTrack(track['id'].toString()),
+              )),
+        const _Divider(),
+        const _SectionTitle('音频同步'),
+        _SyncControl(
+          value: audioOffset,
+          onDecrease: () => ref.read(audioDelayProvider.notifier).state =
+              audioOffset - 0.5,
+          onIncrease: () => ref.read(audioDelayProvider.notifier).state =
+              audioOffset + 0.5,
+          onCustom: () => _showCustomOffsetDialog(context),
+          onReset: () => ref.read(audioDelayProvider.notifier).state = 0.0,
+        ),
+      ]);
+    }
 
     if (audioAsync == null) {
       return const _SettingsSection(children: [_PanelEmpty(label: '无播放信息')]);

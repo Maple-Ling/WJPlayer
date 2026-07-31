@@ -49,10 +49,24 @@ void main() {
     expect(source, contains('setDefaultRequestProperties(httpHeaders)'));
     expect(source, contains('error.errorCodeName'));
     expect(source, contains('pendingEvents'));
+    expect(source, contains('setConnectTimeoutMs(30_000)'));
+    expect(source, contains('setReadTimeoutMs(30_000)'));
+    expect(source, contains('setLoadControl(loadControl)'));
     expect(
       source.indexOf('exoPlayer.addListener(instance)'),
       lessThan(source.indexOf('exoPlayer.prepare()')),
     );
+  });
+
+  test('Android permits authenticated LAN HTTP media servers', () {
+    final manifest =
+        File('android/app/src/main/AndroidManifest.xml').readAsStringSync();
+    final config = File(
+      'android/app/src/main/res/xml/network_security_config.xml',
+    ).readAsStringSync();
+    expect(manifest, contains('android:usesCleartextTraffic="true"'));
+    expect(manifest, contains('@xml/network_security_config'));
+    expect(config, contains('cleartextTrafficPermitted="true"'));
   });
 
   test('Feiniu playback keeps resume and writeback protocol fields', () {

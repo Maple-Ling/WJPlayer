@@ -27,12 +27,14 @@ class FeiniuItemDetail {
   final Map<String, dynamic> item;
   final Map<String, dynamic> playInfo;
   final List<SourceEntry> seasons;
+  final String? seriesGuid;
 
   const FeiniuItemDetail({
     required this.entry,
     required this.item,
     required this.playInfo,
     this.seasons = const [],
+    this.seriesGuid,
   });
 }
 
@@ -52,6 +54,30 @@ class FeiniuContinueItem {
       : (position.inMilliseconds / duration.inMilliseconds)
           .clamp(0.0, 1.0)
           .toDouble();
+}
+
+class FeiniuMediaDetails {
+  final Map<String, dynamic> playInfo;
+  final Map<String, dynamic> stream;
+
+  const FeiniuMediaDetails({
+    required this.playInfo,
+    required this.stream,
+  });
+
+  Map<String, dynamic>? get video => _map(stream['video_stream']);
+  List<Map<String, dynamic>> get audios => _maps(stream['audio_streams']);
+  List<Map<String, dynamic>> get subtitles =>
+      _maps(stream['subtitle_streams']);
+  Map<String, dynamic>? get file => _map(stream['file_stream']);
+
+  static Map<String, dynamic>? _map(dynamic value) => value is Map
+      ? Map<String, dynamic>.from(value)
+      : null;
+
+  static List<Map<String, dynamic>> _maps(dynamic value) => value is List
+      ? value.whereType<Map>().map(Map<String, dynamic>.from).toList()
+      : const [];
 }
 
 class FeiniuBackend implements MediaSourceBackend {
@@ -402,6 +428,24 @@ class FeiniuBackend implements MediaSourceBackend {
     }).whereType<FeiniuContinueItem>().toList();
   }
 
+  Future<List<Map<String, dynamic>>> persons(
+    ServerConfig server,
+    String itemGuid,
+  ) async {
+    try {
+      final data = await _authed(server, '/person/list/$itemGuid', data: {
+        'page': 1,
+        'page_size': 200,
+      });
+      final list = data is Map ? data['list'] : data;
+      return list is List
+          ? list.whereType<Map>().map(Map<String, dynamic>.from).toList()
+          : const [];
+    } catch (_) {
+      return const [];
+    }
+  }
+
   Future<List<SourceEntry>> episodes(
     ServerConfig server,
     String seasonId,
@@ -450,7 +494,9 @@ class FeiniuBackend implements MediaSourceBackend {
       'type': type ?? 'Video',
     }, headers);
     var seasons = const <SourceEntry>[];
+    String? seriesGuid;
     if (type == 'TV') {
+      seriesGuid = guid;
       seasons = await _listSeasons(server, guid);
     } else if (type == 'Episode') {
       // 从单集（继续观看/搜索入口）进入详情时，沿 Episode → Season → TV
@@ -464,6 +510,7 @@ class FeiniuBackend implements MediaSourceBackend {
               ? season['parent_guid']?.toString() ?? ''
               : '';
           if (tvGuid.isNotEmpty) {
+            seriesGuid = tvGuid;
             seasons = await _listSeasons(server, tvGuid);
           }
         } catch (_) {
@@ -476,6 +523,7 @@ class FeiniuBackend implements MediaSourceBackend {
       item: merged,
       playInfo: playInfo,
       seasons: seasons,
+      seriesGuid: seriesGuid,
     );
   }
 
@@ -488,6 +536,65 @@ class FeiniuBackend implements MediaSourceBackend {
     return list
         .map<SourceEntry>((e) => _itemToEntry(server, e, headers))
         .toList();
+  }
+
+  Future<FeiniuMediaDetails> mediaDetails(
+    ServerConfig server,
+    SourceEntry entry,
+  ) async {
+    final playRaw = await _authed(server, '/play/info', data: {
+      'item_guid': entry.id,
+    });
+    final playInfo = playRaw is Map
+        ? Map<String, dynamic>.from(playRaw)
+        : <String, dynamic>{};
+    final mediaGuid = playInfo['media_guid']?.toString() ?? '';
+    if (mediaGuid.isEmpty) {
+      return FeiniuMediaDetails(playInfo: playInfo, stream: const {});
+    }
+
+    var stream = <String, dynamic>{};
+    try {
+      final username = server.username ?? 'video';
+      final streamRaw = await _authed(server, '/stream', data: {
+        'header': {
+          'User-Agent': [
+            'Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 WJPlayer'
+          ],
+        },
+        'level': 1,
+        'media_guid': mediaGuid,
+        'ip': md5.convert(utf8.encode(username)).toString(),
+        'nonce': (100000 + _rand.nextInt(900000)).toString(),
+      });
+      if (streamRaw is Map) {
+        stream = Map<String, dynamic>.from(streamRaw);
+      }
+    } catch (_) {
+      // 部分飞牛版本不支持 /stream，继续用 stream/list 回退轨道数据。
+    }
+
+    try {
+      final listRaw = await _authed(server, '/stream/list/$mediaGuid');
+      if (listRaw is Map) {
+        final list = Map<String, dynamic>.from(listRaw);
+        for (final key in const [
+          'video_stream',
+          'audio_streams',
+          'subtitle_streams',
+          'file_stream',
+        ]) {
+          final current = stream[key];
+          if (current == null || (current is List && current.isEmpty)) {
+            stream[key] = list[key];
+          }
+        }
+      }
+    } catch (_) {
+      // STRM 服务端可能拒绝 stream/list，/stream 已有数据时不受影响。
+    }
+
+    return FeiniuMediaDetails(playInfo: playInfo, stream: stream);
   }
 
   @override

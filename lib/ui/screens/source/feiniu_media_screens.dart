@@ -7,6 +7,7 @@ import '../../../core/providers/server_providers.dart';
 import '../../../core/sources/feiniu_backend.dart';
 import '../../../core/sources/media_source_backend.dart';
 import '../../../core/sources/source_playback.dart';
+import 'feiniu_detail_screen.dart';
 import '../../widgets/common/media_widgets.dart';
 
 class FeiniuHomeScreen extends ConsumerStatefulWidget {
@@ -100,7 +101,8 @@ class _FeiniuHomeScreenState extends ConsumerState<FeiniuHomeScreen> {
       ));
     } else {
       await Navigator.of(context).push(MaterialPageRoute<void>(
-        builder: (_) => FeiniuDetailScreen(server: server, entry: entry),
+        builder: (_) =>
+            FeiniuMediaDetailScreen(server: server, entry: entry),
       ));
     }
     if (mounted) await _load();
@@ -126,16 +128,19 @@ class _FeiniuHomeScreenState extends ConsumerState<FeiniuHomeScreen> {
     }
     if (_error != null) {
       return Scaffold(
-        appBar: AppBar(title: _FeiniuServerSwitcher(current: server)),
+        appBar: AppBar(
+          automaticallyImplyLeading: false,
+          centerTitle: true,
+          title: _FeiniuServerSwitcher(current: server),
+        ),
         body: _ErrorRetry(message: _error!, onRetry: _load),
       );
     }
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: false,
+        centerTitle: true,
         title: _FeiniuServerSwitcher(current: server),
-        actions: [
-          IconButton(onPressed: _load, icon: const Icon(Icons.refresh_rounded)),
-        ],
       ),
       body: RefreshIndicator(
         onRefresh: _load,
@@ -225,7 +230,8 @@ class _FeiniuLibraryScreenState extends State<FeiniuLibraryScreen> {
       return;
     }
     Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => FeiniuDetailScreen(server: widget.server, entry: entry),
+      builder: (_) =>
+          FeiniuMediaDetailScreen(server: widget.server, entry: entry),
     ));
   }
 
@@ -256,9 +262,10 @@ class _FeiniuLibraryScreenState extends State<FeiniuLibraryScreen> {
                           padding: const EdgeInsets.all(12),
                           gridDelegate:
                               const SliverGridDelegateWithMaxCrossAxisExtent(
-                            maxCrossAxisExtent: 190,
-                            childAspectRatio: 0.62,
-                            crossAxisSpacing: 12,
+                            // 与首页 126dp 海报卡统一视觉尺寸；大屏仅增加列数。
+                            maxCrossAxisExtent: 138,
+                            childAspectRatio: 0.58,
+                            crossAxisSpacing: 10,
                             mainAxisSpacing: 14,
                           ),
                           itemCount: _items.length,

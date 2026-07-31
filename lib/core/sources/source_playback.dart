@@ -18,10 +18,21 @@ class SourcePlayback {
   /// 用户选定的清晰度档（夸克等转码源）；null = 后端默认（约定选最高档）。
   final String? qualityId;
 
+  /// 详情页针对本次媒体选择的内核；null 使用全局默认。
+  final String? playerCoreOverride;
+
+  /// 按播放器实际轨道列表的位置选择音轨/字幕。飞牛详情页从 stream API 得到
+  /// 同序列表并传入；播放器轨道就绪后再应用，避免起播阶段轨道尚为空。
+  final int? preferredAudioListIndex;
+  final int? preferredSubtitleListIndex;
+
   const SourcePlayback({
     required this.server,
     required this.entry,
     this.qualityId,
+    this.playerCoreOverride,
+    this.preferredAudioListIndex,
+    this.preferredSubtitleListIndex,
   });
 
   /// 供播放器内部记账/续播的稳定合成 itemId（不参与 Emby 上报）。
@@ -89,8 +100,9 @@ List<SourceEntry> sortSourceEntries(
   bool useLibass,
   bool useGpuNext,
   int? surfaceViewId,
-}) resolveSourcePlayerConfig(WidgetRef ref) {
-  final coreString = normalizePlayerCore(ref.read(playerCoreProvider));
+}) resolveSourcePlayerConfig(WidgetRef ref, {String? coreOverride}) {
+  final coreString = normalizePlayerCore(
+      coreOverride ?? ref.read(playerCoreProvider));
   final coreType = switch (coreString) {
     'mpv' => PlayerCoreType.mpv,
     'nativeMpv' => PlayerCoreType.nativeMpv,

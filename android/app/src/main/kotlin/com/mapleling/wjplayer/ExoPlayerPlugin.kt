@@ -283,13 +283,25 @@ class ExoPlayerPlugin(
 
                 // 统一 UA：用自定义 HTTP DataSource 工厂覆盖 ExoPlayer 默认 UA，
                 // 部分 CDN 拒绝默认 UA 导致取流失败（403/空响应）。
+                val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(
+                        15_000, // minBufferMs
+                        90_000, // maxBufferMs
+                        1_500,  // bufferForPlaybackMs
+                        3_000,  // bufferForPlaybackAfterRebufferMs
+                    )
+                    .setPrioritizeTimeOverSizeThresholds(true)
+                    .build()
                 val playerBuilder = ExoPlayer.Builder(context)
                     .setTrackSelector(trackSelector)
+                    .setLoadControl(loadControl)
 
                 // 无论是否覆盖 UA 都显式使用 HTTP factory，确保逐流请求头不会丢失。
                 // setDefaultRequestProperties 会应用到初始请求、Range seek 与重定向后的请求。
                 val httpDataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
                     .setAllowCrossProtocolRedirects(true)
+                    .setConnectTimeoutMs(30_000)
+                    .setReadTimeoutMs(30_000)
                 if (!userAgent.isNullOrEmpty()) {
                     httpDataSourceFactory.setUserAgent(userAgent)
                 }

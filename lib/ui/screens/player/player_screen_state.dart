@@ -571,7 +571,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       final qualityId = ref.read(sourceSelectedQualityProvider) ?? sp.qualityId;
       final play =
           await backend.resolvePlay(sp.server, sp.entry, qualityId: qualityId);
-      final cfg = resolveSourcePlayerConfig(ref);
+      final cfg = resolveSourcePlayerConfig(
+        ref,
+        coreOverride: sp.playerCoreOverride,
+      );
       final spItem = sp.toMediaItem();
       ref.read(currentPlayingItemProvider.notifier).state = spItem;
       unawaited(DanmakuAutoLoader.run(ref, null, spItem));
@@ -617,6 +620,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           await _playerService.loadLibassSubtitle(play.subtitles.first.url);
         } catch (_) {}
       }
+      unawaited(_applySourceTrackPreferences(sp));
       _playerService.setSubtitleSize(ref.read(subtitleSizeProvider));
       _playerService.setSubtitlePosition(ref.read(subtitlePositionProvider));
       _playerService.setSubtitleDelay(ref.read(subtitleDelayProvider));
@@ -630,6 +634,43 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         Navigator.of(context).maybePop();
       }
     }
+  }
+
+  Future<void> _applySourceTrackPreferences(SourcePlayback sp) async {
+    final audioIndex = sp.preferredAudioListIndex;
+    final subtitleIndex = sp.preferredSubtitleListIndex;
+    if (audioIndex == null && subtitleIndex == null) return;
+
+    // 大文件/网盘流的 demux 可能数秒后才产出轨道。只等待真实轨道，不阻塞首帧。
+    for (var attempt = 0; attempt < 100; attempt++) {
+      if (!mounted) return;
+      final tracks = _playerService.tracksInfo;
+      final audios = tracks.where((t) => t['type'] == 'audio').toList();
+      final subtitles = tracks
+          .where((t) => t['type'] == 'text' || t['type'] == 'bitmap')
+          .toList();
+      final audioReady = audioIndex == null || audios.length > audioIndex;
+      final subtitleReady = subtitleIndex == null ||
+          subtitleIndex < 0 ||
+          subtitles.length > subtitleIndex;
+      if (audioReady && subtitleReady) {
+        if (audioIndex != null && audioIndex >= 0) {
+          await _playerService
+              .selectAudioTrack(audios[audioIndex]['id'].toString());
+        }
+        if (subtitleIndex != null) {
+          if (subtitleIndex < 0) {
+            await _playerService.deselectSubtitleTrack();
+          } else {
+            await _playerService.selectSubtitleTrack(
+                subtitles[subtitleIndex]['id'].toString());
+          }
+        }
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    AppLogger().w('FeiniuTracks', '等待飞牛音轨/字幕轨就绪超时');
   }
 
   void _startSourceProgressReporting(SourcePlayback sp) {
