@@ -487,6 +487,29 @@ class VideoPlayerService extends ChangeNotifier {
     }
   }
 
+  Future<void> _waitForRetryStartupStable() async {
+    const timeout = Duration(seconds: 8);
+    const poll = Duration(milliseconds: 100);
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      final adapter = _adapter;
+      if (adapter == null || !adapter.isInitialized) {
+        throw StateError('播放器在重试确认期间已释放');
+      }
+      if (adapter.hasError) {
+        throw StateError(adapter.errorMessage ?? '播放器重试起播失败');
+      }
+      // isPlaying 或拿到有效 duration/position，均说明数据源已打开而非仅命令成功。
+      if (adapter.isPlaying ||
+          adapter.duration > Duration.zero ||
+          adapter.position > Duration.zero) {
+        return;
+      }
+      await Future<void>.delayed(poll);
+    }
+    throw TimeoutException('播放器重试后 8 秒内未进入可播放状态');
+  }
+
   Future<void> _attemptStartupRetry() async {
     if (_autoRetryInFlight ||
         _primaryVideoUrl == null ||
@@ -529,6 +552,10 @@ class VideoPlayerService extends ChangeNotifier {
           );
 
           await _adapter!.play();
+          // initialize/play 只代表命令已送达，不代表 Media3/mpv 已成功打开媒体。
+          // 等待首个可用状态，避免异步 401/403/容器错误尚未回调时误报“成功”，
+          // 随后又排队触发下一轮重建，形成毫秒级 1→5 重试风暴。
+          await _waitForRetryStartupStable();
 
           await _restoreTrackSelections(
             audioTrackId: audioTrackId,

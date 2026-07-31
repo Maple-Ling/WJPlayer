@@ -36,6 +36,24 @@ class FeiniuItemDetail {
   });
 }
 
+class FeiniuContinueItem {
+  final SourceEntry entry;
+  final Duration position;
+  final Duration duration;
+
+  const FeiniuContinueItem({
+    required this.entry,
+    required this.position,
+    required this.duration,
+  });
+
+  double get progress => duration.inMilliseconds <= 0
+      ? 0.0
+      : (position.inMilliseconds / duration.inMilliseconds)
+          .clamp(0.0, 1.0)
+          .toDouble();
+}
+
 class FeiniuBackend implements MediaSourceBackend {
   @override
   SourceKind get kind => SourceKind.feiniu;
@@ -254,7 +272,7 @@ class FeiniuBackend implements MediaSourceBackend {
     final data = await _authed(server, '/season/list/$tvGuid');
     final list = (data as List?) ?? const [];
     final headers = await imageHeaders(server);
-    return list.map<SourceEntry>((e) {
+    final seasons = list.map<SourceEntry>((e) {
       final m = Map<String, dynamic>.from(e as Map);
       final n = m['season_number'];
       return SourceEntry(
@@ -268,6 +286,10 @@ class FeiniuBackend implements MediaSourceBackend {
         raw: m,
       );
     }).toList();
+    seasons.sort((a, b) =>
+        ((a.raw?['season_number'] as num?)?.toInt() ?? 0).compareTo(
+            (b.raw?['season_number'] as num?)?.toInt() ?? 0));
+    return seasons;
   }
 
   Future<List<SourceEntry>> _listEpisodes(
@@ -275,9 +297,13 @@ class FeiniuBackend implements MediaSourceBackend {
     final data = await _authed(server, '/episode/list/$seasonGuid');
     final list = (data as List?) ?? const [];
     final headers = await imageHeaders(server);
-    return list
+    final episodes = list
         .map<SourceEntry>((e) => _itemToEntry(server, e, headers))
         .toList();
+    episodes.sort((a, b) =>
+        ((a.raw?['episode_number'] as num?)?.toInt() ?? 0).compareTo(
+            (b.raw?['episode_number'] as num?)?.toInt() ?? 0));
+    return episodes;
   }
 
   /// 单个 item → 媒体条目。只有真正的 Directory 继续按文件夹下钻；
@@ -342,6 +368,40 @@ class FeiniuBackend implements MediaSourceBackend {
     return _listItems(server, guid);
   }
 
+  Future<List<FeiniuContinueItem>> continueWatching(ServerConfig server) async {
+    final data = await _authed(server, '/play/list');
+    final list = data is List
+        ? data
+        : ((data as Map?)?['list'] as List? ?? const []);
+    final headers = await imageHeaders(server);
+    return list.map<FeiniuContinueItem?>((value) {
+      if (value is! Map) return null;
+      final m = Map<String, dynamic>.from(value);
+      final guid = (m['guid'] ?? m['item_guid'] ?? m['itemId'])?.toString() ?? '';
+      final duration = (m['duration'] as num?)?.toInt() ?? 0;
+      final position = (m['ts'] ?? m['position'] ?? m['watched_ts']);
+      final ts = position is num ? position.toInt() : 0;
+      if (guid.isEmpty || duration <= 0 || ts <= 0 || ts >= duration * 0.95) {
+        return null;
+      }
+      final episodeNumber = (m['episode_number'] as num?)?.toInt() ?? 0;
+      final type = (m['type'] ?? (episodeNumber > 0 ? 'Episode' : 'Video'))
+          .toString();
+      final item = <String, dynamic>{
+        ...m,
+        'guid': guid,
+        'type': type,
+        'title': (m['title'] ?? m['name'] ?? '继续观看').toString(),
+        'poster': m['poster'] ?? m['posters'] ?? m['still_path'],
+      };
+      return FeiniuContinueItem(
+        entry: _itemToEntry(server, item, headers),
+        position: Duration(seconds: ts),
+        duration: Duration(seconds: duration),
+      );
+    }).whereType<FeiniuContinueItem>().toList();
+  }
+
   Future<List<SourceEntry>> episodes(
     ServerConfig server,
     String seasonId,
@@ -369,11 +429,19 @@ class FeiniuBackend implements MediaSourceBackend {
     final playInfo = results[1] is Map
         ? Map<String, dynamic>.from(results[1] as Map)
         : <String, dynamic>{};
+    final entryType = entry.raw?['type']?.toString();
     final merged = <String, dynamic>{...item};
     final nested = playInfo['item'];
-    if (nested is Map) merged.addAll(Map<String, dynamic>.from(nested));
-    final type = (playInfo['type'] ?? merged['type'] ?? entry.raw?['type'])
+    // TV 的 play/info 常返回默认播放集，不能让该 Episode 覆盖剧集自身标题/海报；
+    // Movie/Video/Episode 则可用 play/info.item 补齐简介、剧照等字段。
+    if (nested is Map && entryType != 'TV') {
+      merged.addAll(Map<String, dynamic>.from(nested));
+    }
+    final rawType = (playInfo['type'] ?? merged['type'] ?? entryType)
         ?.toString();
+    // play/info 对 TV 条目可能直接解析到默认 Episode，因此目录类型必须优先采用
+    // 列表条目的 TV 身份，否则详情页会被降级成“只有当前单集”。
+    final type = entryType == 'TV' ? 'TV' : rawType;
     final headers = await imageHeaders(server);
     final enriched = _itemToEntry(server, {
       ...?entry.raw,
@@ -381,7 +449,28 @@ class FeiniuBackend implements MediaSourceBackend {
       'guid': guid,
       'type': type ?? 'Video',
     }, headers);
-    final seasons = type == 'TV' ? await _listSeasons(server, guid) : const <SourceEntry>[];
+    var seasons = const <SourceEntry>[];
+    if (type == 'TV') {
+      seasons = await _listSeasons(server, guid);
+    } else if (type == 'Episode') {
+      // 从单集（继续观看/搜索入口）进入详情时，沿 Episode → Season → TV
+      // 反查整部剧，确保仍能展示全部季集，而不是只剩当前一集。
+      final seasonGuid =
+          (playInfo['parent_guid'] ?? merged['parent_guid'])?.toString() ?? '';
+      if (seasonGuid.isNotEmpty) {
+        try {
+          final season = await _authed(server, '/item/$seasonGuid');
+          final tvGuid = season is Map
+              ? season['parent_guid']?.toString() ?? ''
+              : '';
+          if (tvGuid.isNotEmpty) {
+            seasons = await _listSeasons(server, tvGuid);
+          }
+        } catch (_) {
+          // 反查失败不阻断当前单集详情与播放。
+        }
+      }
+    }
     return FeiniuItemDetail(
       entry: enriched,
       item: merged,
@@ -423,12 +512,45 @@ class FeiniuBackend implements MediaSourceBackend {
       'Cookie': 'mode=relay',
     };
 
+    final resumeSeconds = (info['ts'] as num?)?.toInt() ?? 0;
     return ResolvedPlay(
       url: '$base$streamPath',
       title: entry.name,
       httpHeaders: headers,
       subtitles: await _externalSubs(server, mediaGuid, base, token),
+      resumePosition:
+          resumeSeconds > 0 ? Duration(seconds: resumeSeconds) : null,
+      sourceMetadata: {
+        'item_guid': (info['guid'] ?? entry.id).toString(),
+        'media_guid': mediaGuid,
+        'video_guid': (info['video_guid'] ?? '').toString(),
+        'audio_guid': (info['audio_guid'] ?? '').toString(),
+        'subtitle_guid': (info['subtitle_guid'] ?? '').toString(),
+      },
     );
+  }
+
+  Future<void> recordPlayback(
+    ServerConfig server, {
+    required Map<String, dynamic> playMetadata,
+    required Duration position,
+    required Duration duration,
+  }) async {
+    if (duration <= Duration.zero) return;
+    final itemGuid = playMetadata['item_guid']?.toString() ?? '';
+    final mediaGuid = playMetadata['media_guid']?.toString() ?? '';
+    if (itemGuid.isEmpty || mediaGuid.isEmpty) return;
+    await _authed(server, '/play/record', data: {
+      'item_guid': itemGuid,
+      'media_guid': mediaGuid,
+      'video_guid': playMetadata['video_guid']?.toString() ?? '',
+      'audio_guid': playMetadata['audio_guid']?.toString() ?? '',
+      'subtitle_guid': playMetadata['subtitle_guid']?.toString() ?? '',
+      'resolution': '原画',
+      'bitrate': 0,
+      'ts': position.inSeconds.clamp(0, duration.inSeconds),
+      'duration': duration.inSeconds,
+    });
   }
 
   /// 外挂字幕（内封音轨/字幕由 mpv 直接读原文件，这里只补服务端外挂字幕）。

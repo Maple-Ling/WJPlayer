@@ -41,6 +41,7 @@ import '../../../core/utils/platform_utils.dart';
 import '../../../core/widgets/player_settings_panel.dart';
 import '../../../core/theme/app_motion.dart';
 import '../../../core/sources/media_source_backend.dart';
+import '../../../core/sources/feiniu_backend.dart';
 import '../../../core/sources/source_playback.dart';
 import '../../../core/sources/source_registry.dart';
 import '../../widgets/common/source_quality_button.dart';

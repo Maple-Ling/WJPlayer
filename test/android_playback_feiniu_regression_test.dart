@@ -41,6 +41,40 @@ void main() {
     });
   });
 
+  test('Media3 forwards authenticated source headers', () {
+    final source = File(
+      'android/app/src/main/kotlin/com/mapleling/wjplayer/ExoPlayerPlugin.kt',
+    ).readAsStringSync();
+    expect(source, contains('call.argument<Map<String, String>>("httpHeaders")'));
+    expect(source, contains('setDefaultRequestProperties(httpHeaders)'));
+    expect(source, contains('error.errorCodeName'));
+    expect(source, contains('pendingEvents'));
+    expect(
+      source.indexOf('exoPlayer.addListener(instance)'),
+      lessThan(source.indexOf('exoPlayer.prepare()')),
+    );
+  });
+
+  test('Feiniu playback keeps resume and writeback protocol fields', () {
+    final source = File('lib/core/sources/feiniu_backend.dart')
+        .readAsStringSync();
+    expect(source, contains("_authed(server, '/play/list')"));
+    expect(source, contains("_authed(server, '/play/record'"));
+    for (final field in [
+      'item_guid',
+      'media_guid',
+      'video_guid',
+      'audio_guid',
+      'subtitle_guid',
+      'resolution',
+      'bitrate',
+      'ts',
+      'duration',
+    ]) {
+      expect(source, contains("'$field'"), reason: field);
+    }
+  });
+
   test('JNI exports follow the WJPlayer Android package', () {
     const expectedPrefix = 'Java_com_mapleling_wjplayer_';
     for (final path in [

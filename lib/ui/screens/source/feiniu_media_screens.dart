@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/providers/app_providers.dart';
 import '../../../core/providers/server_providers.dart';
 import '../../../core/sources/feiniu_backend.dart';
 import '../../../core/sources/media_source_backend.dart';
@@ -18,19 +19,26 @@ class FeiniuHomeScreen extends ConsumerStatefulWidget {
 class _FeiniuHomeScreenState extends ConsumerState<FeiniuHomeScreen> {
   final FeiniuBackend _backend = FeiniuBackend();
   List<SourceEntry> _libraries = const [];
+  List<FeiniuContinueItem> _continueItems = const [];
   final Map<String, List<SourceEntry>> _previews = {};
   String? _serverId;
   String? _error;
   bool _loading = true;
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final server = ref.read(currentServerProvider);
-    if (server != null && server.id != _serverId) {
-      _serverId = server.id;
+  void initState() {
+    super.initState();
+    final initial = ref.read(currentServerProvider);
+    if (initial?.sourceKind == SourceKind.feiniu) {
+      _serverId = initial!.id;
       Future<void>.microtask(_load);
     }
+    ref.listenManual<ServerConfig?>(currentServerProvider, (previous, next) {
+      if (next?.sourceKind == SourceKind.feiniu && next!.id != _serverId) {
+        _serverId = next.id;
+        Future<void>.microtask(_load);
+      }
+    });
   }
 
   Future<void> _load() async {
@@ -44,10 +52,18 @@ class _FeiniuHomeScreenState extends ConsumerState<FeiniuHomeScreen> {
       });
     }
     try {
-      final libraries = await _backend.libraries(server);
+      final results = await Future.wait<dynamic>([
+        _backend.libraries(server),
+        _backend.continueWatching(server).catchError(
+              (_) => const <FeiniuContinueItem>[],
+            ),
+      ]);
+      final libraries = results[0] as List<SourceEntry>;
+      final continueItems = results[1] as List<FeiniuContinueItem>;
       if (!mounted || server.id != _serverId) return;
       setState(() {
         _libraries = libraries;
+        _continueItems = continueItems;
         _loading = false;
       });
       await Future.wait(libraries.map((library) async {
@@ -77,16 +93,26 @@ class _FeiniuHomeScreenState extends ConsumerState<FeiniuHomeScreen> {
     ));
   }
 
-  void _openEntry(ServerConfig server, SourceEntry entry) {
+  Future<void> _openEntry(ServerConfig server, SourceEntry entry) async {
     if (entry.isDir) {
-      Navigator.of(context).push(MaterialPageRoute<void>(
+      await Navigator.of(context).push(MaterialPageRoute<void>(
         builder: (_) => FeiniuLibraryScreen(server: server, root: entry),
       ));
-      return;
+    } else {
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (_) => FeiniuDetailScreen(server: server, entry: entry),
+      ));
     }
-    Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => FeiniuDetailScreen(server: server, entry: entry),
-    ));
+    if (mounted) await _load();
+  }
+
+  Future<void> _playContinue(
+      ServerConfig server, FeiniuContinueItem item) async {
+    await context.push(
+      '/source-player',
+      extra: SourcePlayback(server: server, entry: item.entry),
+    );
+    if (mounted) await _load();
   }
 
   @override
@@ -100,87 +126,44 @@ class _FeiniuHomeScreenState extends ConsumerState<FeiniuHomeScreen> {
     }
     if (_error != null) {
       return Scaffold(
-        appBar: AppBar(title: Text(server.name)),
+        appBar: AppBar(title: _FeiniuServerSwitcher(current: server)),
         body: _ErrorRetry(message: _error!, onRetry: _load),
       );
     }
     return Scaffold(
       appBar: AppBar(
-        title: Text(server.name),
+        title: _FeiniuServerSwitcher(current: server),
         actions: [
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh_rounded)),
         ],
       ),
       body: RefreshIndicator(
         onRefresh: _load,
-        child: _libraries.isEmpty
+        child: _libraries.isEmpty && _continueItems.isEmpty
             ? ListView(
-                physics: AlwaysScrollableScrollPhysics(),
-                children: [
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: const [
                   SizedBox(height: 260),
-                  Center(child: Text('暂无媒体库')),
+                  Center(child: Text('暂无媒体内容')),
                 ],
               )
-            : ListView.builder(
+            : ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.only(bottom: 24),
-                itemCount: _libraries.length,
-                itemBuilder: (context, index) {
-                  final library = _libraries[index];
-                  final preview = _previews[library.id];
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 18, 8, 8),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                library.name,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleLarge
-                                    ?.copyWith(fontWeight: FontWeight.w700),
-                              ),
-                            ),
-                            TextButton(
-                              onPressed: () => _openLibrary(server, library),
-                              child: const Text('查看全部'),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (preview == null)
-                        const SizedBox(
-                          height: 190,
-                          child: Center(child: CircularProgressIndicator()),
-                        )
-                      else if (preview.isEmpty)
-                        const SizedBox(
-                          height: 80,
-                          child: Center(child: Text('暂无内容')),
-                        )
-                      else
-                        SizedBox(
-                          height: 220,
-                          child: ListView.separated(
-                            scrollDirection: Axis.horizontal,
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            itemCount: preview.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(width: 10),
-                            itemBuilder: (_, i) => SizedBox(
-                              width: 126,
-                              child: _FeiniuMediaCard(
-                                entry: preview[i],
-                                onTap: () => _openEntry(server, preview[i]),
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  );
-                },
+                children: [
+                  if (_continueItems.isNotEmpty)
+                    _FeiniuContinueSection(
+                      items: _continueItems,
+                      onTap: (item) => _playContinue(server, item),
+                    ),
+                  for (final library in _libraries)
+                    _FeiniuLibrarySection(
+                      library: library,
+                      preview: _previews[library.id],
+                      onOpenLibrary: () => _openLibrary(server, library),
+                      onOpenEntry: (entry) => _openEntry(server, entry),
+                    ),
+                ],
               ),
       ),
     );
@@ -331,7 +314,16 @@ class _FeiniuDetailScreenState extends State<FeiniuDetailScreen> {
         _loading = false;
       });
       if (detail.seasons.isNotEmpty) {
-        await _selectSeason(detail.seasons.first.id);
+        final currentSeasonGuid =
+            (detail.playInfo['parent_guid'] ?? detail.item['parent_guid'])
+                ?.toString();
+        final selected = detail.seasons.where((season) {
+          final guid = season.id.startsWith('season:')
+              ? season.id.substring(7)
+              : season.id;
+          return guid == currentSeasonGuid;
+        }).firstOrNull;
+        await _selectSeason((selected ?? detail.seasons.first).id);
       }
     } catch (e) {
       if (!mounted) return;
@@ -382,8 +374,10 @@ class _FeiniuDetailScreenState extends State<FeiniuDetailScreen> {
     final detail = _detail!;
     final item = detail.item;
     final entry = detail.entry;
-    final type = (detail.playInfo['type'] ?? item['type'] ?? entry.raw?['type'])
-        ?.toString();
+    final entryType = entry.raw?['type']?.toString();
+    final type = (entryType == 'TV' || detail.seasons.isNotEmpty)
+        ? 'TV'
+        : (detail.playInfo['type'] ?? item['type'] ?? entryType)?.toString();
     final overview = item['overview']?.toString() ?? '';
     final backdrop = item['backdrops']?.toString() ?? '';
     final backdropUrl = _backend.imageUrl(widget.server, backdrop, width: 1200);
@@ -504,6 +498,251 @@ class _FeiniuDetailScreenState extends State<FeiniuDetailScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _FeiniuServerSwitcher extends ConsumerWidget {
+  const _FeiniuServerSwitcher({required this.current});
+
+  final ServerConfig current;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final servers = ref.watch(serverListProvider);
+    return PopupMenuButton<String>(
+      tooltip: '切换服务器',
+      onSelected: (serverId) {
+        if (serverId == '__manage__') {
+          context.go('/');
+          return;
+        }
+        final server = servers.where((item) => item.id == serverId).firstOrNull;
+        if (server == null || server.id == current.id) return;
+        ref.read(currentServerProvider.notifier).state = server;
+        if (server.authToken != null || server.isFileBrowse) {
+          ref.read(authStateProvider.notifier).state = AuthState.authenticated;
+        }
+        context.go(server.isFileBrowse && server.sourceKind != SourceKind.feiniu
+            ? '/browse'
+            : '/home');
+      },
+      itemBuilder: (context) => [
+        for (final server in servers)
+          PopupMenuItem<String>(
+            value: server.id,
+            child: Row(
+              children: [
+                Icon(
+                  server.sourceKind == SourceKind.feiniu
+                      ? Icons.video_library_rounded
+                      : server.isFileBrowse
+                          ? Icons.cloud_rounded
+                          : Icons.dns_rounded,
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(server.name, overflow: TextOverflow.ellipsis),
+                ),
+                if (server.id == current.id)
+                  const Icon(Icons.check_rounded, size: 18),
+              ],
+            ),
+          ),
+        const PopupMenuDivider(),
+        const PopupMenuItem<String>(
+          value: '__manage__',
+          child: Row(
+            children: [
+              Icon(Icons.settings_rounded, size: 20),
+              SizedBox(width: 10),
+              Text('管理服务器'),
+            ],
+          ),
+        ),
+      ],
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 48, maxWidth: 220),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.video_library_rounded, size: 22),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                current.name,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+            const SizedBox(width: 2),
+            const Icon(Icons.keyboard_arrow_down_rounded, size: 20),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FeiniuContinueSection extends StatelessWidget {
+  const _FeiniuContinueSection({required this.items, required this.onTap});
+
+  final List<FeiniuContinueItem> items;
+  final ValueChanged<FeiniuContinueItem> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 18, 16, 10),
+          child: Text(
+            '继续观看',
+            style: Theme.of(context)
+                .textTheme
+                .titleLarge
+                ?.copyWith(fontWeight: FontWeight.w700),
+          ),
+        ),
+        SizedBox(
+          height: 166,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            itemCount: items.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            itemBuilder: (context, index) {
+              final item = items[index];
+              return SizedBox(
+                width: 220,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => onTap(item),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              MediaImage(
+                                imageUrl: item.entry.thumbUrl,
+                                httpHeaders: item.entry.thumbHeaders,
+                                fit: BoxFit.cover,
+                              ),
+                              const DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [Colors.transparent, Colors.black54],
+                                  ),
+                                ),
+                              ),
+                              const Center(
+                                child: Icon(Icons.play_circle_fill_rounded,
+                                    color: Colors.white, size: 42),
+                              ),
+                              Positioned(
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                child: LinearProgressIndicator(
+                                  value: item.progress,
+                                  minHeight: 4,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 7),
+                      Text(
+                        item.entry.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      Text(
+                        '已观看 ${(item.progress * 100).round()}%',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _FeiniuLibrarySection extends StatelessWidget {
+  const _FeiniuLibrarySection({
+    required this.library,
+    required this.preview,
+    required this.onOpenLibrary,
+    required this.onOpenEntry,
+  });
+
+  final SourceEntry library;
+  final List<SourceEntry>? preview;
+  final VoidCallback onOpenLibrary;
+  final ValueChanged<SourceEntry> onOpenEntry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 18, 8, 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  library.name,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w700),
+                ),
+              ),
+              TextButton(onPressed: onOpenLibrary, child: const Text('查看全部')),
+            ],
+          ),
+        ),
+        if (preview == null)
+          const SizedBox(
+            height: 190,
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (preview!.isEmpty)
+          const SizedBox(height: 80, child: Center(child: Text('暂无内容')))
+        else
+          SizedBox(
+            height: 220,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              itemCount: preview!.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (_, index) => SizedBox(
+                width: 126,
+                child: _FeiniuMediaCard(
+                  entry: preview![index],
+                  onTap: () => onOpenEntry(preview![index]),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
