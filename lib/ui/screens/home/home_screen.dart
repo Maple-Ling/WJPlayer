@@ -424,7 +424,8 @@ class _ServerSelectorOverlayState extends State<_ServerSelectorOverlay>
                                     ref
                                         .read(currentServerProvider.notifier)
                                         .state = server;
-                                    if (server.authToken != null) {
+                                    if (server.authToken != null ||
+                                        server.isFileBrowse) {
                                       ref
                                           .read(authStateProvider.notifier)
                                           .state = AuthState.authenticated;
@@ -432,6 +433,12 @@ class _ServerSelectorOverlayState extends State<_ServerSelectorOverlay>
                                     ref.invalidate(librariesProvider);
                                     ref.invalidate(resumeItemsProvider);
                                     ref.invalidate(randomRecommendationsProvider);
+                                    final destination = server.isFileBrowse &&
+                                            server.sourceKind !=
+                                                SourceKind.feiniu
+                                        ? '/browse'
+                                        : '/home';
+                                    GoRouter.of(context).go(destination);
                                     _dismiss();
                                   },
                                   child: Container(
