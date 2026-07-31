@@ -14,6 +14,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   bool _sourceProgressWriteInFlight = false;
   int _lastSourceProgressSecond = -1;
   bool _sourceCompletionReported = false;
+  String? _sourceCoreOverride;
   double? _initialVideoAspectRatio;
   // 当前 Anime4K 超分档位（off/modeA/…/modeAC），供顶栏面板高亮选中项。
   String _anime4kMode = 'off';
@@ -164,6 +165,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _activeState = this;
+    _sourceCoreOverride = widget.sourcePlay?.playerCoreOverride;
     _introSkip = IntroSkipController(service: ref.read(introSkipServiceProvider));
     _playerService = VideoPlayerService();
     _playerService.addListener(_onPlayerUpdate);
@@ -573,7 +575,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           await backend.resolvePlay(sp.server, sp.entry, qualityId: qualityId);
       final cfg = resolveSourcePlayerConfig(
         ref,
-        coreOverride: sp.playerCoreOverride,
+        coreOverride: _sourceCoreOverride,
       );
       final spItem = sp.toMediaItem();
       ref.read(currentPlayingItemProvider.notifier).state = spItem;
@@ -2557,6 +2559,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             onTap: _playNext,
           ),
           const Spacer(),
+          if (widget.sourcePlay != null)
+            _BottomBarAction(
+              icon: Icons.memory_rounded,
+              label: '内核',
+              onTap: _showCoreSwitchDialog,
+            ),
           _BottomBarAction(
             icon: Icons.chat_bubble_outline_rounded,
             label: '弹幕',
@@ -3048,7 +3056,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   void _showCoreSwitchDialog() {
-    final currentCore = normalizePlayerCore(ref.read(playerCoreProvider));
+    final currentCore = normalizePlayerCore(
+        _sourceCoreOverride ?? ref.read(playerCoreProvider));
     final children = <Widget>[
       PanelOptionTile(
         label: 'ExoPlayer',
@@ -3095,7 +3104,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   Future<void> _switchCore(String core) async {
     final savedPosition = _playerService.position;
-    ref.read(playerCoreProvider.notifier).state = normalizePlayerCore(core);
+    final normalizedCore = normalizePlayerCore(core);
+    if (widget.sourcePlay != null) {
+      _sourceCoreOverride = normalizedCore;
+    } else {
+      ref.read(playerCoreProvider.notifier).state = normalizedCore;
+    }
     await _playerService.dispose();
     _playerService = VideoPlayerService();
     _activePlayerService = _playerService;
