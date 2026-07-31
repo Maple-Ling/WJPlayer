@@ -496,10 +496,13 @@ class FeiniuBackend implements MediaSourceBackend {
     SourceEntry entry, {
     String? qualityId,
   }) async {
-    final info = await _authed(server, '/play/info', data: {
+    final response = await _authed(server, '/play/info', data: {
       'item_guid': entry.id,
     });
-    final mediaGuid = (info as Map?)?['media_guid']?.toString() ?? '';
+    final info = response is Map
+        ? Map<String, dynamic>.from(response)
+        : <String, dynamic>{};
+    final mediaGuid = info['media_guid']?.toString() ?? '';
     if (mediaGuid.isEmpty) throw SourceException('未获取到播放媒体');
 
     final token = _tokenCache[server.id] ?? server.authToken ?? '';
