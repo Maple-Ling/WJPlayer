@@ -15,8 +15,11 @@ import '../../../core/providers/server_providers.dart';
 import '../../../core/sources/media_source_backend.dart';
 import '../../../core/sources/source_playback.dart';
 import '../../../core/sources/unified_media_adapter.dart';
+import '../../widgets/common/collapsible_overview.dart';
 import '../../widgets/common/media_metadata_badges.dart';
 import '../../widgets/common/media_widgets.dart';
+import '../../widgets/common/adaptive_poster_blend.dart';
+import '../../widgets/common/playback_resource_card.dart';
 import '../discover/external_media_detail_screen.dart';
 
 UnifiedMediaEntry unifiedEntryFromSource(SourceEntry source) => UnifiedMediaEntry(
@@ -429,7 +432,10 @@ class _UnifiedMediaDetailScreenState
   bool _loadingMedia = false;
   String? _error;
   ExternalMediaDetail? _externalDetail;
+  Color? _backgroundColor;
   int _generation = 0;
+  final Map<String, UnifiedMediaDetail> _detailCache = {};
+  final Map<String, List<UnifiedMediaResource>> _resourceCache = {};
   final ScrollController _episodeController = ScrollController();
 
   UnifiedMediaAdapter get _adapter => unifiedMediaAdapterFor(
@@ -457,6 +463,13 @@ class _UnifiedMediaDetailScreenState
   }
 
   Future<void> _load() async {
+    final cacheKey = '${widget.server.id}:${widget.entry.id}';
+    final cached = _detailCache[cacheKey];
+    if (cached != null) {
+      _detail = cached;
+      setState(() => _loading = false);
+      return;
+    }
     setState(() {
       _loading = true;
       _error = null;
@@ -464,6 +477,7 @@ class _UnifiedMediaDetailScreenState
     try {
       final detail = await _adapter.detail(widget.entry);
       if (!mounted) return;
+      _detailCache[cacheKey] = detail;
       _detail = detail;
       await _loadExternalDetail(detail.entry);
       if (detail.seasons.isNotEmpty) {
@@ -471,8 +485,7 @@ class _UnifiedMediaDetailScreenState
           final id = season.id.contains(':')
               ? season.id.substring(season.id.indexOf(':') + 1)
               : season.id;
-          return season.id == detail.initialSeasonId ||
-              id == detail.initialSeasonId;
+          return season.id == detail.initialSeasonId || id == detail.initialSeasonId;
         }).firstOrNull;
         await _selectSeason((preferred ?? detail.seasons.first).id);
       } else {
@@ -559,19 +572,38 @@ class _UnifiedMediaDetailScreenState
 
   Future<void> _selectEpisode(UnifiedMediaEntry entry) async {
     if (_selectedEntry?.id == entry.id) return;
-    setState(() => _selectedEntry = entry);
-    await _loadResources(entry);
+    final cached = _resourceCache[entry.id];
+    setState(() {
+      _selectedEntry = entry;
+      if (cached != null) {
+        _resources = cached;
+        _resourceIndex = 0;
+        _normalizeTracks();
+      }
+    });
+    if (cached == null) await _loadResources(entry, showLoading: false);
   }
 
-  Future<void> _loadResources(UnifiedMediaEntry entry) async {
+  Future<void> _loadResources(UnifiedMediaEntry entry,
+      {bool showLoading = true}) async {
+    final cached = _resourceCache[entry.id];
+    if (cached != null) {
+      setState(() {
+        _resources = cached;
+        _resourceIndex = 0;
+        _normalizeTracks();
+        _loadingMedia = false;
+      });
+      return;
+    }
     final generation = ++_generation;
-    setState(() {
-      _loadingMedia = true;
-      _resources = const [];
-    });
+    if (showLoading) {
+      setState(() => _loadingMedia = true);
+    }
     try {
       final resources = await _adapter.mediaResources(entry);
       if (!mounted || generation != _generation) return;
+      _resourceCache[entry.id] = resources;
       setState(() {
         _resources = resources;
         _resourceIndex = resources.isEmpty
@@ -675,8 +707,14 @@ class _UnifiedMediaDetailScreenState
     }
     final detail = _detail!;
     final entry = detail.entry;
+    final background = _backgroundColor ?? Theme.of(context).scaffoldBackgroundColor;
     return Scaffold(
-      body: RefreshIndicator(
+      backgroundColor: background,
+      body: AnimatedContainer(
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutCubic,
+        color: background,
+        child: RefreshIndicator(
         onRefresh: _load,
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -699,34 +737,21 @@ class _UnifiedMediaDetailScreenState
               ],
               flexibleSpace: FlexibleSpaceBar(
                 collapseMode: CollapseMode.parallax,
-                background: Stack(fit: StackFit.expand, children: [
-                  MediaImage(
-                    imageUrl: entry.posterUrl?.isNotEmpty == true
-                        ? entry.posterUrl
-                        : entry.backdropUrl,
-                    httpHeaders: entry.imageHeaders,
-                    fit: BoxFit.cover,
-                    alignment: Alignment.topCenter,
-                  ),
-                  const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.transparent,
-                          Color(0x22000000),
-                          Color(0xFFF0F2F0),
-                        ],
-                        stops: [0.45, 0.72, 1],
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    left: 28,
-                    right: 28,
-                    bottom: 28,
-                    child: Column(children: [
+                background: AdaptivePosterBlend(
+                  imageUrl: entry.posterUrl?.isNotEmpty == true
+                      ? entry.posterUrl
+                      : entry.backdropUrl,
+                  httpHeaders: entry.imageHeaders,
+                  onBackgroundChanged: (color) {
+                    if (mounted && color != _backgroundColor) {
+                      setState(() => _backgroundColor = color);
+                    }
+                  },
+                  child: Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Padding(
+                      padding: const EdgeInsets.all(28),
+                      child: Column(children: [
                       Text(entry.name,
                           textAlign: TextAlign.center,
                           maxLines: 2,
@@ -749,9 +774,10 @@ class _UnifiedMediaDetailScreenState
                           Text(entry.isSeries ? '电视剧' : '电影'),
                         ],
                       ),
-                    ]),
+                      ]),
+                    ),
                   ),
-                ]),
+                ),
               ),
             ),
             SliverPadding(
@@ -782,22 +808,7 @@ class _UnifiedMediaDetailScreenState
                 _buildPlaybackOptions(),
                 if (entry.overview?.isNotEmpty == true) ...[
                   const SizedBox(height: 22),
-                  ExpansionTile(
-                    tilePadding: EdgeInsets.zero,
-                    initiallyExpanded: false,
-                    title: const Text('简介',
-                        style: TextStyle(fontWeight: FontWeight.w800)),
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Text(entry.overview!,
-                            style: const TextStyle(
-                                fontSize: 12,
-                                height: 1.65,
-                                color: Color(0xFF4F4F4F))),
-                      ),
-                    ],
-                  ),
+                  CollapsibleOverview(text: entry.overview!),
                 ],
                 if (detail.seasons.isNotEmpty) ...[
                   const SizedBox(height: 18),
@@ -1034,7 +1045,7 @@ class _UnifiedMediaDetailScreenState
           height: 100, child: Center(child: Text('暂无播放资源')));
     }
     return SizedBox(
-      height: 105,
+      height: 155,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: _resources.length,
@@ -1042,57 +1053,33 @@ class _UnifiedMediaDetailScreenState
         itemBuilder: (_, index) {
           final resource = _resources[index];
           final selected = index == _resourceIndex;
+          final video = resource.video ?? const <String, dynamic>{};
+          final range = (video['video_range_type'] ?? video['video_range'])
+              ?.toString();
           return SizedBox(
-            width: 220,
-            child: Card(
-              child: InkWell(
-                onTap: () => setState(() {
-                  _resourceIndex = index;
-                  _normalizeTracks();
-                }),
-                borderRadius: BorderRadius.circular(16),
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(children: [
-                        const Icon(Icons.play_circle_fill_rounded,
-                            color: Color(0xFF4CAF50)),
-                        const SizedBox(width: 8),
-                        Expanded(
-                            child: Text(widget.server.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w800))),
-                        if (selected)
-                          const Chip(
-                              label: Text('当前资源'),
-                              visualDensity: VisualDensity.compact),
-                      ]),
-                      const Spacer(),
-                      Text(resource.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 14, fontWeight: FontWeight.w600)),
-                      if (resource.video != null)
-                        Text(
-                          [
-                            _resolution(resource.video!),
-                            resource.video!['codec_name']?.toString() ?? '',
-                            _bitrate(resource.video!['bitrate']),
-                          ].where((value) => value.isNotEmpty).join(' · '),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: Colors.black54),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
+            width: 250,
+            child: PlaybackResourceCard(
+              serverName: widget.server.name,
+              serverIcon: widget.server.iconUrl?.isNotEmpty == true
+                  ? ClipRRect(
+                      borderRadius: BorderRadius.circular(5),
+                      child: MediaImage(
+                        imageUrl: widget.server.iconUrl,
+                        fit: BoxFit.contain,
+                        useDefaultUserAgent: true,
+                      ),
+                    )
+                  : null,
+              isCurrent: selected,
+              resolution: _resolution(video),
+              dynamicRange: range,
+              codec: video['codec_name']?.toString(),
+              size: resource.size,
+              bitrate: (video['bitrate'] as num?)?.toInt(),
+              onTap: () => setState(() {
+                _resourceIndex = index;
+                _normalizeTracks();
+              }),
             ),
           );
         },
@@ -1106,11 +1093,15 @@ class _UnifiedMediaDetailScreenState
           scrollDirection: Axis.horizontal,
           itemCount: images.length,
           separatorBuilder: (_, __) => const SizedBox(width: 9),
-          itemBuilder: (_, index) => AspectRatio(
-            aspectRatio: 16 / 9,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(18),
-              child: MediaImage(imageUrl: images[index], fit: BoxFit.cover),
+          itemBuilder: (_, index) => InkWell(
+            onTap: () => _showGallery(images, index),
+            borderRadius: BorderRadius.circular(18),
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: MediaImage(imageUrl: images[index], fit: BoxFit.cover),
+              ),
             ),
           ),
         ),
@@ -1924,3 +1915,30 @@ class _ErrorRetry extends StatelessWidget {
         ),
       );
 }
+
+  void _showGallery(List<String> images, int initial) {
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black,
+      builder: (_) => Dialog.fullscreen(
+        backgroundColor: Colors.black,
+        child: Stack(children: [
+          PageView.builder(
+            controller: PageController(initialPage: initial),
+            itemCount: images.length,
+            itemBuilder: (_, index) => InteractiveViewer(
+              minScale: 1,
+              maxScale: 5,
+              child: Center(child: MediaImage(imageUrl: images[index], fit: BoxFit.contain)),
+            ),
+          ),
+          SafeArea(
+            child: IconButton(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.close_rounded, color: Colors.white, size: 30),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }

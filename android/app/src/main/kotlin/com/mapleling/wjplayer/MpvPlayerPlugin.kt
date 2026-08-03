@@ -198,9 +198,9 @@ class MpvPlayerPlugin(
                 val playerId = call.argument<String>("playerId") ?: ""
                 val size = call.argument<Double>("size") ?: 0.5
                 // MPV 字幕保持独立 OSD，不随视频缩放；字号固定为默认的 2 倍。
-                getPlayer(playerId)?.setProperty("sub-scale-by-window", "no")
-                getPlayer(playerId)?.setProperty("sub-scale-with-window", "no")
-                getPlayer(playerId)?.setProperty("sub-ass-scale-with-window", "no")
+                getPlayer(playerId)?.setProperty("sub-scale-by-window", "yes")
+                getPlayer(playerId)?.setProperty("sub-scale-with-window", "yes")
+                getPlayer(playerId)?.setProperty("sub-ass-scale-with-window", "yes")
                 getPlayer(playerId)?.setProperty("sub-use-scale", "no")
                 getPlayer(playerId)?.setProperty("sub-scale", "2.0")
                 getPlayer(playerId)?.setProperty("sub-use-margins", "yes")
@@ -704,6 +704,7 @@ class MpvPlayerPlugin(
         // Idle and window management
         MPVLib.setOptionString("idle", "once")
         MPVLib.setOptionString("force-window", "no")
+        MPVLib.setOptionString("keepaspect", "yes")
 
         // Subtitles
         MPVLib.setOptionString("sub-visibility", "yes")
@@ -712,9 +713,9 @@ class MpvPlayerPlugin(
         MPVLib.setOptionString("blend-subtitles", "no")
         MPVLib.setOptionString("sub-auto", "all")
         MPVLib.setOptionString("sub-ass", "yes")
-        MPVLib.setOptionString("sub-scale-by-window", "no")
-        MPVLib.setOptionString("sub-scale-with-window", "no")
-        MPVLib.setOptionString("sub-ass-scale-with-window", "no")
+        MPVLib.setOptionString("sub-scale-by-window", "yes")
+        MPVLib.setOptionString("sub-scale-with-window", "yes")
+        MPVLib.setOptionString("sub-ass-scale-with-window", "yes")
         MPVLib.setOptionString("sub-use-margins", "yes")
         MPVLib.setOptionString("sub-ass-force-margins", "yes")
         // 显式保住内封子集化特效 ASS 的**附件字体**：libass 直接用容器里嵌的字体，
@@ -992,7 +993,7 @@ class MpvPlayerPlugin(
                 "原始" -> applyAspect(override = "0") // 用片源原始比例
                 "拉伸" -> applyAspect(override = "-1", keepAspect = false) // 变形铺满
                 "铺满" -> applyAspect(override = "-1", panscan = 1.0) // 裁切铺满
-                else -> applyAspect(override = "0") // 自适应 / 自动，使用媒体原始比例
+                else -> applyAspect(override = "-1") // 默认比例交给媒体内核
             }
         }
 

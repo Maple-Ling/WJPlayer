@@ -346,6 +346,8 @@ final feiniuSearchResultsProvider = FutureProvider.autoDispose
 
 bool _isTopLevelFeiniuEntry(SourceEntry entry) {
   final type = entry.raw?['type']?.toString().trim().toLowerCase();
+  // 部分 fnOS 搜索接口省略 type，但仍返回可播放顶层条目；只明确排除分集/季/目录。
+  if (type == null || type.isEmpty) return entry.id.isNotEmpty;
   return type == 'movie' || type == 'tv' || type == 'series';
 }
 

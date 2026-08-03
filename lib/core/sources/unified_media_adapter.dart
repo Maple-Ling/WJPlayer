@@ -247,8 +247,8 @@ class EmbyUnifiedMediaAdapter implements UnifiedMediaAdapter {
   @override
   Future<List<UnifiedMediaResource>> mediaResources(
       UnifiedMediaEntry entry) async {
-    final sources = await api.media.getItemMediaSources(entry.id);
-    return sources.map((source) {
+    if (entry.mediaItem?.mediaSources != null) {
+      final sources = entry.mediaItem!.mediaSources!;
       Map<String, dynamic> stream(MediaStream value) => {
             'index': value.index,
             'codec_name': value.codec,

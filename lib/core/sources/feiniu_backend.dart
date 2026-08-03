@@ -640,11 +640,20 @@ class FeiniuBackend implements MediaSourceBackend {
         ? data
         : ((data is Map ? data['list'] : null) as List? ?? const []);
     final headers = await imageHeaders(server);
-    return list.whereType<Map>().map((value) {
-      final raw = Map<String, dynamic>.from(value);
-      raw['poster'] ??= _posterOf(raw);
-      return _itemToEntry(server, raw, headers);
-    }).toList(growable: false);
+    final results = <SourceEntry>[];
+    for (final value in list) {
+      if (value is! Map) continue;
+      try {
+        final raw = <String, dynamic>{};
+        value.forEach((key, item) => raw[key.toString()] = item);
+        raw['poster'] ??= _posterOf(raw);
+        results.add(_itemToEntry(server, raw, headers));
+      } catch (error) {
+        // 单条脏数据隔离：不让一个缺字段/错类型条目清空整台飞牛的聚合结果。
+        continue;
+      }
+    }
+    return results;
   }
 
   Future<List<Map<String, dynamic>>> _searchFromLibraries(
@@ -669,15 +678,21 @@ class FeiniuBackend implements MediaSourceBackend {
           });
           final map = data is Map ? data : const <String, dynamic>{};
           final list = map['list'] is List ? map['list'] as List : const [];
-          for (final value in list.whereType<Map>()) {
-            final item = Map<String, dynamic>.from(value);
-            final text = [
-              item['title'],
-              item['name'],
-              item['original_title'],
-              item['sort_title'],
-            ].where((value) => value != null).join(' ').toLowerCase();
-            if (text.contains(lowered)) results.add(item);
+          for (final value in list) {
+            if (value is! Map) continue;
+            try {
+              final item = <String, dynamic>{};
+              value.forEach((key, field) => item[key.toString()] = field);
+              final text = [
+                item['title'],
+                item['name'],
+                item['original_title'],
+                item['sort_title'],
+              ].where((value) => value != null).join(' ').toLowerCase();
+              if (text.contains(lowered)) results.add(item);
+            } catch (_) {
+              continue;
+            }
           }
           if (list.length < 500) break;
           page++;

@@ -25,6 +25,7 @@ class ColorExtractor {
   static Future<ExtractedColors> extractFromUrl(
     String imageUrl, {
     Brightness brightness = Brightness.dark,
+    Map<String, String>? headers,
   }) async {
     final key = _cacheKey(imageUrl, brightness);
     final cached = _readCache(key);
@@ -37,7 +38,7 @@ class ColorExtractor {
       return pending;
     }
 
-    final future = _extract(imageUrl, brightness);
+    final future = _extract(imageUrl, brightness, headers);
     _pending[key] = future;
     return future.whenComplete(() {
       _pending.remove(key);
@@ -47,11 +48,15 @@ class ColorExtractor {
   static Future<ExtractedColors> _extract(
     String imageUrl,
     Brightness brightness,
+    Map<String, String>? headers,
   ) async {
     final key = _cacheKey(imageUrl, brightness);
     try {
       final palette = await PaletteGenerator.fromImageProvider(
-        NetworkImage(imageUrl),
+        NetworkImage(
+          imageUrl,
+          headers: headers,
+        ),
         size: const Size(100, 100),
         maximumColorCount: 16,
         filters: [],

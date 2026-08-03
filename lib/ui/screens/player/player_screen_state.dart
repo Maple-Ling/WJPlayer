@@ -1780,12 +1780,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    ClipRect(
-                      child: Transform.scale(
-                        scale: _videoZoom,
-                        child: _buildVideoArea(),
-                      ),
-                    ),
+                    if (_playerService.coreType == PlayerCoreType.exoPlayer)
+                      ClipRect(
+                        child: Transform.scale(
+                          scale: _videoZoom,
+                          child: _buildVideoArea(),
+                        ),
+                      )
+                    else
+                      _buildVideoArea(),
                     // Exo 字幕固定在播放器层，不参与视频比例/填充/裁剪。
                     if (_playerService.coreType == PlayerCoreType.exoPlayer)
                       _buildExoSubtitleOverlay(),
@@ -1983,12 +1986,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         final contentRect = _computeContentRect(
           Size(constraints.maxWidth, constraints.maxHeight),
         );
+        final isMpv = _playerService.coreType == PlayerCoreType.mpv ||
+            _playerService.coreType == PlayerCoreType.nativeMpv;
         final delayedPosition = _playerService.position -
             Duration(milliseconds: (danmakuDelay * 1000).round());
         return Stack(
           fit: StackFit.expand,
           children: [
-            Positioned.fromRect(rect: contentRect, child: videoWidget),
+            if (isMpv)
+              Positioned.fill(child: videoWidget)
+            else
+              Positioned.fromRect(rect: contentRect, child: videoWidget),
             if (danmakuEnabled && danmakuItems.isNotEmpty)
               Positioned.fill(
                 child: DanmakuOverlay(

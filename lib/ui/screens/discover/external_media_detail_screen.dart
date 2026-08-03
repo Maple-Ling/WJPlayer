@@ -11,7 +11,10 @@ import '../../../core/providers/media_providers.dart';
 import '../../../core/providers/server_providers.dart';
 import '../../../core/sources/source_playback.dart';
 import '../../utils/media_helpers.dart';
+import '../../widgets/common/collapsible_overview.dart';
 import '../../widgets/common/media_widgets.dart';
+import '../../widgets/common/adaptive_poster_blend.dart';
+import '../../widgets/common/playback_resource_card.dart';
 
 class ExternalMediaDetailScreen extends ConsumerStatefulWidget {
   const ExternalMediaDetailScreen({super.key, required this.entry});
@@ -24,6 +27,7 @@ class ExternalMediaDetailScreen extends ConsumerStatefulWidget {
 class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailScreen> {
   int _season = 1;
   ExternalEpisode? _episode;
+  Color? _backgroundColor;
 
   String _matchQuery(ExternalMediaDetail detail) {
     if (detail.mediaType != 'tv') return detail.title;
@@ -64,9 +68,14 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
       });
     }
 
+    final background = _backgroundColor ?? Theme.of(context).scaffoldBackgroundColor;
     return Scaffold(
-      body: Stack(children: [
-        Positioned.fill(child: ColoredBox(color: Theme.of(context).scaffoldBackgroundColor)),
+      backgroundColor: background,
+      body: AnimatedContainer(
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutCubic,
+        color: background,
+        child: Stack(children: [
         CustomScrollView(slivers: [
           SliverAppBar(
             expandedHeight: MediaQuery.sizeOf(context).height * 0.44,
@@ -77,10 +86,18 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
             actions: [_roundButton(Icons.more_vert_rounded, () => _showLinks(detail))],
             flexibleSpace: FlexibleSpaceBar(
               collapseMode: CollapseMode.parallax,
-              background: Stack(fit: StackFit.expand, children: [
-                MediaImage(imageUrl: detail.posterUrl ?? detail.backdropUrl, fit: BoxFit.cover, alignment: Alignment.topCenter),
-                const DecoratedBox(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.transparent, Color(0x22000000), Color(0xFFF0F2F0)], stops: [0.45, 0.72, 1]))),
-                Positioned(left: 28, right: 28, bottom: 28, child: Column(children: [
+              background: AdaptivePosterBlend(
+                imageUrl: detail.posterUrl ?? detail.backdropUrl,
+                onBackgroundChanged: (color) {
+                  if (mounted && color != _backgroundColor) {
+                    setState(() => _backgroundColor = color);
+                  }
+                },
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 28),
+                    child: Column(children: [
                   Text(detail.title, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: Color(0xFF252525), shadows: [Shadow(color: Colors.white54, blurRadius: 8)])),
                   const SizedBox(height: 12),
                   Wrap(alignment: WrapAlignment.center, spacing: 10, runSpacing: 6, children: [
@@ -90,8 +107,10 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
                   ]),
                   const SizedBox(height: 6),
                   Text(detail.genres.join(' · '), style: _heroMeta, textAlign: TextAlign.center),
-                ])),
-              ]),
+                    ]),
+                  ),
+                ),
+              ),
             ),
           ),
           SliverPadding(
@@ -100,12 +119,7 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
               _primaryPlayButton(matches, selectedEpisode),
               const SizedBox(height: 14),
               if ((detail.overview ?? '').isNotEmpty)
-                ExpansionTile(
-                  tilePadding: EdgeInsets.zero,
-                  initiallyExpanded: false,
-                  title: const Text('简介', style: TextStyle(fontWeight: FontWeight.w800)),
-                  children: [Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(detail.overview!, style: const TextStyle(fontSize: 12, height: 1.65, color: Color(0xFF4F4F4F))))],
-                ),
+                CollapsibleOverview(text: detail.overview!),
               if (detail.mediaType == 'tv') ...[
                 const SizedBox(height: 18),
                 _seasonSelector(detail),
@@ -191,43 +205,24 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
     data: (matches) => matches.isEmpty
         ? const SizedBox(height: 100, child: Center(child: Text('所有媒体库均未找到匹配资源')))
         : SizedBox(
-            height: 105,
+            height: 155,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: matches.length,
               separatorBuilder: (_, __) => const SizedBox(width: 8),
               itemBuilder: (_, index) {
                 final match = matches[index];
-                final specs = _resourceSpecs(match.item);
                 return SizedBox(
-                  width: 220,
-                  child: Card(
-                    child: InkWell(
-                      onTap: () => _openMatch(match, directPlay: true),
-                      borderRadius: BorderRadius.circular(16),
-                      child: Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(children: [
-                              const Icon(Icons.play_circle_fill_rounded, color: Color(0xFF4CAF50)),
-                              const SizedBox(width: 8),
-                              Expanded(child: Text(match.serverName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800))),
-                              if (index == 0) const Chip(label: Text('最佳资源'), visualDensity: VisualDensity.compact),
-                            ]),
-                            const Spacer(),
-                            Text(match.item.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                            const SizedBox(height: 3),
-                            Text(match.episodeCount == null ? match.item.type : '共 ${match.episodeCount} 集', style: const TextStyle(color: Colors.black54)),
-                            if (specs.isNotEmpty) ...[
-                              const SizedBox(height: 5),
-                              Text(specs.join(' · '), maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w600)),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ),
+                  width: 250,
+                  child: PlaybackResourceCard(
+                    serverName: match.serverName,
+                    isBest: index == 0,
+                    resolution: match.item.mediaSources?.firstOrNull?.qualityLabel,
+                    dynamicRange: match.item.mediaSources?.firstOrNull?.primaryVideoStream?.videoRangeLabel,
+                    codec: match.item.mediaSources?.firstOrNull?.primaryVideoStream?.videoCodecLabel,
+                    size: match.item.mediaSources?.firstOrNull?.size,
+                    bitrate: match.item.mediaSources?.firstOrNull?.primaryVideoStream?.bitRate,
+                    onTap: () => _openMatch(match, directPlay: true),
                   ),
                 );
               },

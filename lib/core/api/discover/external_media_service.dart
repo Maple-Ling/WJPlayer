@@ -60,9 +60,9 @@ class ExternalMediaService {
         final results = (response.data as Map)['results'] as List? ?? const [];
         final wanted = entry.mediaType == 'tv' ? 'tv' : 'movie';
         final row = results.whereType<Map>().firstWhere(
-              (item) => item['media_type'] == wanted,
-              orElse: () => results.whereType<Map>().first,
-            );
+          (item) => item['media_type'] == wanted,
+          orElse: () => results.whereType<Map>().first,
+        );
         return (id: (row['id'] as num).toInt(), type: '${row['media_type'] ?? wanted}');
       },
       encode: (value) => {'id': value.id, 'type': value.type},

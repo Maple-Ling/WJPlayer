@@ -1791,9 +1791,9 @@ class MpvPlayerAdapter implements PlayerAdapter {
     try {
       await np.setProperty('sub-visibility', 'yes');
       await np.setProperty('sub-delay', _subtitleDelay.toStringAsFixed(3));
-      await np.setProperty('sub-scale-by-window', 'no');
-      await np.setProperty('sub-scale-with-window', 'no');
-      await np.setProperty('sub-ass-scale-with-window', 'no');
+      await np.setProperty('sub-scale-by-window', 'yes');
+      await np.setProperty('sub-scale-with-window', 'yes');
+      await np.setProperty('sub-ass-scale-with-window', 'yes');
       await np.setProperty('sub-use-scale', 'no');
       await np.setProperty('sub-scale', '2.0');
       await np.setProperty('sub-use-margins', 'yes');
@@ -2009,9 +2009,9 @@ class MpvPlayerAdapter implements PlayerAdapter {
     _subtitleFont = null;
     final np = _nativePlayer;
     if (np != null) {
-      await np.setProperty('sub-scale-by-window', 'no');
-      await np.setProperty('sub-scale-with-window', 'no');
-      await np.setProperty('sub-ass-scale-with-window', 'no');
+      await np.setProperty('sub-scale-by-window', 'yes');
+      await np.setProperty('sub-scale-with-window', 'yes');
+      await np.setProperty('sub-ass-scale-with-window', 'yes');
     }
   }
 
@@ -2021,9 +2021,9 @@ class MpvPlayerAdapter implements PlayerAdapter {
     _subtitleScale = 2.0;
     final np = _nativePlayer;
     if (np != null) {
-      await np.setProperty('sub-scale-by-window', 'no');
-      await np.setProperty('sub-scale-with-window', 'no');
-      await np.setProperty('sub-ass-scale-with-window', 'no');
+      await np.setProperty('sub-scale-by-window', 'yes');
+      await np.setProperty('sub-scale-with-window', 'yes');
+      await np.setProperty('sub-ass-scale-with-window', 'yes');
     }
   }
 
@@ -2082,8 +2082,8 @@ class MpvPlayerAdapter implements PlayerAdapter {
       case '铺满': // 裁切铺满
         value = '-1';
         panscan = 1.0;
-      default: // 自适应 / 自动 / 全屏
-        value = '0';
+      default: // 自适应 / 自动 / 全屏：交给 mpv 使用媒体默认比例
+        value = '-1';
     }
     final np = _nativePlayer;
     if (np != null) {
