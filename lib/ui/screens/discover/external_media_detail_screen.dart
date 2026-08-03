@@ -97,8 +97,15 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
                   alignment: Alignment.bottomCenter,
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 28),
-                    child: Column(children: [
-                  Text(detail.title, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: Color(0xFF252525), shadows: [Shadow(color: Colors.white54, blurRadius: 8)])),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  if (detail.logoUrl?.isNotEmpty == true)
+                    SizedBox(
+                      width: 250,
+                      height: 90,
+                      child: MediaImage(imageUrl: detail.logoUrl, fit: BoxFit.contain),
+                    )
+                  else
+                    Text(detail.title, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 29, fontWeight: FontWeight.w900, color: Color(0xFF252525), shadows: [Shadow(color: Colors.white70, blurRadius: 10)])),
                   const SizedBox(height: 12),
                   Wrap(alignment: WrapAlignment.center, spacing: 10, runSpacing: 6, children: [
                     if (detail.rating != null) Text('⭐ ${detail.rating!.toStringAsFixed(1)}', style: _heroMeta),
@@ -155,7 +162,7 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
     );
   }
 
-  static const _heroMeta = TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF3B3B3B));
+  static const _heroMeta = TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF3B3B3B));
 
   Widget _roundButton(IconData icon, VoidCallback onTap) => Padding(
     padding: const EdgeInsets.all(6),

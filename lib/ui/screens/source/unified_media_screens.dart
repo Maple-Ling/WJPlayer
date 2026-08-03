@@ -752,12 +752,22 @@ class _UnifiedMediaDetailScreenState
                     child: Padding(
                       padding: const EdgeInsets.all(28),
                       child: Column(children: [
-                      Text(entry.name,
+                      if (_externalDetail?.logoUrl?.isNotEmpty == true)
+                        SizedBox(
+                          width: 250,
+                          height: 90,
+                          child: MediaImage(
+                            imageUrl: _externalDetail!.logoUrl,
+                            fit: BoxFit.contain,
+                          ),
+                        )
+                      else
+                        Text(entry.name,
                           textAlign: TextAlign.center,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                              fontSize: 17,
+                              fontSize: 29,
                               fontWeight: FontWeight.w900,
                               color: Color(0xFF252525),
                               shadows: [
@@ -769,9 +779,19 @@ class _UnifiedMediaDetailScreenState
                         spacing: 10,
                         children: [
                           if (entry.rating != null)
-                            Text('⭐ ${entry.rating!.toStringAsFixed(1)}'),
-                          if (entry.year != null) Text('${entry.year}'),
-                          Text(entry.isSeries ? '电视剧' : '电影'),
+                            Text('⭐ ${entry.rating!.toStringAsFixed(1)}',
+                                style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w800)),
+                          if (entry.year != null)
+                            Text('${entry.year}',
+                                style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w800)),
+                          Text(entry.isSeries ? '电视剧' : '电影',
+                              style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800)),
                         ],
                       ),
                       ]),
@@ -817,9 +837,15 @@ class _UnifiedMediaDetailScreenState
                   _buildEpisodes(),
                 ],
                 const SizedBox(height: 20),
-                _sectionTitle('播放资源'),
+                _sectionTitleWithTrailing(
+                  '播放资源',
+                  TextButton(
+                    onPressed: () => _showAllCrossServerResources(entry.name),
+                    child: const Text('查看更多  ›'),
+                  ),
+                ),
                 const SizedBox(height: 14),
-                _buildResourceList(),
+                _buildCrossServerResourceList(entry.name),
                 if (detail.people.isNotEmpty) ...[
                   const SizedBox(height: 20),
                   _sectionTitle('演员'),
@@ -1038,6 +1064,103 @@ class _UnifiedMediaDetailScreenState
                   );
                 },
               ),
+      );
+
+  Widget _buildCrossServerResourceList(String query) => Consumer(
+        builder: (context, ref, _) {
+          final async = ref.watch(rankingCrossServerMatchProvider(query));
+          return async.when(
+            loading: () => const SizedBox(
+                height: 155, child: Center(child: CircularProgressIndicator())),
+            error: (_, __) => const Text('资源搜索失败'),
+            data: (matches) {
+              if (matches.isEmpty) return _buildResourceList();
+              return SizedBox(
+                height: 155,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: matches.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (_, index) {
+                    final match = matches[index];
+                    final source = match.item.mediaSources?.firstOrNull;
+                    return SizedBox(
+                      width: 250,
+                      child: PlaybackResourceCard(
+                        serverName: match.serverName,
+                        isBest: index == 0,
+                        isCurrent: match.sourceServerId == widget.server.id,
+                        resolution: source?.qualityLabel,
+                        dynamicRange: source?.primaryVideoStream?.videoRangeLabel,
+                        codec: source?.primaryVideoStream?.videoCodecLabel,
+                        size: source?.size,
+                        bitrate: source?.primaryVideoStream?.bitRate,
+                        onTap: () => _openCrossServerMatch(match),
+                      ),
+                    );
+                  },
+                ),
+              );
+            },
+          );
+        },
+      );
+
+  Widget _sectionTitleWithTrailing(String title, Widget trailing) => Row(
+        children: [
+          Expanded(child: _sectionTitle(title)),
+          trailing,
+        ],
+      );
+
+  void _openCrossServerMatch(ServerMatchInfo match) {
+    final server = ref
+        .read(serverListProvider)
+        .where((item) => item.id == match.sourceServerId)
+        .firstOrNull;
+    if (server == null) return;
+    if (match.sourceEntry != null) {
+      context.push('/source-player',
+          extra: SourcePlayback(server: server, entry: match.sourceEntry!));
+      return;
+    }
+    ref.read(currentServerProvider.notifier).state = server;
+    context.push('/player/${match.item.id}');
+  }
+
+  void _showAllCrossServerResources(String query) =>
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (_) => SizedBox(
+          height: MediaQuery.sizeOf(context).height * .75,
+          child: Consumer(builder: (context, ref, _) {
+            return ref.watch(rankingCrossServerMatchProvider(query)).when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (_, __) => const Center(child: Text('搜索失败')),
+              data: (matches) => ListView(
+                padding: const EdgeInsets.all(18),
+                children: [
+                  const Text('全部播放资源',
+                      style:
+                          TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 12),
+                  for (final match in matches)
+                    ListTile(
+                      leading: const Icon(Icons.play_circle_outline_rounded),
+                      title: Text(match.serverName),
+                      subtitle: Text(match.item.name),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _openCrossServerMatch(match);
+                      },
+                    ),
+                ],
+              ),
+            );
+          }),
+        ),
       );
 
   Widget _buildResourceList() {

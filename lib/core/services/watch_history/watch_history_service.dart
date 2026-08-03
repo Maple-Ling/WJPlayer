@@ -259,11 +259,22 @@ class WatchHistoryService {
       mediaPath: item.path,
       sourceEntryId: sourceEntryId ?? existing?.sourceEntryId,
       sourcePosterUrl: historyPosterUrl ?? existing?.sourcePosterUrl,
+      seriesEntryId: item.seriesId ?? existing?.seriesEntryId,
     );
 
     final replacedIds = <String>[
       if (existing != null && existing.recordId != record.recordId)
         existing.recordId,
+      if (fingerprint.mediaKind == WatchHistoryMediaKind.episode)
+        for (final old in records)
+          if (old.recordId != record.recordId &&
+              old.mediaKind == WatchHistoryMediaKind.episode &&
+              ((fingerprint.seriesTmdbId?.isNotEmpty == true &&
+                      old.seriesTmdbId == fingerprint.seriesTmdbId) ||
+                  (fingerprint.normalizedSeriesTitle.isNotEmpty &&
+                      normalizeWatchHistoryText(old.seriesTitle ?? '') ==
+                          fingerprint.normalizedSeriesTitle)))
+            old.recordId,
     ];
     await _store.saveRecord(record, replaceRecordIds: replacedIds);
     _lastProgressWriteAt[recordId] = now;
@@ -309,6 +320,20 @@ class WatchHistoryService {
     WatchHistoryFingerprint fingerprint,
     String itemId,
   ) {
+    if (fingerprint.mediaKind == WatchHistoryMediaKind.episode) {
+      final seriesKey = fingerprint.seriesTmdbId?.trim();
+      final seriesTitle = fingerprint.normalizedSeriesTitle;
+      for (final record in records) {
+        if (record.mediaKind != WatchHistoryMediaKind.episode) continue;
+        if (seriesKey?.isNotEmpty == true && record.seriesTmdbId == seriesKey) {
+          return record;
+        }
+        if (seriesTitle.isNotEmpty &&
+            normalizeWatchHistoryText(record.seriesTitle ?? '') == seriesTitle) {
+          return record;
+        }
+      }
+    }
     for (final record in records) {
       if (record.canonicalKey == fingerprint.canonicalKey) {
         return record;

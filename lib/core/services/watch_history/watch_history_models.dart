@@ -146,6 +146,7 @@ class WatchHistoryRecord {
     this.mediaPath,
     this.sourceEntryId,
     this.sourcePosterUrl,
+    this.seriesEntryId,
   });
 
   static const Object _sentinel = Object();
@@ -182,6 +183,7 @@ class WatchHistoryRecord {
   /// 文件浏览型源（如飞牛）写入的已鉴权封面 URL。Emby 继续由 Image API 实时解析。
   /// 旧记录为空时自动回退为图标，不影响兼容性。
   final String? sourcePosterUrl;
+  final String? seriesEntryId;
 
   /// 首次观看时间，旧记录缺失时回退到 [lastPlayedAt]。
   DateTime get effectiveFirstPlayedAt => firstPlayedAt ?? lastPlayedAt;
@@ -213,6 +215,7 @@ class WatchHistoryRecord {
       'mediaPath': mediaPath,
       'sourceEntryId': sourceEntryId,
       'sourcePosterUrl': sourcePosterUrl,
+      'seriesEntryId': seriesEntryId,
     };
   }
 
@@ -247,6 +250,7 @@ class WatchHistoryRecord {
       mediaPath: _readNullableString(json['mediaPath']),
       sourceEntryId: _readNullableString(json['sourceEntryId']),
       sourcePosterUrl: _readNullableString(json['sourcePosterUrl']),
+      seriesEntryId: _readNullableString(json['seriesEntryId']),
     );
   }
 
@@ -276,6 +280,7 @@ class WatchHistoryRecord {
     Object? mediaPath = _sentinel,
     Object? sourceEntryId = _sentinel,
     Object? sourcePosterUrl = _sentinel,
+    Object? seriesEntryId = _sentinel,
   }) {
     return WatchHistoryRecord(
       recordId: recordId ?? this.recordId,
@@ -327,6 +332,9 @@ class WatchHistoryRecord {
       sourcePosterUrl: identical(sourcePosterUrl, _sentinel)
           ? this.sourcePosterUrl
           : sourcePosterUrl as String?,
+      seriesEntryId: identical(seriesEntryId, _sentinel)
+          ? this.seriesEntryId
+          : seriesEntryId as String?,
     );
   }
 }

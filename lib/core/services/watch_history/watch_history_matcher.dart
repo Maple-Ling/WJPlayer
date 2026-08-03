@@ -165,28 +165,20 @@ String buildWatchHistoryCanonicalKey({
     return 'movie:item:$itemId';
   }
 
-  if (seriesTmdbId != null &&
-      seriesTmdbId.isNotEmpty &&
-      seasonNumber != null &&
-      episodeNumber != null) {
-    return 'series:tmdb:$seriesTmdbId:s${_padIndex(seasonNumber)}:e${_padIndex(episodeNumber)}';
+  if (seriesTmdbId != null && seriesTmdbId.isNotEmpty) {
+    return 'series:tmdb:$seriesTmdbId';
   }
-  if (tmdbId != null &&
-      tmdbId.isNotEmpty &&
-      seasonNumber != null &&
-      episodeNumber != null) {
-    return 'episode:tmdb:$tmdbId:s${_padIndex(seasonNumber)}:e${_padIndex(episodeNumber)}';
+  if (normalizedSeriesTitle.isNotEmpty) {
+    return 'series:title:$normalizedSeriesTitle';
   }
   if (normalizedPresentationUniqueKey != null &&
       normalizedPresentationUniqueKey.isNotEmpty) {
-    return 'episode:puk:$normalizedPresentationUniqueKey';
+    return 'series:puk:$normalizedPresentationUniqueKey';
   }
-  if (normalizedSeriesTitle.isNotEmpty &&
-      seasonNumber != null &&
-      episodeNumber != null) {
-    return 'episode:title:$normalizedSeriesTitle:s${_padIndex(seasonNumber)}:e${_padIndex(episodeNumber)}';
+  if (tmdbId != null && tmdbId.isNotEmpty) {
+    return 'series:episode-tmdb:$tmdbId';
   }
-  return 'episode:item:$itemId';
+  return 'series:item:$itemId';
 }
 
 String buildWatchHistoryRecordId({

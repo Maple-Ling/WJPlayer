@@ -1794,8 +1794,8 @@ class MpvPlayerAdapter implements PlayerAdapter {
       await np.setProperty('sub-scale-by-window', 'yes');
       await np.setProperty('sub-scale-with-window', 'yes');
       await np.setProperty('sub-ass-scale-with-window', 'yes');
-      await np.setProperty('sub-use-scale', 'no');
-      await np.setProperty('sub-scale', '2.0');
+      await np.setProperty('sub-use-scale', 'yes');
+      await np.setProperty('sub-scale', '1.0');
       await np.setProperty('sub-use-margins', 'yes');
       await np.setProperty('sub-ass-force-margins', 'yes');
 
@@ -2017,28 +2017,28 @@ class MpvPlayerAdapter implements PlayerAdapter {
 
   @override
   Future<void> setSubtitleSize(double size) async {
-    // Keep media-provided font size; only prevent window-size based rescaling.
-    _subtitleScale = 2.0;
+    _subtitleScale = size.clamp(0.5, 2.0);
     final np = _nativePlayer;
     if (np != null) {
       await np.setProperty('sub-scale-by-window', 'yes');
       await np.setProperty('sub-scale-with-window', 'yes');
       await np.setProperty('sub-ass-scale-with-window', 'yes');
+      await np.setProperty('sub-use-scale', 'yes');
+      await np.setProperty('sub-scale', _subtitleScale.toStringAsFixed(2));
     }
   }
 
   @override
   Future<void> setSubtitlePosition(double position) async {
-    _subtitlePosition = 100.0;
-    _logger.i('MpvAdapter', '固定字幕位置: pos=$_subtitlePosition');
+    final normalized = position.clamp(0.0, 1.0);
+    _subtitlePosition = ((1.0 - normalized) * 100.0).roundToDouble();
+    _logger.i('MpvAdapter', '字幕位置: pos=$_subtitlePosition');
+    final value = _subtitlePosition.round().toString();
     final np = _nativePlayer;
-    if (np != null) {
-      if (!_hasBitmapSubtitle && !_currentSubIsAss) {
-        await np.setProperty('sub-pos', '100');
-      }
+    if (np != null && !_hasBitmapSubtitle) {
+      await np.setProperty('sub-pos', value);
     }
-    await _configManager.updateConfigValue(
-        'sub-pos', '100');
+    await _configManager.updateConfigValue('sub-pos', value);
   }
 
   @override

@@ -197,12 +197,12 @@ class MpvPlayerPlugin(
             "setSubtitleSize" -> {
                 val playerId = call.argument<String>("playerId") ?: ""
                 val size = call.argument<Double>("size") ?: 0.5
-                // MPV 字幕保持独立 OSD，不随视频缩放；字号固定为默认的 2 倍。
+                // MPV 字幕默认恢复 1.0x，并允许设置面板动态调节。
                 getPlayer(playerId)?.setProperty("sub-scale-by-window", "yes")
                 getPlayer(playerId)?.setProperty("sub-scale-with-window", "yes")
                 getPlayer(playerId)?.setProperty("sub-ass-scale-with-window", "yes")
-                getPlayer(playerId)?.setProperty("sub-use-scale", "no")
-                getPlayer(playerId)?.setProperty("sub-scale", "2.0")
+                getPlayer(playerId)?.setProperty("sub-use-scale", "yes")
+                getPlayer(playerId)?.setProperty("sub-scale", size.coerceIn(0.5, 2.0).toString())
                 getPlayer(playerId)?.setProperty("sub-use-margins", "yes")
                 getPlayer(playerId)?.setProperty("sub-ass-force-margins", "yes")
                 result.success(true)
@@ -210,9 +210,8 @@ class MpvPlayerPlugin(
             "setSubtitlePosition" -> {
                 val playerId = call.argument<String>("playerId") ?: ""
                 val position = call.argument<Double>("position") ?: 0.0
-                // mpv sub-pos: 0=top, 100=bottom (inverted from UI)
-                // 固定在画面底部，避免字幕随画面比例/裁切模式漂移。
-                getPlayer(playerId)?.setProperty("sub-pos", "100")
+                val mpvPosition = ((1.0 - position.coerceIn(0.0, 1.0)) * 100.0).toInt()
+                getPlayer(playerId)?.setProperty("sub-pos", mpvPosition.toString())
                 result.success(true)
             }
             "setSubtitleBackground" -> {

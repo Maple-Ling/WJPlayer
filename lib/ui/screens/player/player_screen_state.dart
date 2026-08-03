@@ -672,9 +672,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   Future<void> _applySourceTrackPreferences(SourcePlayback sp) async {
     final audioIndex = sp.preferredAudioListIndex;
     final subtitleIndex = sp.preferredSubtitleListIndex;
-    if (audioIndex == null && subtitleIndex == null) return;
 
-    // 大文件/网盘流的 demux 可能数秒后才产出轨道。只等待真实轨道，不阻塞首帧。
+    // 所有直播放入口都等待内核真实轨道，随后同步选择状态和右下角面板。
     for (var attempt = 0; attempt < 100; attempt++) {
       if (!mounted) return;
       final tracks = _playerService.tracksInfo;
@@ -682,23 +681,31 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       final subtitles = tracks
           .where((t) => t['type'] == 'text' || t['type'] == 'bitmap')
           .toList();
-      final audioReady = audioIndex == null || audios.length > audioIndex;
-      final subtitleReady = subtitleIndex == null ||
-          subtitleIndex < 0 ||
-          subtitles.length > subtitleIndex;
+      final audioReady = audios.isNotEmpty;
+      final subtitleReady = subtitles.isNotEmpty || attempt >= 15;
       if (audioReady && subtitleReady) {
-        if (audioIndex != null && audioIndex >= 0) {
+        if (audioIndex != null && audioIndex >= 0 && audios.length > audioIndex) {
           await _playerService
               .selectAudioTrack(audios[audioIndex]['id'].toString());
         }
+        final selectedAudio = audios.where((track) =>
+            track['isSelected'] == true || track['selected'] == true).firstOrNull;
+        ref.read(audioTrackProvider.notifier).state =
+            int.tryParse('${selectedAudio?['id']}');
         if (subtitleIndex != null) {
           if (subtitleIndex < 0) {
             await _playerService.deselectSubtitleTrack();
-          } else {
+          } else if (subtitles.length > subtitleIndex) {
             await _playerService
                 .selectSubtitleTrack(subtitles[subtitleIndex]['id'].toString());
           }
         }
+        final selectedSubtitle = subtitles.where((track) =>
+            track['isSelected'] == true || track['selected'] == true).firstOrNull;
+        ref.read(subtitleTrackProvider.notifier).state = selectedSubtitle == null
+            ? -1
+            : int.tryParse('${selectedSubtitle['id']}');
+        if (mounted) setState(() {});
         return;
       }
       await Future<void>.delayed(const Duration(milliseconds: 200));

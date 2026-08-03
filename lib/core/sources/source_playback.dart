@@ -26,6 +26,8 @@ class SourcePlayback {
   final int? preferredAudioListIndex;
   final int? preferredSubtitleListIndex;
 
+  final String? seriesEntryId;
+
   /// 直链播放鉴权头（Authorization / Authx 等），由协议层传入。
   final Map<String, String>? httpHeaders;
 
@@ -39,6 +41,7 @@ class SourcePlayback {
     this.playerCoreOverride,
     this.preferredAudioListIndex,
     this.preferredSubtitleListIndex,
+    this.seriesEntryId,
     this.httpHeaders,
     this.playlist = const [],
   });
@@ -52,6 +55,7 @@ class SourcePlayback {
         playerCoreOverride: playerCoreOverride,
         preferredAudioListIndex: preferredAudioListIndex,
         preferredSubtitleListIndex: preferredSubtitleListIndex,
+        seriesEntryId: seriesEntryId,
         httpHeaders: httpHeaders,
         playlist: playlist,
       );
@@ -73,6 +77,8 @@ class SourcePlayback {
       final value = pair.$2?.toString().trim() ?? '';
       if (value.isNotEmpty) providerIds[pair.$1] = value;
     }
+    final seriesId = seriesEntryId ??
+        (raw['series_guid'] ?? raw['tv_guid'] ?? raw['parent_guid'])?.toString();
     return MediaItem(
       id: syntheticItemId,
       name: entry.name,
@@ -81,6 +87,7 @@ class SourcePlayback {
       providerIds: providerIds,
       path: entry.id,
       seriesName: (raw['series_title'] ?? raw['tv_title'])?.toString(),
+      seriesId: seriesId,
       parentIndexNumber: (raw['season_number'] as num?)?.toInt(),
       indexNumber: (raw['episode_number'] as num?)?.toInt(),
       productionYear: int.tryParse('${raw['year'] ?? ''}'),

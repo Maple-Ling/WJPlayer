@@ -241,7 +241,9 @@ class _HistoryTile extends ConsumerWidget {
     ref.read(currentServerProvider.notifier).state = server;
     ref.read(authStateProvider.notifier).state = AuthState.authenticated;
     if (server.sourceKind == SourceKind.feiniu) {
-      final stableId = record.sourceEntryId ?? record.mediaPath;
+      final stableId = record.mediaKind == WatchHistoryMediaKind.episode
+          ? (record.seriesEntryId ?? record.sourceEntryId ?? record.mediaPath)
+          : (record.sourceEntryId ?? record.mediaPath);
       if (stableId == null || stableId.isEmpty) return;
       final entry = UnifiedMediaEntry(
         id: stableId,
@@ -256,14 +258,14 @@ class _HistoryTile extends ConsumerWidget {
       ));
       return;
     }
-    final itemId = record.lastEmbyItemId;
+    final itemId = record.mediaKind == WatchHistoryMediaKind.episode
+        ? record.seriesEntryId
+        : record.lastEmbyItemId;
     if (itemId == null || itemId.isEmpty) {
       AppToast.show(context, '该记录缺少可打开的资源标识', kind: AppToastKind.error);
       return;
     }
-    await context.push(record.mediaKind == WatchHistoryMediaKind.episode
-        ? '/episode/$itemId'
-        : '/detail/$itemId');
+    await context.push('/detail/$itemId');
   }
 
   Future<void> _resume(

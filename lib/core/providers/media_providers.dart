@@ -375,9 +375,9 @@ final aggregateFeiniuSearchProvider = FutureProvider.autoDispose
       .toList();
   final groups = await Future.wait(servers.map((server) async {
     try {
-      final entries = (await FeiniuBackend().search(server, query))
-          .where(_isTopLevelFeiniuEntry)
-          .toList();
+      final entries = await ref.read(feiniuSearchResultsProvider(
+        (serverId: server.id, query: query),
+      ).future);
       return FeiniuSearchGroup(server: server, entries: entries);
     } catch (error) {
       AppLogger().w('AggregateSearch', '服务器「${server.name}」飞牛搜索失败: $error');
@@ -531,8 +531,10 @@ final rankingCrossServerMatchProvider = StreamProvider.autoDispose
   Future<ServerMatchInfo?> matchOne(ServerConfig server) async {
     try {
       if (server.sourceKind == SourceKind.feiniu) {
-        final entries = await FeiniuBackend().search(server, query);
-        final playable = entries.where(_isTopLevelFeiniuEntry).toList();
+        final entries = await ref.read(feiniuSearchResultsProvider(
+          (serverId: server.id, query: query),
+        ).future);
+        final playable = entries;
         if (playable.isEmpty) return null;
         final lower = query.toLowerCase();
         final best = playable.firstWhere(

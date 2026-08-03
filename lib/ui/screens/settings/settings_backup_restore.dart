@@ -114,19 +114,26 @@ class BackupRestoreScreen extends ConsumerWidget {
   /// 导出备份:通用配置(Richasy 兼容)格式,容器内带 `_key`,把明文密码/Token
   /// 挡成乱码;免密、任何兼容客户端可直接导入。全程无提示。
   Future<void> _exportBackup(BuildContext context, WidgetRef ref) async {
-    final path = await FilePicker.platform.saveFile(
-      dialogTitle: '导出备份',
-      fileName: 'wjplayer-config.json',
-      type: FileType.custom,
-      allowedExtensions: const ['json'],
-    );
-    if (path == null) return;
     try {
       final container = await _buildCommonConfig(ref);
-      await File(path).writeAsString(jsonEncode(container));
-      if (context.mounted) {
-        AppToast.show(context, '备份已导出: $path');
+      final bytes = utf8.encode('${jsonEncode(container)}\n');
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: '导出备份',
+        fileName: 'wjplayer-config.json',
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+        bytes: bytes,
+      );
+      if (!context.mounted) return;
+      if (path == null) {
+        AppToast.show(context, '已取消导出');
+        return;
       }
+      // 桌面端 file_picker 只返回目标路径；Android SAF 在传入 bytes 后由插件写入。
+      if (!Platform.isAndroid && !Platform.isIOS) {
+        await File(path).writeAsBytes(bytes, flush: true);
+      }
+      AppToast.show(context, '备份已导出');
     } catch (e) {
       if (context.mounted) {
         AppToast.show(context, '导出失败: $e', kind: AppToastKind.error);

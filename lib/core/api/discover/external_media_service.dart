@@ -123,6 +123,11 @@ class ExternalMediaService {
       overview: (data['overview']?.toString().isNotEmpty == true ? data['overview'] : original.overview)?.toString(),
       posterUrl: _imageUrl(data['poster_path'], 'w780') ?? original.posterUrl,
       backdropUrl: _imageUrl(data['backdrop_path'], 'original') ?? original.backdropUrl,
+      logoUrl: (images['logos'] as List? ?? const [])
+          .whereType<Map>()
+          .map((row) => _imageUrl(row['file_path'], 'w500'))
+          .whereType<String>()
+          .firstOrNull,
       rating: (data['vote_average'] as num?)?.toDouble() ?? original.rating,
       year: date.length >= 4 ? date.substring(0, 4) : original.year,
       status: data['status']?.toString(),
