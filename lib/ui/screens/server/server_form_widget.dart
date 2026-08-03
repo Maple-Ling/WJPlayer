@@ -403,8 +403,7 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
       var fallbackName = '';
 
       // 仅 Emby/Jellyfin 走 Emby 登录并拉取服务器信息；
-      // 飞牛等源走各自懒登录（FeiniuBackend._ensureToken 用密码+活跃线路自动取鉴权头），
-      // 这里不做 Emby 登录，避免把飞牛服务器误鉴定为 Emby 导致首页图片/资源全失效。
+      // 飞牛保存时主动登录一次拿 token 写入 authToken，避免运行时频繁 login 触发 429。
       if (sourceKind == SourceKind.emby) {
         final client = EmbyApiClient(baseUrl: fullUrl);
         final serverInfo = await client.server.getPublicInfo(fullUrl);
@@ -414,6 +413,21 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
               await client.auth.login(username: username, password: password);
           userId = authResult.userId;
           authToken = authResult.accessToken;
+        }
+      } else if (sourceKind == SourceKind.feiniu) {
+        if (username.isNotEmpty) {
+          try {
+            authToken = await FeiniuBackend.login(fullUrl, username, password);
+          } catch (_) {
+            // 登录失败不阻塞保存；运行时 _ensureToken 会用 password 重试。
+          }
+        }
+        if (lines.isEmpty) {
+          lines.add(ServerLine(
+            id: 'default',
+            name: '默认线路',
+            url: fullUrl,
+          ));
         }
       }
 
