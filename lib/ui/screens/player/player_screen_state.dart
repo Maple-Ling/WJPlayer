@@ -2324,7 +2324,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           child: Column(
             children: [
               _buildTopBar(item),
-              Expanded(child: Center(child: _buildCenterControls())),
+              // v3：屏幕中央不显示播放按键。
+              const Expanded(child: SizedBox.shrink()),
               _buildMediaInfoLine(item),
               _buildProgressBar(),
               _buildBottomControlsRow(item),
@@ -2516,18 +2517,71 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 tooltip: '返回',
                 onPressed: () => context.pop(),
               ),
-              // 标题：只占左侧；超长才匀速滚动，右侧留给操作按钮。
-              Expanded(
-                child: _MarqueeText(
-                  text: item?.name ?? widget.itemId,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
+              // 媒体 logo 图（poster 缩略图），替代文字标题
+              if (item != null && _mediaLogoUrl(item) != null)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: MediaImage(
+                    imageUrl: _mediaLogoUrl(item)!,
+                    width: 40,
+                    height: 40,
+                    fit: BoxFit.cover,
+                  ),
+                )
+              else
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFE94560), Color(0xFFFF6B6B)],
+                    ),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    item?.name?.isNotEmpty == true
+                        ? item!.name!.characters.first
+                        : '影',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800),
                   ),
                 ),
-              ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 10),
+              // 服务器图标 + 名称 + 线路名（唯一一处）
+              if (server != null)
+                Flexible(
+                  child: Row(
+                    children: [
+                      if (server.iconUrl != null &&
+                          server.iconUrl!.isNotEmpty)
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: MediaImage(
+                            imageUrl: server.iconUrl!,
+                            width: 16,
+                            height: 16,
+                          ),
+                        ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          server.name +
+                              (server.lines.isNotEmpty
+                                  ? ' · ${server.lines[server.activeLineIndex.clamp(0, server.lines.length - 1)].name}'
+                                  : ''),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: Colors.white70, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              const Spacer(),
               // 右上角操作按钮（从右到左）：媒体信息 / 画面比例 / 跳过片头片尾 / 倍速 / 弹幕设置 / 弹幕
               IconButton(
                 icon: const Icon(Icons.subtitles_rounded, color: Colors.white),
@@ -2571,35 +2625,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
               ),
             ],
           ),
-          // 第二行：当前播放的服务器图标 + 名称 + 线路名
-          if (server != null)
-            Padding(
-              padding: const EdgeInsets.only(left: 56),
-              child: Row(
-                children: [
-                  if (server.iconUrl != null &&
-                      server.iconUrl!.isNotEmpty)
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: MediaImage(
-                        imageUrl: server.iconUrl!,
-                        width: 16,
-                        height: 16,
-                      ),
-                    ),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
-                      '${server.name}${server.lines.isNotEmpty ? ' · ${server.lines[server.activeLineIndex.clamp(0, server.lines.length - 1)].name}' : ''}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          color: Colors.white70, fontSize: 12),
-                    ),
-                  ),
-                ],
-              ),
-            ),
         ],
       ),
     );
@@ -2609,6 +2634,22 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   bool get _isMpvCore {
     final core = normalizePlayerCore(ref.read(playerCoreProvider));
     return core == 'mpv' || core == 'nativeMpv';
+  }
+
+  /// 媒体 logo 缩略图 URL（poster 优先，backdrop 兜底）。
+  String? _mediaLogoUrl(MediaItem item) {
+    final api = ref.read(apiClientProvider);
+    try {
+      if (item.primaryImageTag != null) {
+        return api.image.getPrimaryImageUrl(item.id,
+            tag: item.primaryImageTag, maxWidth: 160);
+      }
+      if (item.backdropImageTag != null) {
+        return api.image.getBackdropImageUrl(item.id,
+            tag: item.backdropImageTag, maxWidth: 160);
+      }
+    } catch (_) {}
+    return null;
   }
 
   /// 中央主控件：快退 · 播放/暂停 · 快进。上一集/下一集移到底栏左下。
@@ -2861,6 +2902,27 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             icon: Icons.skip_previous_rounded,
             label: '上一集',
             onTap: _playPrevious,
+          ),
+          // v3：左下角居中为播放/暂停键
+          GestureDetector(
+            onTap: _playerService.togglePlay,
+            child: Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.black.withValues(alpha: 0.45),
+                border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.85), width: 1.6),
+              ),
+              child: Icon(
+                _playerService.isPlaying
+                    ? Icons.pause_rounded
+                    : Icons.play_arrow_rounded,
+                color: Colors.white,
+                size: 26,
+              ),
+            ),
           ),
           _BottomBarAction(
             icon: Icons.skip_next_rounded,

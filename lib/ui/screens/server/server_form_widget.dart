@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/emby_api.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/providers/server_providers.dart';
+import '../../../core/sources/feiniu_backend.dart';
 import '../../../core/utils/server_batch_adder.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../widgets/server/protocol_address_field.dart';
