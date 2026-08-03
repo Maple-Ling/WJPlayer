@@ -124,7 +124,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                   GoRoute(
                     path: 'emby',
                     pageBuilder: (context, state) => _buildHorizontalPage(
-                      child: const AddServerScreen(),
+                      child: AddServerScreen(
+                        sourceKind: SourceKind.values.firstWhere(
+                          (k) =>
+                              k.name ==
+                              (state.uri.queryParameters['sourceKind'] ??
+                                  'emby'),
+                          orElse: () => SourceKind.emby,
+                        ),
+                      ),
                       state: state,
                       direction: _PageTransitionDirection.forward,
                     ),

@@ -38,7 +38,6 @@ class SettingsScreen extends ConsumerWidget {
             _SettingsGroup(children: [
               _SettingsCard(icon: Icons.system_update_rounded, title: '检查更新', subtitle: '当前 $kCurrentAppVersion · 每 24 小时自动检查', onTap: () => _checkUpdate(context, ref), showDivider: false),
               _SettingsCard(icon: Icons.restore_page_rounded, title: '备份与恢复', subtitle: '备份或恢复设置', onTap: () => _showBackupRestore(context)),
-              _SettingsCard(icon: Icons.devices_rounded, title: '设备迁移', subtitle: '迁移到新设备', onTap: () => _showConfigMigration(context), showDivider: false),
             ]),
             _SettingsGroup(children: [
               _SettingsCard(icon: Icons.info_rounded, title: '关于', subtitle: '版本、开源许可与致谢', onTap: () => _showAbout(context), showDivider: false),
@@ -158,9 +157,6 @@ class SettingsScreen extends ConsumerWidget {
 
   void _showBackupRestore(BuildContext context) =>
       _openSubPage(context, const BackupRestoreScreen());
-
-  void _showConfigMigration(BuildContext context) =>
-      _openSubPage(context, const ConfigMigrationScreen());
 
   void _showPlugins(BuildContext context) =>
       _openSubPage(context, const PluginManagementScreen());

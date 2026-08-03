@@ -48,11 +48,15 @@ class ServerEditorForm extends ConsumerStatefulWidget {
     this.allowInsecureTls = false,
     this.hideMainUrl = false,
     this.autoAddLine = false,
+    this.sourceKind = SourceKind.emby,
     this.onSaved,
   });
 
   /// 编辑模式传入现有服务器；新增模式为 null。
   final ServerConfig? existing;
+
+  /// 服务器源类型：emby 走 Emby 登录；飞牛等走各自鉴权（懒登录）。
+  final SourceKind sourceKind;
 
   /// 编辑模式下是否显示“信任自签名证书”开关。
   final bool allowInsecureTls;
@@ -391,16 +395,26 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
           : _fullUrl(mainHost, _protocol, _pathController.text);
       final lines = _collectLines();
 
-      final client = EmbyApiClient(baseUrl: fullUrl);
-      final serverInfo = await client.server.getPublicInfo(fullUrl);
+      // 编辑时沿用原 sourceKind；新增时用表单传入的 sourceKind。
+      final sourceKind = _isEdit ? widget.existing!.sourceKind : widget.sourceKind;
+
       var userId = '';
       var authToken = '';
+      var fallbackName = '';
 
-      if (username.isNotEmpty) {
-        final authResult =
-            await client.auth.login(username: username, password: password);
-        userId = authResult.userId;
-        authToken = authResult.accessToken;
+      // 仅 Emby/Jellyfin 走 Emby 登录并拉取服务器信息；
+      // 飞牛等源走各自懒登录（FeiniuBackend._ensureToken 用密码+活跃线路自动取鉴权头），
+      // 这里不做 Emby 登录，避免把飞牛服务器误鉴定为 Emby 导致首页图片/资源全失效。
+      if (sourceKind == SourceKind.emby) {
+        final client = EmbyApiClient(baseUrl: fullUrl);
+        final serverInfo = await client.server.getPublicInfo(fullUrl);
+        fallbackName = serverInfo.serverName;
+        if (username.isNotEmpty) {
+          final authResult =
+              await client.auth.login(username: username, password: password);
+          userId = authResult.userId;
+          authToken = authResult.accessToken;
+        }
       }
 
       final newId = _isEdit
@@ -408,7 +422,7 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
           : DateTime.now().millisecondsSinceEpoch.toString();
       final server = ServerConfig(
         id: newId,
-        name: name.isEmpty ? serverInfo.serverName : name,
+        name: name.isEmpty ? fallbackName : name,
         baseUrl: fullUrl,
         iconUrl: ServerBatchAdder.buildIconUrl(
           fullUrl,
@@ -423,7 +437,7 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
         userId: userId.isEmpty ? null : userId,
         password: password.isEmpty ? null : password,
         allowInsecureTls: _allowInsecureTls,
-        sourceKind: SourceKind.emby,
+        sourceKind: sourceKind,
       );
 
       if (_isEdit) {

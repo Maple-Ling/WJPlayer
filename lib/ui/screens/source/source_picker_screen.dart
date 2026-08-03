@@ -21,8 +21,8 @@ class _SourcePickerScreenState extends State<SourcePickerScreen> {
   String _query = '';
 
   void _select(SourceKind kind) {
-    // Emby / 飞牛统一走同一套添加表单（名称/备注/地址/路径/账号/密码 + 线路）。
-    context.push('/add/emby');
+    // Emby / 飞牛统一走同一套添加表单，但通过参数区分源类型，保存时走对应鉴权。
+    context.push('/add/emby?sourceKind=${kind.name}');
   }
 
   @override

@@ -1219,6 +1219,20 @@ class _UnifiedMediaDetailScreenState
           extra: SourcePlayback(server: server, entry: match.sourceEntry!));
       return;
     }
+    // 与影视（外部）详情页同路径：按 item 的源服务器同步可用服务器再进 /player/:id，
+    // 避免 currentServer 与资源归属不一致导致聚合资源无法播放。
+    if (match.item.type == 'Movie' || match.item.type == 'Episode') {
+      final origin = match.item.sourceServerId;
+      if (origin != null) {
+        ref.read(currentServerProvider.notifier).syncWithAvailableServers(
+            ref.read(serverListProvider),
+            preferredServerId: origin);
+      } else {
+        ref.read(currentServerProvider.notifier).state = server;
+      }
+      context.push('/player/${match.item.id}');
+      return;
+    }
     ref.read(currentServerProvider.notifier).state = server;
     context.push('/player/${match.item.id}');
   }

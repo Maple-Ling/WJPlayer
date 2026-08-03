@@ -2325,6 +2325,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             children: [
               _buildTopBar(item),
               Expanded(child: Center(child: _buildCenterControls())),
+              _buildMediaInfoLine(item),
               _buildProgressBar(),
               _buildBottomControlsRow(item),
             ],
@@ -2337,12 +2338,31 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           bottom: 0,
           child: SafeArea(child: Center(child: _buildSideButtons())),
         ),
-        // 右侧倍速条。
+        // 右侧倍速条 + 底部旋转按钮。
         Positioned(
           right: 24,
           top: 0,
           bottom: 0,
           child: SafeArea(child: Center(child: _buildSpeedBar())),
+        ),
+        // 右下角（右 8% 内）：旋转按钮。
+        Positioned(
+          right: 24,
+          bottom: 76,
+          child: SafeArea(
+            child: Material(
+              color: Colors.black.withValues(alpha: 0.35),
+              shape: const CircleBorder(),
+              clipBehavior: Clip.antiAlias,
+              child: IconButton(
+                icon: const Icon(Icons.screen_rotation_rounded,
+                    color: Colors.white),
+                iconSize: 22,
+                tooltip: '旋转',
+                onPressed: _toggleRotation,
+              ),
+            ),
+          ),
         ),
         // 自动跳过片头/片尾按钮：左下、底栏之上。
         Positioned(
@@ -2481,63 +2501,105 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   Widget _buildTopBar(MediaItem? item) {
+    final server = ref.watch(currentServerProvider);
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 4, 8, 4),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
-            iconSize: 20,
-            tooltip: '返回',
-            onPressed: () => context.pop(),
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
+                iconSize: 20,
+                tooltip: '返回',
+                onPressed: () => context.pop(),
+              ),
+              // 标题：只占左侧；超长才匀速滚动，右侧留给操作按钮。
+              Expanded(
+                child: _MarqueeText(
+                  text: item?.name ?? widget.itemId,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // 右上角操作按钮（从右到左）：媒体信息 / 画面比例 / 跳过片头片尾 / 倍速 / 弹幕设置 / 弹幕
+              IconButton(
+                icon: const Icon(Icons.subtitles_rounded, color: Colors.white),
+                iconSize: 20,
+                tooltip: '弹幕',
+                onPressed: () {
+                  final notifier = ref.read(danmakuEnabledProvider.notifier);
+                  notifier.state = !notifier.state;
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.closed_caption_rounded,
+                    color: Colors.white),
+                iconSize: 20,
+                tooltip: '弹幕设置',
+                onPressed: _showDanmakuSettings,
+              ),
+              IconButton(
+                icon: const Icon(Icons.speed_rounded, color: Colors.white),
+                iconSize: 20,
+                tooltip: '倍速',
+                onPressed: _showSpeedPanel,
+              ),
+              IconButton(
+                icon: const Icon(Icons.fast_forward_rounded, color: Colors.white),
+                iconSize: 20,
+                tooltip: '跳过片头/片尾',
+                onPressed: _showSkipDialog,
+              ),
+              IconButton(
+                icon: const Icon(Icons.aspect_ratio_rounded, color: Colors.white),
+                iconSize: 20,
+                tooltip: '画面比例',
+                onPressed: _showAspectRatioDialog,
+              ),
+              IconButton(
+                icon: const Icon(Icons.info_outline_rounded, color: Colors.white),
+                iconSize: 20,
+                tooltip: '媒体信息',
+                onPressed: _showStats,
+              ),
+            ],
           ),
-          // 标题：只占左侧；超长才匀速滚动，右侧留给操作按钮。
-          Expanded(
-            child: _MarqueeText(
-              text: item?.name ?? widget.itemId,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
+          // 第二行：当前播放的服务器图标 + 名称 + 线路名
+          if (server != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 56),
+              child: Row(
+                children: [
+                  if (server.iconUrl != null &&
+                      server.iconUrl!.isNotEmpty)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: MediaImage(
+                        imageUrl: server.iconUrl!,
+                        width: 16,
+                        height: 16,
+                      ),
+                    ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      '${server.name}${server.activeLineName.isNotEmpty ? ' · ${server.activeLineName}' : ''}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white70, fontSize: 12),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            icon: const Icon(Icons.fast_forward_rounded, color: Colors.white),
-            iconSize: 20,
-            tooltip: '跳过片头/片尾',
-            onPressed: _showSkipDialog,
-          ),
-          IconButton(
-            icon: const Icon(Icons.aspect_ratio_rounded, color: Colors.white),
-            iconSize: 20,
-            tooltip: '画面比例',
-            onPressed: _showAspectRatioDialog,
-          ),
-          IconButton(
-            icon: Icon(
-              ref.watch(hardwareDecodingProvider)
-                  ? Icons.memory_rounded
-                  : Icons.slow_motion_video_rounded,
-              color: Colors.white,
-            ),
-            iconSize: 20,
-            tooltip: ref.watch(hardwareDecodingProvider) ? '硬件解码' : '软件解码',
-            onPressed: _toggleHardwareDecoding,
-          ),
-          IconButton(
-            icon: const Icon(Icons.timer_outlined, color: Colors.white),
-            iconSize: 20,
-            tooltip: '定时关闭',
-            onPressed: _showTimerDialog,
-          ),
-          IconButton(
-            icon: const Icon(Icons.info_outline_rounded, color: Colors.white),
-            iconSize: 20,
-            tooltip: '详情信息',
-            onPressed: _showStats,
-          ),
         ],
       ),
     );
@@ -2738,6 +2800,74 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   /// 底栏：左下=上一集/下一集，右下=弹幕/字幕/音轨/选集。
   /// 倍速→右侧倍速条；旋转→顶栏；截屏/锁定→左侧竖排；其余进「更多」。
+  Widget _buildMediaInfoLine(MediaItem? item) {
+    final stats = _playerService.stats;
+    String? v(String key) => stats?[key];
+    String bitrate(String? val) {
+      final n = double.tryParse(val ?? '');
+      if (n == null || n <= 0) return '—';
+      if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(0)}Mbps';
+      if (n >= 1000) return '${(n / 1000).toStringAsFixed(0)}kbps';
+      return '${n.toStringAsFixed(0)}bps';
+    }
+
+    String fps(String? val) {
+      final n = double.tryParse(val ?? '');
+      return n == null || n <= 0 ? '—' : '${n.toStringAsFixed(0)}fps';
+    }
+
+    final coreLabel = _currentCore == 'exoPlayer' ? 'EXO' : 'MPV';
+    final format = v('video-codec') ?? '—';
+    final bps = bitrate(v('video-bitrate') ??
+        v('current-tracks/video/default-bitrate'));
+    final frame = fps(v('fps') ?? v('container-fps'));
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 媒体名称
+          Text(
+            item?.name ?? widget.itemId,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              shadows: [Shadow(color: Colors.black54, blurRadius: 6)],
+            ),
+          ),
+          const SizedBox(height: 2),
+          // 集数及集标题
+          if (item?.type == 'Episode' && item?.seriesName != null)
+            Text(
+              '${item!.seriesName} · ${_episodeNumberLabel(item)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          const SizedBox(height: 2),
+          // 内核 / 格式 / 码率 / 帧数
+          Text(
+            '$coreLabel $format $bps $frame',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white60, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _episodeNumberLabel(MediaItem item) {
+    final season = item.parentIndexNumber;
+    final ep = item.indexNumber;
+    if (season == null || ep == null) return item.name;
+    return '第${season}季 第$ep集';
+  }
+
   Widget _buildBottomControlsRow(MediaItem? item) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 2, 24, 8),
@@ -2754,6 +2884,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             onTap: _playNext,
           ),
           const Spacer(),
+          // 右下角（右→左）：聚合搜索 / 内核 / 线路 / 音频 / 字幕 / 选集
+          _BottomBarAction(
+            icon: Icons.travel_explore_rounded,
+            label: '聚合搜索',
+            onTap: _showAggregationSearch,
+          ),
           _BottomBarAction(
             icon: Icons.memory_rounded,
             label: '内核',
@@ -2765,24 +2901,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             onTap: _showLineSelector,
           ),
           _BottomBarAction(
-            icon: Icons.manage_search_rounded,
-            label: '弹幕搜索',
-            onTap: _showDanmakuSearch,
-          ),
-          _BottomBarAction(
-            icon: Icons.chat_bubble_outline_rounded,
-            label: '弹幕',
-            onTap: _showDanmakuSettings,
+            icon: Icons.audiotrack_rounded,
+            label: '音频',
+            onTap: _showAudioSettings,
           ),
           _BottomBarAction(
             icon: Icons.subtitles_outlined,
             label: '字幕',
             onTap: _showSubtitleSettings,
-          ),
-          _BottomBarAction(
-            icon: Icons.audiotrack_rounded,
-            label: '音轨',
-            onTap: _showAudioSettings,
           ),
           _BottomBarAction(
             icon: Icons.playlist_play_rounded,
@@ -2792,6 +2918,98 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         ],
       ),
     );
+  }
+
+  void _showAggregationSearch() {
+    // 用当前媒体做一次聚合搜索：跨服务器匹配，胶囊横向排布，点击即切换资源。
+    final currentItem = ref.read(currentPlayingItemProvider);
+    final title = currentItem?.name ?? widget.itemId;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return FutureBuilder<List<ServerMatchInfo>>(
+          future: ref.read(rankingCrossServerMatchProvider(title).future),
+          builder: (context, snapshot) {
+            final matches = snapshot.data ?? const <ServerMatchInfo>[];
+            if (snapshot.hasError) {
+              return const Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('聚合搜索失败，请稍后重试'),
+              );
+            }
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Padding(
+                padding: EdgeInsets.all(32),
+                child: Center(child: CircularProgressIndicator()),
+              );
+            }
+            if (matches.isEmpty) {
+              return const Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('未找到其他服务器的同媒体资源'),
+              );
+            }
+            return SizedBox(
+              height: 96,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                itemCount: matches.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 12),
+                itemBuilder: (context, index) {
+                  final match = matches[index];
+                  final server = ref
+                      .read(serverListProvider)
+                      .where((s) => s.id == match.sourceServerId)
+                      .firstOrNull;
+                  return ActionChip(
+                    avatar: const Icon(Icons.cloud_done_rounded, size: 17),
+                    label: Text(server?.name ?? '未知服务器'),
+                    onPressed: () {
+                      Navigator.pop(sheetContext);
+                      _switchToCrossServerMatch(match);
+                    },
+                  );
+                },
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _switchToCrossServerMatch(ServerMatchInfo match) {
+    // 切换聚合资源：播放进度与内核保持不变，仅换源起播。
+    final server = ref
+        .read(serverListProvider)
+        .where((s) => s.id == match.sourceServerId)
+        .firstOrNull;
+    if (server == null) return;
+    if (match.sourceEntry != null) {
+      // 切源：完整重建播放器（保证服务/纹理/轨道都正确初始化）。
+      context.pushReplacement('/source-player',
+          extra: SourcePlayback(
+            server: server,
+            entry: match.sourceEntry!,
+            httpHeaders: match.sourceEntry!.thumbHeaders,
+            playerCoreOverride: _currentCore,
+          ));
+      return;
+    }
+    if (match.item.type == 'Movie' || match.item.type == 'Episode') {
+      final origin = match.item.sourceServerId;
+      if (origin != null) {
+        ref.read(currentServerProvider.notifier).syncWithAvailableServers(
+            ref.read(serverListProvider),
+            preferredServerId: origin);
+      } else {
+        ref.read(currentServerProvider.notifier).state = server;
+      }
+      context.pushReplacement(
+          '/player/${match.item.id}?core=${Uri.encodeQueryComponent(_currentCore)}');
+    }
   }
 
   Widget _buildDragIndicator() {
@@ -3105,20 +3323,50 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     );
   }
 
-  void _toggleOrientation() {
-    final orientation = MediaQuery.of(context).orientation;
-    if (orientation == Orientation.portrait) {
-      SystemChrome.setPreferredOrientations([
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ]);
-    } else {
-      SystemChrome.setPreferredOrientations([
-        DeviceOrientation.portraitUp,
-        DeviceOrientation.portraitDown,
-      ]);
-    }
+  void _showSpeedPanel() {
+    const speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('播放速度',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                for (final speed in speeds)
+                  ActionChip(
+                    label: Text('${speed}x'),
+                    backgroundColor: (_playerService.speed - speed).abs() < 0.01
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
+                    labelStyle: TextStyle(
+                      color: (_playerService.speed - speed).abs() < 0.01
+                          ? Colors.white
+                          : null,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    onPressed: () {
+                      _playerService.setSpeed(speed);
+                      Navigator.pop(sheetContext);
+                    },
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
+
+  void _toggleRotation() => _toggleOrientation();
 
   Future<void> _takeScreenshot() async {
     try {
