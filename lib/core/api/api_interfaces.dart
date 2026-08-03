@@ -706,6 +706,13 @@ class MediaStream {
   final String? videoRange; // 'SDR' / 'HDR'
   final String?
       videoRangeType; // 'SDR' / 'HDR10' / 'HLG' / 'DOVI' / 'DOVIWithHDR10' ...
+  final String? profile; // H.264 High / HEVC Main 10 / AV1 Main ...
+  final int? level; // 编码级别（H.264 40 / HEVC 150 ...）
+  final String? pixelFormat; // yuv420p / yuv420p10le ...
+  final double? realFrameRate; // 实际帧率
+  final double? averageFrameRate; // 平均帧率
+  final String? colorSpace; // bt2020nc / bt709 ...
+  final String? colorTransfer; // smpte2084 (PQ) / arib-std-b67 (HLG) ...
 
   MediaStream({
     required this.index,
@@ -727,6 +734,13 @@ class MediaStream {
     this.bitRate,
     this.videoRange,
     this.videoRangeType,
+    this.profile,
+    this.level,
+    this.pixelFormat,
+    this.realFrameRate,
+    this.averageFrameRate,
+    this.colorSpace,
+    this.colorTransfer,
   });
 
   bool get isVideo => type == 'Video';

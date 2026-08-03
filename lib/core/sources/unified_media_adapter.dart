@@ -260,6 +260,13 @@ class EmbyUnifiedMediaAdapter implements UnifiedMediaAdapter {
             'bitrate': value.bitRate,
             'video_range': value.videoRange,
             'video_range_type': value.videoRangeType,
+            'profile': value.profile,
+            'level': value.level,
+            'pixel_format': value.pixelFormat,
+            'real_frame_rate': value.realFrameRate,
+            'average_frame_rate': value.averageFrameRate,
+            'color_space': value.colorSpace,
+            'color_transfer': value.colorTransfer,
           };
       final videos = source.mediaStreams.where((item) => item.isVideo).toList();
       final audios = source.mediaStreams.where((item) => item.isAudio).toList();

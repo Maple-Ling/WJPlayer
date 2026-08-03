@@ -654,43 +654,29 @@ class _UnifiedMediaDetailScreenState
   Future<void> _play() async {
     final entry = _selectedEntry;
     if (entry == null) return;
-    if (widget.server.sourceKind == SourceKind.feiniu) {
-      final source = entry.sourceEntry;
-      if (source == null) return;
-      await context.push(
-        '/source-player',
-        extra: SourcePlayback(
-          server: ref.read(serverListProvider).firstWhere(
-              (server) => server.id == widget.server.id,
-              orElse: () => widget.server),
-          entry: source,
-          httpHeaders: source.thumbHeaders,
-          playerCoreOverride: _core,
-          preferredAudioListIndex:
-              _resource?.audios.isNotEmpty == true ? _audioIndex : null,
-          preferredSubtitleListIndex: _subtitleIndex,
-          playlist: _episodes
-              .map((item) => item.sourceEntry)
-              .whereType<SourceEntry>()
-              .toList(),
-        ),
-      );
-    } else {
-      ref.read(selectedMediaSourceProvider.notifier).state = _resource?.id;
-      ref.read(audioTrackProvider.notifier).state =
-          _resource?.audios.isNotEmpty == true
-              ? (_resource!.audios[_audioIndex]['index'] as num?)?.toInt()
-              : null;
-      ref.read(subtitleTrackProvider.notifier).state = _subtitleIndex < 0
-          ? -1
-          : (_resource!.subtitles[_subtitleIndex]['index'] as num?)?.toInt();
-      final mediaSourceQuery = _resource == null
-          ? ''
-          : '&mediaSourceId=${Uri.encodeQueryComponent(_resource!.id)}';
-      await context.push(
-        '/player/${entry.id}?core=${Uri.encodeQueryComponent(_core)}$mediaSourceQuery',
-      );
-    }
+    // 统一走「源直链播放」（/source-player + SourcePlayback）：与外部详情页 /
+    // 跨服务器资源相同的可用播放路径，由 backend.resolvePlay 解析真实直链与鉴权头，
+    // 各端（Emby / 飞牛 / 网盘）口径一致。emby 的 _entry() 已回填 sourceEntry。
+    final source = entry.sourceEntry;
+    if (source == null) return;
+    await context.push(
+      '/source-player',
+      extra: SourcePlayback(
+        server: ref.read(serverListProvider).firstWhere(
+            (server) => server.id == widget.server.id,
+            orElse: () => widget.server),
+        entry: source,
+        httpHeaders: source.thumbHeaders,
+        playerCoreOverride: _core,
+        preferredAudioListIndex:
+            _resource?.audios.isNotEmpty == true ? _audioIndex : null,
+        preferredSubtitleListIndex: _subtitleIndex,
+        playlist: _episodes
+            .map((item) => item.sourceEntry)
+            .whereType<SourceEntry>()
+            .toList(),
+      ),
+    );
     if (mounted) await _loadResources(entry);
   }
 
@@ -1543,13 +1529,14 @@ class _UnifiedMediaDetailScreenState
     final cards = <Widget>[
       if (resource.video != null)
         _infoCard('视频', Icons.videocam_rounded, [
-          ('编码', resource.video!['codec_name']),
+          ('编码', _videoDisplay(resource.video!)),
+          ('画面比例', _aspectRatio(resource.video!)),
           ('分辨率', _resolution(resource.video!)),
+          ('帧率', _frameRate(resource.video!)),
           ('码率', _bitrate(resource.video!['bitrate'])),
           (
-            '色彩',
-            resource.video!['video_range_type'] ??
-                resource.video!['video_range']
+            '色深/色彩',
+            _colorDepth(resource.video!)
           ),
         ]),
       for (var i = 0; i < resource.audios.length; i++)
@@ -1669,6 +1656,60 @@ class _UnifiedMediaDetailScreenState
   String _bitrate(dynamic value) {
     final bitrate = value is num ? value.toInt() : int.tryParse('$value') ?? 0;
     return bitrate <= 0 ? '' : '${(bitrate / 1000000).toStringAsFixed(1)} Mbps';
+  }
+
+  String _videoDisplay(Map<String, dynamic> stream) {
+    final codec = stream['codec_name']?.toString().trim().toUpperCase() ?? '';
+    final profile = stream['profile']?.toString().trim() ?? '';
+    final parts = <String>[codec, profile.toUpperCase()].where((s) => s.isNotEmpty).toList();
+    return parts.isEmpty ? '-' : parts.join(' / ');
+  }
+
+  String _aspectRatio(Map<String, dynamic> stream) {
+    final width = (stream['width'] as num?)?.toInt() ?? 0;
+    final height = (stream['height'] as num?)?.toInt() ?? 0;
+    if (width <= 0 || height <= 0) return '';
+    final ratio = width / height;
+    if ((ratio - 16 / 9).abs() < 0.02) return '16:9';
+    if ((ratio - 4 / 3).abs() < 0.02) return '4:3';
+    if ((ratio - 21 / 9).abs() < 0.02) return '21:9';
+    if ((ratio - 2.35).abs() < 0.05) return '2.35:1';
+    if ((ratio - 1.85).abs() < 0.05) return '1.85:1';
+    return ratio.toStringAsFixed(2);
+  }
+
+  String _frameRate(Map<String, dynamic> stream) {
+    final rate = (stream['real_frame_rate'] ?? stream['average_frame_rate']);
+    if (rate is! num || rate <= 0) return '';
+    final value = rate.toDouble();
+    if ((value - 23976 / 1000).abs() < 0.001) return '23.976 fps';
+    if ((value - 24000 / 1000).abs() < 0.001) return '24 fps';
+    if ((value - 25000 / 1000).abs() < 0.001) return '25 fps';
+    if ((value - 30000 / 1000).abs() < 0.001) return '30 fps';
+    if ((value - 48000 / 1000).abs() < 0.001) return '48 fps';
+    if ((value - 60000 / 1000).abs() < 0.001) return '60 fps';
+    return '${value.toStringAsFixed(2)} fps';
+  }
+
+  String _colorDepth(Map<String, dynamic> stream) {
+    final rangeType = stream['video_range_type']?.toString();
+    final range = stream['video_range']?.toString();
+    final pixel = stream['pixel_format']?.toString().toLowerCase() ?? '';
+    final colorSpace = stream['color_space']?.toString().toUpperCase() ?? '';
+    final hdr = rangeType?.isNotEmpty == true
+        ? rangeType
+        : (range?.isNotEmpty == true ? range : null);
+    final bit = pixel.contains('10le') || pixel.contains('p010')
+        ? '10bit'
+        : pixel.isEmpty || pixel == 'yuv420p' || pixel == 'yuvj420p'
+            ? '8bit'
+            : '';
+    final parts = [
+      if (bit.isNotEmpty) bit,
+      if (hdr?.isNotEmpty == true) hdr,
+      if (hdr == null && colorSpace.isNotEmpty) colorSpace,
+    ];
+    return parts.isEmpty ? '' : parts.join(' · ');
   }
 
   void _showGallery(List<String> images, int initial) {

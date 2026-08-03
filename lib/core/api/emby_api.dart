@@ -1558,5 +1558,18 @@ MediaStream _parseMediaStream(Map<String, dynamic> d) {
     bitRate: _asInt(d['BitRate']),
     videoRange: d['VideoRange']?.toString(),
     videoRangeType: d['VideoRangeType']?.toString(),
+    profile: d['Profile']?.toString(),
+    level: _asInt(d['Level']),
+    pixelFormat: d['PixelFormat']?.toString(),
+    realFrameRate: _tryDouble(d['RealFrameRate']),
+    averageFrameRate: _tryDouble(d['AverageFrameRate']),
+    colorSpace: d['ColorSpace']?.toString(),
+    colorTransfer: d['ColorTransfer']?.toString(),
   );
+}
+
+double? _tryDouble(dynamic value) {
+  if (value is num) return value.toDouble();
+  final parsed = double.tryParse('$value');
+  return parsed;
 }
