@@ -490,6 +490,14 @@ class _UnifiedMediaDetailScreenState
       final scopeKey = buildWatchHistoryScopeKey(widget.server);
       if (scopeKey != null) {
         _scopeRecords = await ref.read(watchHistoryProvider).loadScope(scopeKey);
+        // 沿用该媒体上次播放使用的内核（需求：记录存在就记忆内核）。
+        for (final record in _scopeRecords) {
+          final core = record.playerCore;
+          if (core != null && core.isNotEmpty) {
+            _core = normalizePlayerCore(core);
+            break;
+          }
+        }
       }
       if (detail.seasons.isNotEmpty) {
         final preferred = detail.seasons.where((season) {
@@ -724,29 +732,45 @@ class _UnifiedMediaDetailScreenState
   Future<void> _play() async {
     final entry = _selectedEntry;
     if (entry == null) return;
-    // 统一走「源直链播放」（/source-player + SourcePlayback）：与外部详情页 /
-    // 跨服务器资源相同的可用播放路径，由 backend.resolvePlay 解析真实直链与鉴权头，
-    // 各端（Emby / 飞牛 / 网盘）口径一致。emby 的 _entry() 已回填 sourceEntry。
-    final source = entry.sourceEntry;
-    if (source == null) return;
-    await context.push(
-      '/source-player',
-      extra: SourcePlayback(
-        server: ref.read(serverListProvider).firstWhere(
-            (server) => server.id == widget.server.id,
-            orElse: () => widget.server),
-        entry: source,
-        httpHeaders: source.thumbHeaders,
-        playerCoreOverride: _core,
-        preferredAudioListIndex:
-            _resource?.audios.isNotEmpty == true ? _audioIndex : null,
-        preferredSubtitleListIndex: _subtitleIndex,
-        playlist: _episodes
-            .map((item) => item.sourceEntry)
-            .whereType<SourceEntry>()
-            .toList(),
-      ),
-    );
+    // Emby 走 /player/:id（内部自行解析媒体源，与外部详情页同路径，稳定可播）；
+    // 其它源（飞牛/网盘）走 /source-player（source-player 依赖 MediaSourceBackend.resolvePlay）。
+    if (widget.server.sourceKind == SourceKind.emby) {
+      ref.read(selectedMediaSourceProvider.notifier).state = _resource?.id;
+      ref.read(audioTrackProvider.notifier).state =
+          _resource?.audios.isNotEmpty == true
+              ? (_resource!.audios[_audioIndex]['index'] as num?)?.toInt()
+              : null;
+      ref.read(subtitleTrackProvider.notifier).state = _subtitleIndex < 0
+          ? -1
+          : (_resource!.subtitles[_subtitleIndex]['index'] as num?)?.toInt();
+      final mediaSourceQuery = _resource == null
+          ? ''
+          : '&mediaSourceId=${Uri.encodeQueryComponent(_resource!.id)}';
+      await context.push(
+        '/player/${entry.id}?core=${Uri.encodeQueryComponent(_core)}$mediaSourceQuery',
+      );
+    } else {
+      final source = entry.sourceEntry;
+      if (source == null) return;
+      await context.push(
+        '/source-player',
+        extra: SourcePlayback(
+          server: ref.read(serverListProvider).firstWhere(
+              (server) => server.id == widget.server.id,
+              orElse: () => widget.server),
+          entry: source,
+          httpHeaders: source.thumbHeaders,
+          playerCoreOverride: _core,
+          preferredAudioListIndex:
+              _resource?.audios.isNotEmpty == true ? _audioIndex : null,
+          preferredSubtitleListIndex: _subtitleIndex,
+          playlist: _episodes
+              .map((item) => item.sourceEntry)
+              .whereType<SourceEntry>()
+              .toList(),
+        ),
+      );
+    }
     if (mounted) await _loadResources(entry);
   }
 

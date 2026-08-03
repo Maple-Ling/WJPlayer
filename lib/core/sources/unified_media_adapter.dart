@@ -340,6 +340,24 @@ class EmbyUnifiedMediaAdapter implements UnifiedMediaAdapter {
       providerIds: item.providerIds ?? const {},
       progress: item.progress,
       mediaItem: item,
+      sourceEntry: SourceEntry(
+        id: item.id,
+        name: item.name,
+        isDir: item.type == 'Series' || item.type == 'Season',
+        isVideo: item.type == 'Movie' || item.type == 'Episode',
+        thumbUrl: item.primaryImageTag == null
+            ? null
+            : api.image.getPrimaryImageUrl(item.id,
+                tag: item.primaryImageTag, maxWidth: 640),
+        thumbHeaders: null,
+        raw: {
+          'type': item.type,
+          'overview': item.overview,
+          'year': item.productionYear,
+          'vote_average': item.communityRating,
+          ...?item.providerIds,
+        },
+      ),
     );
   }
 }

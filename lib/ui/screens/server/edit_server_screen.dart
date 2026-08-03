@@ -49,6 +49,7 @@ class _EditServerScreenState extends ConsumerState<EditServerScreen> {
           : ServerEditorForm(
               existing: server,
               allowInsecureTls: server.allowInsecureTls,
+              hideMainUrl: true,
               onSaved: (updated) {
                 if (!mounted) return;
                 AppToast.show(context, '服务器已更新');

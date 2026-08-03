@@ -15,9 +15,9 @@ class ConfigTransfer {
   /// 二维码前缀,用于扫码端识别是本 App 的配置载荷(而非随便一个二维码)。
   static const String _prefix = 'LPSYNC1:';
 
-  /// 单个二维码可容纳的载荷上限(字符数)。取 QR 版本40/纠错M 的字节容量(2331)留余量,
-  /// 保证手机相机能稳定扫出;超过则上层提示改用文件备份。
-  static const int maxQrChars = 2200;
+  /// 单个二维码可容纳的载荷上限(字符数)。取 QR 版本40/纠错M 的字节容量(2331),
+  /// 尽量贴近物理上限以容纳更多设备/服务器;超过则上层提示改用文件备份。
+  static const int maxQrChars = 2331;
 
   /// 把服务器列表编码成可放进二维码的字符串。
   static Future<String> encode(List<ServerConfig> servers) async {

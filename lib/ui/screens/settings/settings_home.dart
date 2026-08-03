@@ -90,15 +90,36 @@ class SettingsScreen extends ConsumerWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('关于'),
-        content: const Column(
+        content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('WJPlayer v$kCurrentAppVersion'),
-            SizedBox(height: 8),
-            Text('GitHub: https://github.com/Maple-Ling/WJPlayer'),
-            SizedBox(height: 8),
-            Text('mpv version: 0.37.0'),
+            const SizedBox(height: 8),
+            InkWell(
+              onTap: () =>
+                  launchUrl(Uri.parse('https://github.com/Maple-Ling/WJPlayer'),
+                      mode: LaunchMode.externalApplication),
+              borderRadius: BorderRadius.circular(6),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.open_in_new_rounded, size: 15),
+                  SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      'GitHub: https://github.com/Maple-Ling/WJPlayer',
+                      style: TextStyle(
+                          color: Color(0xFF5B8DEF),
+                          decoration: TextDecoration.underline,
+                          decorationColor: Color(0xFF5B8DEF)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text('mpv version: 0.37.0'),
           ],
         ),
         actions: [

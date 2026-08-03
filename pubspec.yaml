@@ -47,6 +47,9 @@ dependencies:
   media_kit_video: ^2.0.1
   media_kit_libs_video: ^1.0.7
 
+  # 播放时保持屏幕常亮（防止观看中息屏）
+  wakelock_plus: ^1.2.8
+
   # 工具
   ffi: ^2.2.0
   path_provider: ^2.1.2

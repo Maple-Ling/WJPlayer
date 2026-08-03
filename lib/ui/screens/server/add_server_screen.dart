@@ -20,11 +20,13 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('添加服务器')),
       body: ServerEditorForm(
+        autoAddLine: true,
         onSaved: (server) {
           if (!mounted) return;
           AppToast.show(context, '已连接并保存「${server.name}」',
               kind: AppToastKind.success);
-          context.push('/home');
+          // 替换添加页为首页：返回时直接回到服务器管理页。
+          context.pushReplacement('/home');
         },
       ),
     );

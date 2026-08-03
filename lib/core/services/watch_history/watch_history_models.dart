@@ -147,6 +147,7 @@ class WatchHistoryRecord {
     this.sourceEntryId,
     this.sourcePosterUrl,
     this.seriesEntryId,
+    this.playerCore,
   });
 
   static const Object _sentinel = Object();
@@ -185,6 +186,9 @@ class WatchHistoryRecord {
   final String? sourcePosterUrl;
   final String? seriesEntryId;
 
+  /// 该媒体上次播放使用的内核（如 exoPlayer / nativeMpv），用于详情页沿用。
+  final String? playerCore;
+
   /// 首次观看时间，旧记录缺失时回退到 [lastPlayedAt]。
   DateTime get effectiveFirstPlayedAt => firstPlayedAt ?? lastPlayedAt;
 
@@ -216,6 +220,7 @@ class WatchHistoryRecord {
       'sourceEntryId': sourceEntryId,
       'sourcePosterUrl': sourcePosterUrl,
       'seriesEntryId': seriesEntryId,
+      'playerCore': playerCore,
     };
   }
 
@@ -251,6 +256,7 @@ class WatchHistoryRecord {
       sourceEntryId: _readNullableString(json['sourceEntryId']),
       sourcePosterUrl: _readNullableString(json['sourcePosterUrl']),
       seriesEntryId: _readNullableString(json['seriesEntryId']),
+      playerCore: _readNullableString(json['playerCore']),
     );
   }
 
@@ -281,6 +287,7 @@ class WatchHistoryRecord {
     Object? sourceEntryId = _sentinel,
     Object? sourcePosterUrl = _sentinel,
     Object? seriesEntryId = _sentinel,
+    Object? playerCore = _sentinel,
   }) {
     return WatchHistoryRecord(
       recordId: recordId ?? this.recordId,
@@ -335,6 +342,9 @@ class WatchHistoryRecord {
       seriesEntryId: identical(seriesEntryId, _sentinel)
           ? this.seriesEntryId
           : seriesEntryId as String?,
+      playerCore: identical(playerCore, _sentinel)
+          ? this.playerCore
+          : playerCore as String?,
     );
   }
 }

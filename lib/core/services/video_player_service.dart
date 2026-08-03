@@ -1423,15 +1423,22 @@ class VideoPlayerService extends ChangeNotifier {
       _dragPreviewPosition = Duration(milliseconds: newPositionMs);
       notifyListeners();
     } else if (_gestureAxis == 2) {
-      // 竖向滑动（亮度/音量）：动作由起点半屏的配置决定
+      // 竖向滑动（亮度/音量）：一次从 0 滑到 100%（全屏高度 = 满值）
       _isScrubbingPosition = false;
-      final delta = -dy / height * 0.7; // 降低灵敏度系数
+      final delta = -dy / height;
       if (activeVerticalAction == 'brightness') {
-        unawaited(setBrightness(
-            (_dragStartBrightness + delta).clamp(0.01, 1.0)));
+        final target =
+            (_dragStartBrightness + delta).clamp(0.0, 1.0).toDouble();
+        if ((target - _currentBrightness).abs() >= 0.01) {
+          unawaited(setBrightness(target));
+          _hapticTick();
+        }
       } else {
-        unawaited(
-            setVolume((_dragStartVolume + delta).clamp(0.0, 1.0)));
+        final target = (_dragStartVolume + delta).clamp(0.0, 1.0).toDouble();
+        if ((target - volume).abs() >= 0.01) {
+          unawaited(setVolume(target));
+          _hapticTick();
+        }
       }
     }
   }
@@ -1448,6 +1455,19 @@ class VideoPlayerService extends ChangeNotifier {
     if (wasScrubbing) seekTo(targetPosition);
     _startHideControlsTimer();
     notifyListeners();
+  }
+
+  /// 竖向调节亮度/音量时按步进触发轻微震动。
+  DateTime? _lastHapticTick;
+
+  void _hapticTick() {
+    final now = DateTime.now();
+    if (_lastHapticTick != null &&
+        now.difference(_lastHapticTick!).inMilliseconds < 60) {
+      return;
+    }
+    _lastHapticTick = now;
+    HapticFeedback.selectionClick();
   }
 
   // ========== 内部方法 ==========

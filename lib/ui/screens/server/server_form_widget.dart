@@ -46,6 +46,8 @@ class ServerEditorForm extends ConsumerStatefulWidget {
     super.key,
     this.existing,
     this.allowInsecureTls = false,
+    this.hideMainUrl = false,
+    this.autoAddLine = false,
     this.onSaved,
   });
 
@@ -54,6 +56,12 @@ class ServerEditorForm extends ConsumerStatefulWidget {
 
   /// 编辑模式下是否显示“信任自签名证书”开关。
   final bool allowInsecureTls;
+
+  /// 编辑模式精简：隐藏主表单的 备注/服务器地址/路径（线路在下方统一编辑）。
+  final bool hideMainUrl;
+
+  /// 新增模式默认自动增加一条空线路。
+  final bool autoAddLine;
 
   /// 保存成功回调（新增：携带新服务器；编辑：携带更新后的服务器）。
   final ValueChanged<ServerConfig>? onSaved;
@@ -108,6 +116,9 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
       }
     } else {
       _pathController.text = '/';
+    }
+    if (widget.autoAddLine && !_isEdit && _lines.isEmpty) {
+      _lines.add(_LineField());
     }
   }
 
@@ -167,26 +178,28 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
             decoration: _fieldDeco(hint: '留空则自动获取', icon: Icons.badge_outlined),
           ),
           const SizedBox(height: 14),
-          _fieldLabel('备注'),
-          TextField(
-            controller: _remarkController,
-            decoration: _fieldDeco(hint: '选填', icon: Icons.notes),
-          ),
-          const SizedBox(height: 14),
-          _fieldLabel('服务器地址'),
-          ProtocolAddressField(
-            controller: _urlController,
-            label: '服务器地址',
-            hint: 'example.com:8096',
-            onProtocolChanged: (v) => _protocol = v,
-          ),
-          const SizedBox(height: 14),
-          _fieldLabel('路径'),
-          TextField(
-            controller: _pathController,
-            decoration: _fieldDeco(icon: Icons.folder),
-          ),
-          const SizedBox(height: 14),
+          if (!widget.hideMainUrl) ...[
+            _fieldLabel('备注'),
+            TextField(
+              controller: _remarkController,
+              decoration: _fieldDeco(hint: '选填', icon: Icons.notes),
+            ),
+            const SizedBox(height: 14),
+            _fieldLabel('服务器地址'),
+            ProtocolAddressField(
+              controller: _urlController,
+              label: '服务器地址',
+              hint: 'example.com:8096',
+              onProtocolChanged: (v) => _protocol = v,
+            ),
+            const SizedBox(height: 14),
+            _fieldLabel('路径'),
+            TextField(
+              controller: _pathController,
+              decoration: _fieldDeco(icon: Icons.folder),
+            ),
+            const SizedBox(height: 14),
+          ],
           _fieldLabel('用户名'),
           TextField(
             controller: _usernameController,
@@ -324,18 +337,21 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
 
   List<ServerLine> _collectLines() {
     final result = <ServerLine>[];
-    final mainHost = _urlController.text.trim();
-    if (mainHost.isNotEmpty) {
-      result.add(ServerLine(
-        id: 'default',
-        name: _remarkController.text.trim().isEmpty
-            ? '默认线路'
-            : _remarkController.text.trim(),
-        url: _fullUrl(mainHost, _protocol, _pathController.text),
-        remark: _remarkController.text.trim().isEmpty
-            ? null
-            : _remarkController.text.trim(),
-      ));
+    // 编辑模式隐藏了主地址：不重复添加默认线路，线路以下方列表为准。
+    if (!widget.hideMainUrl) {
+      final mainHost = _urlController.text.trim();
+      if (mainHost.isNotEmpty) {
+        result.add(ServerLine(
+          id: 'default',
+          name: _remarkController.text.trim().isEmpty
+              ? '默认线路'
+              : _remarkController.text.trim(),
+          url: _fullUrl(mainHost, _protocol, _pathController.text),
+          remark: _remarkController.text.trim().isEmpty
+              ? null
+              : _remarkController.text.trim(),
+        ));
+      }
     }
     for (final line in _lines) {
       final host = line.urlController.text.trim();
@@ -364,9 +380,15 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
       final mainHost = _urlController.text.trim();
 
       if (mainHost.isEmpty) {
-        throw Exception('服务器地址不能为空');
+        if (_isEdit && widget.existing!.baseUrl.isNotEmpty) {
+          // 编辑模式隐藏了主地址，沿用原 baseUrl。
+        } else {
+          throw Exception('服务器地址不能为空');
+        }
       }
-      final fullUrl = _fullUrl(mainHost, _protocol, _pathController.text);
+      final fullUrl = mainHost.isEmpty
+          ? (_isEdit ? widget.existing!.baseUrl : '')
+          : _fullUrl(mainHost, _protocol, _pathController.text);
       final lines = _collectLines();
 
       final client = EmbyApiClient(baseUrl: fullUrl);

@@ -166,6 +166,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // 播放期间保持屏幕常亮，防止观看中自动息屏。
+    WakelockPlus.enable();
     _activeState = this;
     _activeSourcePlay = widget.sourcePlay;
     _sourceCoreOverride =
@@ -745,6 +747,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             watchedThresholdPercent: ref.read(watchedThresholdProvider),
             sourceEntryId: sp.entry.id,
             sourcePosterUrl: sp.entry.thumbUrl,
+            playerCore: _currentCore,
             incrementPlayCount: _lastSourceProgressSecond < 0,
             force: force,
           );
@@ -752,6 +755,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       // 本地记录失败不能中断来源播放和服务端进度回传。
     }
   }
+
+  /// 当前生效的播放内核（来源覆盖优先，其次全局偏好）。
+  String get _currentCore => normalizePlayerCore(
+      _sourceCoreOverride ?? ref.read(playerCoreProvider));
 
   Future<void> _reportSourceProgress(SourcePlayback sp,
       {bool force = false}) async {
@@ -1712,6 +1719,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    // 离开播放器恢复系统息屏策略。
+    WakelockPlus.disable();
     _streamTranslator?.stop();
     _streamTranslator = null;
     _introSkip.dispose();
@@ -2834,6 +2843,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             positionTicks: positionTicks,
             source: WatchHistoryWriteSource.internalPlayer,
             watchedThresholdPercent: ref.read(watchedThresholdProvider),
+            playerCore: _currentCore,
             incrementPlayCount: incrementPlayCount,
             force: force,
           );

@@ -176,6 +176,7 @@ class WatchHistoryService {
     required int watchedThresholdPercent,
     String? sourceEntryId,
     String? sourcePosterUrl,
+    String? playerCore,
     bool incrementPlayCount = false,
     bool force = false,
   }) async {
@@ -259,6 +260,7 @@ class WatchHistoryService {
       mediaPath: item.path,
       sourceEntryId: sourceEntryId ?? existing?.sourceEntryId,
       sourcePosterUrl: historyPosterUrl ?? existing?.sourcePosterUrl,
+      playerCore: playerCore ?? existing?.playerCore,
       seriesEntryId: item.seriesId ?? existing?.seriesEntryId,
     );
 

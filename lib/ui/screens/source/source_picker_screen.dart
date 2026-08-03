@@ -21,11 +21,8 @@ class _SourcePickerScreenState extends State<SourcePickerScreen> {
   String _query = '';
 
   void _select(SourceKind kind) {
-    if (kind == SourceKind.emby) {
-      context.push('/add/emby');
-    } else {
-      context.push('/add/source/${kind.name}');
-    }
+    // Emby / 飞牛统一走同一套添加表单（名称/备注/地址/路径/账号/密码 + 线路）。
+    context.push('/add/emby');
   }
 
   @override
