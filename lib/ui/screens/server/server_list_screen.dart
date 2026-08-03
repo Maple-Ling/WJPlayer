@@ -146,7 +146,7 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
           crossAxisCount: 2,
           crossAxisSpacing: 10,
           mainAxisSpacing: 10,
-          childAspectRatio: 1.36,
+          childAspectRatio: 1.12,
         ),
         itemCount: servers.length,
         itemBuilder: (context, index) {

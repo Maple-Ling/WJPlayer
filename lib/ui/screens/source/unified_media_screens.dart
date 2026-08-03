@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/api/api_interfaces.dart';
+import '../../../core/api/discover/discover_models.dart';
+import '../../../core/api/discover/external_media_models.dart';
 import '../../../core/providers/app_providers.dart';
+import '../../../core/providers/external_media_providers.dart';
 import '../../../core/providers/media_providers.dart';
 import '../../../core/providers/playback_providers.dart';
 import '../../../core/providers/server_card_stats_provider.dart';
@@ -13,6 +17,7 @@ import '../../../core/sources/source_playback.dart';
 import '../../../core/sources/unified_media_adapter.dart';
 import '../../widgets/common/media_metadata_badges.dart';
 import '../../widgets/common/media_widgets.dart';
+import '../discover/external_media_detail_screen.dart';
 
 UnifiedMediaEntry unifiedEntryFromSource(SourceEntry source) => UnifiedMediaEntry(
       id: source.id,
@@ -177,7 +182,12 @@ class _UnifiedMediaHomeScreenState
       appBar: AppBar(
         automaticallyImplyLeading: false,
         centerTitle: true,
+        leadingWidth: 96,
+        leading: _UnifiedServerStats(current: server),
         title: _UnifiedServerSwitcher(current: server),
+        actions: [
+          _ServerLineAction(server: server, onChanged: _load),
+        ],
       ),
       body: _error != null
           ? _ErrorRetry(message: _error!, onRetry: _load)
@@ -418,6 +428,7 @@ class _UnifiedMediaDetailScreenState
   bool _loading = true;
   bool _loadingMedia = false;
   String? _error;
+  ExternalMediaDetail? _externalDetail;
   int _generation = 0;
   final ScrollController _episodeController = ScrollController();
 
@@ -454,6 +465,7 @@ class _UnifiedMediaDetailScreenState
       final detail = await _adapter.detail(widget.entry);
       if (!mounted) return;
       _detail = detail;
+      await _loadExternalDetail(detail.entry);
       if (detail.seasons.isNotEmpty) {
         final preferred = detail.seasons.where((season) {
           final id = season.id.contains(':')
@@ -476,6 +488,35 @@ class _UnifiedMediaDetailScreenState
         _loading = false;
         _error = '获取媒体详情失败: $error';
       });
+    }
+  }
+
+  Future<void> _loadExternalDetail(UnifiedMediaEntry entry) async {
+    final ids = entry.providerIds;
+    final discoverEntry = DiscoverEntry(
+      id: ids['tmdb'] ?? ids['imdb'] ?? entry.id,
+      title: entry.name,
+      source: ids['tmdb']?.isNotEmpty == true
+          ? ReviewSource.tmdb
+          : ids['imdb']?.isNotEmpty == true
+              ? ReviewSource.imdb
+              : ReviewSource.douban,
+      posterUrl: entry.posterUrl,
+      backdropUrl: entry.backdropUrl,
+      rating: entry.rating,
+      year: entry.year?.toString(),
+      overview: entry.overview,
+      mediaType: entry.isSeries ? 'tv' : 'movie',
+      tmdbId: ids['tmdb'],
+      imdbId: ids['imdb'],
+      doubanId: ids['douban'],
+    );
+    try {
+      _externalDetail = await ref
+          .read(externalMediaServiceProvider)
+          .detail(discoverEntry);
+    } catch (_) {
+      _externalDetail = null;
     }
   }
 
@@ -759,18 +800,44 @@ class _UnifiedMediaDetailScreenState
                   ),
                 ],
                 if (detail.seasons.isNotEmpty) ...[
-                  const SizedBox(height: 26),
-                  _sectionTitle('剧集'),
-                  const SizedBox(height: 10),
-                  _buildSeasons(detail.seasons),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 18),
+                  _buildSeasonSelector(detail.seasons),
+                  const SizedBox(height: 18),
                   _buildEpisodes(),
                 ],
+                const SizedBox(height: 20),
+                _sectionTitle('播放资源'),
+                const SizedBox(height: 14),
+                _buildResourceList(),
                 if (detail.people.isNotEmpty) ...[
-                  const SizedBox(height: 28),
-                  _sectionTitle('演员阵容'),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 20),
+                  _sectionTitle('演员'),
+                  const SizedBox(height: 16),
                   _buildPeople(detail.people),
+                ],
+                if (_externalDetail?.images.isNotEmpty == true) ...[
+                  const SizedBox(height: 20),
+                  _sectionTitle('剧照'),
+                  const SizedBox(height: 16),
+                  _buildGallery(_externalDetail!.images),
+                ],
+                if (_externalDetail?.recommendations.isNotEmpty == true) ...[
+                  const SizedBox(height: 20),
+                  _sectionTitle('相似推荐'),
+                  const SizedBox(height: 16),
+                  _buildRecommendations(_externalDetail!.recommendations),
+                ],
+                if (_externalDetail != null) ...[
+                  const SizedBox(height: 20),
+                  _sectionTitle('链接'),
+                  const SizedBox(height: 14),
+                  _buildExternalLinks(_externalDetail!),
+                ],
+                if (_externalDetail?.companies.isNotEmpty == true) ...[
+                  const SizedBox(height: 20),
+                  _sectionTitle('工作室'),
+                  const SizedBox(height: 14),
+                  _buildCompanies(_externalDetail!.companies),
                 ],
                 const SizedBox(height: 28),
                 _sectionTitle('媒体信息'),
@@ -875,84 +942,258 @@ class _UnifiedMediaDetailScreenState
     );
   }
 
-  Widget _buildSeasons(List<UnifiedSeason> seasons) => SizedBox(
-        height: 42,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: seasons.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 8),
-          itemBuilder: (_, index) => ChoiceChip(
-            label: Text(seasons[index].name),
-            selected: _selectedSeasonId == seasons[index].id,
-            onSelected: (_) => _selectSeason(seasons[index].id),
-          ),
+  Widget _buildSeasonSelector(List<UnifiedSeason> seasons) => Row(children: [
+        Text(
+          seasons
+              .where((season) => season.id == _selectedSeasonId)
+              .firstOrNull
+              ?.name ??
+              '选择季',
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
         ),
-      );
+        PopupMenuButton<String>(
+          icon: const Icon(Icons.unfold_more_rounded),
+          onSelected: _selectSeason,
+          itemBuilder: (_) => [
+            for (final season in seasons)
+              PopupMenuItem(value: season.id, child: Text(season.name)),
+          ],
+        ),
+      ]);
 
   Widget _buildEpisodes() => SizedBox(
-        height: 142,
+        height: 220,
         child: _episodes.isEmpty
             ? const Center(child: Text('本季暂无剧集'))
             : ListView.separated(
                 controller: _episodeController,
                 scrollDirection: Axis.horizontal,
                 itemCount: _episodes.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
                 itemBuilder: (_, index) {
                   final episode = _episodes[index];
                   final selected = _selectedEntry?.id == episode.id;
                   return SizedBox(
-                    width: 200,
+                    width: 220,
                     child: InkWell(
-                      borderRadius: BorderRadius.circular(12),
                       onTap: () => _selectEpisode(episode),
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: selected
-                                ? Theme.of(context).colorScheme.primary
-                                : Theme.of(context).dividerColor,
-                            width: selected ? 2 : 1,
-                          ),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: Stack(fit: StackFit.expand, children: [
-                            MediaImage(
-                              imageUrl: episode.backdropUrl?.isNotEmpty == true
-                                  ? episode.backdropUrl
-                                  : episode.posterUrl,
-                              httpHeaders: episode.imageHeaders,
-                              fit: BoxFit.cover,
-                            ),
-                            const DecoratedBox(
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
-                                  colors: [Colors.transparent, Colors.black87],
+                      borderRadius: BorderRadius.circular(18),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          AspectRatio(
+                            aspectRatio: 16 / 9,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(18),
+                              child: Stack(fit: StackFit.expand, children: [
+                                MediaImage(
+                                  imageUrl:
+                                      episode.backdropUrl?.isNotEmpty == true
+                                          ? episode.backdropUrl
+                                          : episode.posterUrl,
+                                  httpHeaders: episode.imageHeaders,
+                                  fit: BoxFit.cover,
                                 ),
-                              ),
+                                if (selected)
+                                  DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .primary,
+                                          width: 4),
+                                      borderRadius: BorderRadius.circular(18),
+                                    ),
+                                  ),
+                              ]),
                             ),
-                            Positioned(
-                              left: 10,
-                              right: 10,
-                              bottom: 8,
-                              child: Text(episode.name,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w700)),
-                            ),
-                          ]),
-                        ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(episode.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 13, fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 5),
+                          Text(episode.overview ?? '',
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  height: 1.35, color: Colors.black54)),
+                        ],
                       ),
                     ),
                   );
                 },
               ),
+      );
+
+  Widget _buildResourceList() {
+    if (_resources.isEmpty) {
+      return const SizedBox(
+          height: 100, child: Center(child: Text('暂无播放资源')));
+    }
+    return SizedBox(
+      height: 105,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: _resources.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, index) {
+          final resource = _resources[index];
+          final selected = index == _resourceIndex;
+          return SizedBox(
+            width: 220,
+            child: Card(
+              child: InkWell(
+                onTap: () => setState(() {
+                  _resourceIndex = index;
+                  _normalizeTracks();
+                }),
+                borderRadius: BorderRadius.circular(16),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        const Icon(Icons.play_circle_fill_rounded,
+                            color: Color(0xFF4CAF50)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                            child: Text(widget.server.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w800))),
+                        if (selected)
+                          const Chip(
+                              label: Text('当前资源'),
+                              visualDensity: VisualDensity.compact),
+                      ]),
+                      const Spacer(),
+                      Text(resource.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 14, fontWeight: FontWeight.w600)),
+                      if (resource.video != null)
+                        Text(
+                          [
+                            _resolution(resource.video!),
+                            resource.video!['codec_name']?.toString() ?? '',
+                            _bitrate(resource.video!['bitrate']),
+                          ].where((value) => value.isNotEmpty).join(' · '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.black54),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildGallery(List<String> images) => SizedBox(
+        height: 150,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: images.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 9),
+          itemBuilder: (_, index) => AspectRatio(
+            aspectRatio: 16 / 9,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(18),
+              child: MediaImage(imageUrl: images[index], fit: BoxFit.cover),
+            ),
+          ),
+        ),
+      );
+
+  Widget _buildRecommendations(List<DiscoverEntry> items) => SizedBox(
+        height: 180,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: items.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (_, index) {
+            final item = items[index];
+            return InkWell(
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                  builder: (_) => ExternalMediaDetailScreen(entry: item))),
+              child: SizedBox(
+                width: 100,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(18),
+                        child: MediaImage(
+                            imageUrl: item.posterUrl, fit: BoxFit.cover),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(item.title,
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text(item.year ?? '',
+                        style: const TextStyle(color: Colors.black54)),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      );
+
+  Widget _buildExternalLinks(ExternalMediaDetail detail) {
+    final links = <(String, String)>[
+      ('TMDB', 'https://www.themoviedb.org/${detail.mediaType}/${detail.tmdbId}'),
+      if (detail.imdbId != null)
+        ('IMDb', 'https://www.imdb.com/title/${detail.imdbId}/'),
+      if (detail.doubanId != null)
+        ('豆瓣', 'https://movie.douban.com/subject/${detail.doubanId}/'),
+    ];
+    return Wrap(
+      spacing: 12,
+      runSpacing: 10,
+      children: [
+        for (final link in links)
+          ActionChip(
+            avatar: const Icon(Icons.open_in_new_rounded, size: 17),
+            label: Text(link.$1),
+            onPressed: () => launchUrl(Uri.parse(link.$2),
+                mode: LaunchMode.externalApplication),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildCompanies(List<ExternalCompany> companies) => SizedBox(
+        height: 54,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: companies.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 12),
+          itemBuilder: (_, index) => ActionChip(
+            avatar: companies[index].logoUrl == null
+                ? null
+                : SizedBox(
+                    width: 28,
+                    height: 20,
+                    child: MediaImage(
+                        imageUrl: companies[index].logoUrl,
+                        fit: BoxFit.contain)),
+            label: Text(companies[index].name),
+            onPressed: () {},
+          ),
+        ),
       );
 
   Widget _buildPlaybackOptions() {
@@ -1316,8 +1557,8 @@ class _UnifiedMediaDetailScreenState
   }
 }
 
-class _UnifiedServerTitle extends ConsumerWidget {
-  const _UnifiedServerTitle({required this.current});
+class _UnifiedServerStats extends ConsumerWidget {
+  const _UnifiedServerStats({required this.current});
   final ServerConfig current;
 
   @override
@@ -1328,12 +1569,15 @@ class _UnifiedServerTitle extends ConsumerWidget {
           children: [
             Icon(icon, size: 13),
             const SizedBox(width: 3),
-            Text('$label ${value ?? '—'}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600)),
+            Text('$label ${value ?? '—'}',
+                style:
+                    const TextStyle(fontSize: 10, fontWeight: FontWeight.w600)),
           ],
         );
-    return Row(children: [
-      Column(
-        mainAxisSize: MainAxisSize.min,
+    return Padding(
+      padding: const EdgeInsets.only(left: 8),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           stats.when(
@@ -1347,15 +1591,14 @@ class _UnifiedServerTitle extends ConsumerWidget {
             error: (_, __) => line(Icons.tv_outlined, '电视剧', null),
           ),
           stats.when(
-            data: (value) => line(Icons.video_library_outlined, '媒体', value.episodeCount),
+            data: (value) =>
+                line(Icons.video_library_outlined, '媒体', value.episodeCount),
             loading: () => line(Icons.video_library_outlined, '媒体', null),
             error: (_, __) => line(Icons.video_library_outlined, '媒体', null),
           ),
         ],
       ),
-      const SizedBox(width: 8),
-      Flexible(child: _UnifiedServerSwitcher(current: current)),
-    ]);
+    );
   }
 }
 
