@@ -151,6 +151,7 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
           ),
         ]),
       ]),
+    ),
     );
   }
 

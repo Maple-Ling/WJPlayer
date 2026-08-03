@@ -869,6 +869,7 @@ class _UnifiedMediaDetailScreenState
           ],
         ),
       ),
+    ),
     );
   }
 
@@ -1546,6 +1547,35 @@ class _UnifiedMediaDetailScreenState
     final bitrate = value is num ? value.toInt() : int.tryParse('$value') ?? 0;
     return bitrate <= 0 ? '' : '${(bitrate / 1000000).toStringAsFixed(1)} Mbps';
   }
+
+  void _showGallery(List<String> images, int initial) {
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black,
+      builder: (_) => Dialog.fullscreen(
+        backgroundColor: Colors.black,
+        child: Stack(children: [
+          PageView.builder(
+            controller: PageController(initialPage: initial),
+            itemCount: images.length,
+            itemBuilder: (_, index) => InteractiveViewer(
+              minScale: 1,
+              maxScale: 5,
+              child: Center(
+                child: MediaImage(imageUrl: images[index], fit: BoxFit.contain),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: IconButton(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.close_rounded, color: Colors.white, size: 30),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
 }
 
 class _UnifiedServerStats extends ConsumerWidget {
@@ -1915,30 +1945,3 @@ class _ErrorRetry extends StatelessWidget {
         ),
       );
 }
-
-  void _showGallery(List<String> images, int initial) {
-    showDialog<void>(
-      context: context,
-      barrierColor: Colors.black,
-      builder: (_) => Dialog.fullscreen(
-        backgroundColor: Colors.black,
-        child: Stack(children: [
-          PageView.builder(
-            controller: PageController(initialPage: initial),
-            itemCount: images.length,
-            itemBuilder: (_, index) => InteractiveViewer(
-              minScale: 1,
-              maxScale: 5,
-              child: Center(child: MediaImage(imageUrl: images[index], fit: BoxFit.contain)),
-            ),
-          ),
-          SafeArea(
-            child: IconButton(
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.close_rounded, color: Colors.white, size: 30),
-            ),
-          ),
-        ]),
-      ),
-    );
-  }
