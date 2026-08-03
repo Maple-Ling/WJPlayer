@@ -553,8 +553,7 @@ class _FloatingTabBar extends ConsumerWidget {
       final selected = navigationShell.currentIndex == index;
       return GestureDetector(
         onTap: () => navigationShell.goBranch(index),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
+        child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
           decoration: BoxDecoration(
             color: selected ? selectedBg : Colors.transparent,

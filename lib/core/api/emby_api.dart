@@ -918,6 +918,7 @@ class EmbySearchApi implements SearchApi {
       'SearchTerm': query,
       'Recursive': recursive,
       'Limit': 50,
+      'IncludeItemTypes': 'Movie,Series',
       'Fields':
           'Overview,Genres,CommunityRating,OfficialRating,PremiereDate,RunTimeTicks,ProductionYear,Tags,SeriesName,IndexNumber,ParentIndexNumber,ProviderIds,PresentationUniqueKey,Path,ChildCount,RecursiveItemCount',
     });
@@ -931,6 +932,7 @@ class EmbySearchApi implements SearchApi {
       'SearchTerm': query,
       'Recursive': true,
       'Limit': 50,
+      'IncludeItemTypes': 'Movie,Series',
       'Fields':
           'Overview,Genres,CommunityRating,OfficialRating,PremiereDate,RunTimeTicks,ProductionYear,Tags,SeriesName,IndexNumber,ParentIndexNumber,ProviderIds,PresentationUniqueKey,Path',
     });

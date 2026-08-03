@@ -146,7 +146,7 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
           crossAxisCount: 2,
           crossAxisSpacing: 10,
           mainAxisSpacing: 10,
-          childAspectRatio: .68,
+          childAspectRatio: 1.36,
         ),
         itemCount: servers.length,
         itemBuilder: (context, index) {
@@ -207,27 +207,11 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.login),
-              title: const Text('重新登录'),
-              onTap: () {
-                Navigator.pop(context);
-                _relogin(context, ref, server);
-              },
-            ),
-            ListTile(
               leading: const Icon(Icons.route),
               title: const Text('服务器线路'),
               onTap: () {
                 Navigator.pop(context);
                 context.push('/lines/${server.id}');
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.image),
-              title: const Text('修改图标'),
-              onTap: () {
-                Navigator.pop(context);
-                context.push('/icons/${server.id}');
               },
             ),
             ListTile(
@@ -608,14 +592,14 @@ class _ServerCard extends ConsumerWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(AppTheme.borderRadiusLarge),
         child: Padding(
-          padding: EdgeInsets.all(compact ? 10 : 16),
+          padding: EdgeInsets.all(compact ? 8 : 16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(children: [
                 Container(
-                  width: compact ? 38 : 48,
-                  height: compact ? 38 : 48,
+                  width: compact ? 32 : 48,
+                  height: compact ? 32 : 48,
                   decoration: BoxDecoration(color: const Color(0xFF5B8DEF).withValues(alpha: 0.15), borderRadius: BorderRadius.circular(12)),
                   child: server.iconUrl != null
                       ? ClipRRect(borderRadius: BorderRadius.circular(12), child: MediaImage(imageUrl: server.iconUrl, width: 48, height: 48, fit: BoxFit.contain, useDefaultUserAgent: true, errorWidget: const EmbyDefaultIcon()))

@@ -662,7 +662,6 @@ class FeiniuBackend implements MediaSourceBackend {
           final data = await _authed(server, '/item/list', data: {
             'ancestor_guid': guid,
             'tags': {'type': [type]},
-            'exclude_grouped_video': 1,
             'sort_type': 'DESC',
             'sort_column': 'create_time',
             'page': page,

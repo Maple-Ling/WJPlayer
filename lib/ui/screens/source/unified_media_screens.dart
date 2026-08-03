@@ -177,10 +177,7 @@ class _UnifiedMediaHomeScreenState
       appBar: AppBar(
         automaticallyImplyLeading: false,
         centerTitle: true,
-        title: _UnifiedServerTitle(current: server),
-        actions: [
-          _ServerLineAction(server: server, onChanged: _load),
-        ],
+        title: _UnifiedServerSwitcher(current: server),
       ),
       body: _error != null
           ? _ErrorRetry(message: _error!, onRetry: _load)
@@ -644,9 +641,10 @@ class _UnifiedMediaDetailScreenState
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverAppBar(
-              expandedHeight: 310,
+              expandedHeight: MediaQuery.sizeOf(context).height * 0.44,
               pinned: true,
               stretch: true,
+              backgroundColor: Colors.transparent,
               actions: [
                 Padding(
                   padding: const EdgeInsets.only(right: 12),
@@ -659,25 +657,58 @@ class _UnifiedMediaDetailScreenState
                 ),
               ],
               flexibleSpace: FlexibleSpaceBar(
-                title: Text(entry.name,
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                collapseMode: CollapseMode.parallax,
                 background: Stack(fit: StackFit.expand, children: [
                   MediaImage(
-                    imageUrl: entry.backdropUrl?.isNotEmpty == true
-                        ? entry.backdropUrl
-                        : entry.posterUrl,
+                    imageUrl: entry.posterUrl?.isNotEmpty == true
+                        ? entry.posterUrl
+                        : entry.backdropUrl,
                     httpHeaders: entry.imageHeaders,
                     fit: BoxFit.cover,
+                    alignment: Alignment.topCenter,
                   ),
                   const DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [Colors.black12, Colors.black87],
-                        stops: [0.45, 1],
+                        colors: [
+                          Colors.transparent,
+                          Color(0x22000000),
+                          Color(0xFFF0F2F0),
+                        ],
+                        stops: [0.45, 0.72, 1],
                       ),
                     ),
+                  ),
+                  Positioned(
+                    left: 28,
+                    right: 28,
+                    bottom: 28,
+                    child: Column(children: [
+                      Text(entry.name,
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF252525),
+                              shadows: [
+                                Shadow(color: Colors.white54, blurRadius: 8)
+                              ])),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: 10,
+                        children: [
+                          if (entry.rating != null)
+                            Text('⭐ ${entry.rating!.toStringAsFixed(1)}'),
+                          if (entry.year != null) Text('${entry.year}'),
+                          Text(entry.isSeries ? '电视剧' : '电影'),
+                        ],
+                      ),
+                    ]),
                   ),
                 ]),
               ),
@@ -685,28 +716,47 @@ class _UnifiedMediaDetailScreenState
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
               sliver: SliverList.list(children: [
-                _buildSummary(entry),
-                const SizedBox(height: 14),
-                _buildFormatBadges(),
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed:
-                        _selectedEntry == null || _loadingMedia ? null : _play,
-                    icon: const Icon(Icons.play_arrow_rounded),
-                    label: Text(_selectedEntry == null
-                        ? '暂无可播放资源'
-                        : '播放  ${_selectedEntry!.name}'),
+                Center(
+                  child: SizedBox(
+                    width: 185,
+                    height: 50,
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.black,
+                        shape: const StadiumBorder(),
+                        elevation: 0,
+                      ),
+                      onPressed: _selectedEntry == null || _loadingMedia
+                          ? null
+                          : _play,
+                      icon: const Icon(Icons.play_arrow_rounded, size: 23),
+                      label: Text(_selectedEntry == null ? '暂无资源' : '播放',
+                          style: const TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.w800)),
+                    ),
                   ),
                 ),
+                const SizedBox(height: 12),
+                _buildPlaybackOptions(),
                 if (entry.overview?.isNotEmpty == true) ...[
                   const SizedBox(height: 22),
-                  Text(entry.overview!,
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodyMedium
-                          ?.copyWith(height: 1.65)),
+                  ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    initiallyExpanded: false,
+                    title: const Text('简介',
+                        style: TextStyle(fontWeight: FontWeight.w800)),
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(entry.overview!,
+                            style: const TextStyle(
+                                fontSize: 12,
+                                height: 1.65,
+                                color: Color(0xFF4F4F4F))),
+                      ),
+                    ],
+                  ),
                 ],
                 if (detail.seasons.isNotEmpty) ...[
                   const SizedBox(height: 26),
@@ -716,10 +766,6 @@ class _UnifiedMediaDetailScreenState
                   const SizedBox(height: 12),
                   _buildEpisodes(),
                 ],
-                const SizedBox(height: 28),
-                _sectionTitle('资源'),
-                const SizedBox(height: 12),
-                _buildPlaybackOptions(),
                 if (detail.people.isNotEmpty) ...[
                   const SizedBox(height: 28),
                   _sectionTitle('演员阵容'),

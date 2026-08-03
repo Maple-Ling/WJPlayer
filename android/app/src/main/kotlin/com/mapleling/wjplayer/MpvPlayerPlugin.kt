@@ -197,10 +197,12 @@ class MpvPlayerPlugin(
             "setSubtitleSize" -> {
                 val playerId = call.argument<String>("playerId") ?: ""
                 val size = call.argument<Double>("size") ?: 0.5
-                // Keep the media-provided font size/style. Only disable window-dependent scaling.
+                // MPV 字幕保持独立 OSD，不随视频缩放；字号固定为默认的 2 倍。
                 getPlayer(playerId)?.setProperty("sub-scale-by-window", "no")
                 getPlayer(playerId)?.setProperty("sub-scale-with-window", "no")
                 getPlayer(playerId)?.setProperty("sub-ass-scale-with-window", "no")
+                getPlayer(playerId)?.setProperty("sub-use-scale", "no")
+                getPlayer(playerId)?.setProperty("sub-scale", "2.0")
                 getPlayer(playerId)?.setProperty("sub-use-margins", "yes")
                 getPlayer(playerId)?.setProperty("sub-ass-force-margins", "yes")
                 result.success(true)

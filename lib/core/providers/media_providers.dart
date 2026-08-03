@@ -340,8 +340,14 @@ final feiniuSearchResultsProvider = FutureProvider.autoDispose
   if (server == null || server.sourceKind != SourceKind.feiniu) return const [];
   final keyword = args.query.trim();
   if (keyword.isEmpty) return const [];
-  return FeiniuBackend().search(server, keyword);
+  final results = await FeiniuBackend().search(server, keyword);
+  return results.where(_isTopLevelFeiniuEntry).toList();
 });
+
+bool _isTopLevelFeiniuEntry(SourceEntry entry) {
+  final type = entry.raw?['type']?.toString().trim().toLowerCase();
+  return type == 'movie' || type == 'tv' || type == 'series';
+}
 
 /// 聚合搜索开关
 final aggregateSearchProvider = StateProvider<bool>((ref) => false);
@@ -367,7 +373,9 @@ final aggregateFeiniuSearchProvider = FutureProvider.autoDispose
       .toList();
   final groups = await Future.wait(servers.map((server) async {
     try {
-      final entries = await FeiniuBackend().search(server, query);
+      final entries = (await FeiniuBackend().search(server, query))
+          .where(_isTopLevelFeiniuEntry)
+          .toList();
       return FeiniuSearchGroup(server: server, entries: entries);
     } catch (error) {
       AppLogger().w('AggregateSearch', '服务器「${server.name}」飞牛搜索失败: $error');
@@ -522,7 +530,7 @@ final rankingCrossServerMatchProvider = StreamProvider.autoDispose
     try {
       if (server.sourceKind == SourceKind.feiniu) {
         final entries = await FeiniuBackend().search(server, query);
-        final playable = entries.where((entry) => !entry.isDir).toList();
+        final playable = entries.where(_isTopLevelFeiniuEntry).toList();
         if (playable.isEmpty) return null;
         final lower = query.toLowerCase();
         final best = playable.firstWhere(
@@ -558,19 +566,19 @@ final rankingCrossServerMatchProvider = StreamProvider.autoDispose
       final client = ref.read(serverApiClientProvider(server.id));
       if (client == null) return null;
       final items = await client.search.search(query, cancelToken: cancelToken);
-      if (items.isEmpty) return null;
+      final topLevel = items
+          .where((item) => item.type == 'Movie' || item.type == 'Series')
+          .toList();
+      if (topLevel.isEmpty) return null;
       // 打来源标记：让封面/点击解析到正确的服务器。
-      for (final item in items) {
+      for (final item in topLevel) {
         item.sourceServerId = server.id;
       }
-      // 挑最佳匹配：优先名称完全一致（忽略大小写），否则第一条剧集/电影，否则第一条。
+      // 只在电影/整剧中挑最佳匹配，禁止误选 Episode 导致全集只显示一集。
       final lower = query.toLowerCase();
-      final best = items.firstWhere(
+      final best = topLevel.firstWhere(
         (i) => i.name.toLowerCase() == lower,
-        orElse: () => items.firstWhere(
-          (i) => i.type == 'Series' || i.type == 'Movie',
-          orElse: () => items.first,
-        ),
+        orElse: () => topLevel.first,
       );
 
       final episodeCount = best.recursiveItemCount ?? best.childCount;
@@ -623,13 +631,22 @@ final searchResultsProvider =
   final api = ref.watch(apiClientProvider);
   final results = await api.search.search(query);
 
-  // 排除被屏蔽媒体库的结果（通过parentId匹配）
-  return results.where((item) {
-    if (item.parentId != null && hiddenLibraries.contains(item.parentId))
-      return false;
-    return true;
-  }).toList();
+  return _filterTopLevelSearchResults(results, hiddenLibraries);
 });
+
+List<MediaItem> _filterTopLevelSearchResults(
+    Iterable<MediaItem> items, Set<String> hiddenLibraries) {
+  final seen = <String>{};
+  return items.where((item) {
+    if (item.type != 'Movie' && item.type != 'Series') return false;
+    if (item.parentId != null &&
+        hiddenLibraries.contains(item.parentId.toString())) {
+      return false;
+    }
+    final key = '${item.type}:${item.id}';
+    return seen.add(key);
+  }).toList();
+}
 
 /// 搜索历史
 final searchHistoryProvider =

@@ -56,26 +56,6 @@ class _GeneralSettingsScreenState extends ConsumerState<GeneralSettingsScreen> {
             onTap: () => _showLanguageSelector(context),
           ),
           ListTile(
-            leading: const Icon(Icons.rocket_launch_outlined),
-            title: const Text('启动页'),
-            subtitle: Text(startupPageLabel(
-              ref.watch(startupPageProvider),
-              displayLocale: Localizations.localeOf(context),
-            )),
-            trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: () => _showStartupPageSelector(context),
-          ),
-          const Divider(height: 1),
-          ListTile(
-            leading: const Icon(Icons.image_outlined),
-            title: const Text('壁纸'),
-            subtitle: Text(ref.watch(customWallpaperPathProvider).isEmpty
-                ? '未设置'
-                : '已设置自定义壁纸'),
-            trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: () => _showWallpaperMenu(context),
-          ),
-          ListTile(
             leading: const Icon(Icons.cleaning_services_outlined),
             title: const Text('缓存管理'),
             subtitle: cacheSizeAsync.when(
