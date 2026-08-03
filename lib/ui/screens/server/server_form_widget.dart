@@ -22,6 +22,8 @@ class _LineField {
        urlController = TextEditingController(text: url ?? '');
 
   final String? id;
+  final String name;
+  final String remark;
   final TextEditingController nameController;
   final TextEditingController remarkController;
   final TextEditingController pathController;
