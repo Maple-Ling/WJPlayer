@@ -2802,7 +2802,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   /// 倍速→右侧倍速条；旋转→顶栏；截屏/锁定→左侧竖排；其余进「更多」。
   Widget _buildMediaInfoLine(MediaItem? item) {
     final coreLabel = _currentCore == 'exoPlayer' ? 'EXO' : 'MPV';
-    final format = item?.container ?? '—';
+    final format = '—';
     final bps = '—';
     final frame = '—';
 
