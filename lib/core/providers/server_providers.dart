@@ -65,6 +65,9 @@ class ServerConfig {
   // 决定选中本服务器后落到原 Emby 首页还是文件浏览页，以及用哪个 MediaSourceBackend。
   final SourceKind sourceKind;
 
+  // 是否在服务器管理页隐藏（连点三次“服务器”标题可临时显示，隐藏后不记播放记录）。
+  final bool hidden;
+
   ServerConfig({
     required this.id,
     required this.name,
@@ -80,6 +83,7 @@ class ServerConfig {
     this.allowInsecureTls = false,
     this.streamKind = StreamServerKind.unknown,
     this.sourceKind = SourceKind.emby,
+    this.hidden = false,
   });
 
   /// 是否文件浏览型源（非 Emby）。
@@ -107,6 +111,7 @@ class ServerConfig {
     bool? allowInsecureTls,
     StreamServerKind? streamKind,
     SourceKind? sourceKind,
+    bool? hidden,
   }) {
     return ServerConfig(
       id: id ?? this.id,
@@ -123,6 +128,7 @@ class ServerConfig {
       allowInsecureTls: allowInsecureTls ?? this.allowInsecureTls,
       streamKind: streamKind ?? this.streamKind,
       sourceKind: sourceKind ?? this.sourceKind,
+      hidden: hidden ?? this.hidden,
     );
   }
 }
@@ -424,6 +430,15 @@ class ServerListNotifier extends StateNotifier<List<ServerConfig>> {
     state = next;
     _saveServers();
   }
+
+  /// 隐藏 / 显示服务器（管理页三点菜单；隐藏后不记播放记录）。
+  void setHidden(String serverId, bool hidden) {
+    state = state.map((server) {
+      if (server.id == serverId) return server.copyWith(hidden: hidden);
+      return server;
+    }).toList();
+    _saveServers();
+  }
 }
 
 /// 序列化服务器配置。[includeSecrets] 为 false 时**不写入**密码/Token
@@ -453,6 +468,7 @@ Map<String, dynamic> _serverConfigToJson(ServerConfig server,
     'allowInsecureTls': server.allowInsecureTls,
     'streamKind': server.streamKind.name,
     'sourceKind': server.sourceKind.name,
+    'hidden': server.hidden,
   };
 }
 
@@ -499,6 +515,7 @@ ServerConfig _serverConfigFromJson(Map<String, dynamic> json) {
     streamKind: streamServerKindFromName(json['streamKind'] as String?),
     // 迁移：旧数据无此字段 → emby（保持原 Emby 行为）。
     sourceKind: sourceKindFromName(json['sourceKind'] as String?),
+    hidden: json['hidden'] as bool? ?? false,
   );
 }
 

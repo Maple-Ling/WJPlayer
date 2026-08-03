@@ -265,7 +265,20 @@ class _HistoryTile extends ConsumerWidget {
       AppToast.show(context, '该记录缺少可打开的资源标识', kind: AppToastKind.error);
       return;
     }
-    await context.push('/detail/$itemId');
+    // Emby 也走完整媒体详情页（顶部沉浸剧照 + 选集），而非旧的 /detail 单独页。
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => UnifiedMediaDetailScreen(
+        server: server,
+        entry: UnifiedMediaEntry(
+          id: itemId,
+          name: record.seriesTitle ?? record.title,
+          type: record.mediaKind == WatchHistoryMediaKind.episode
+              ? 'Episode'
+              : 'Movie',
+          posterUrl: record.sourcePosterUrl,
+        ),
+      ),
+    ));
   }
 
   Future<void> _resume(

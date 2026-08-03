@@ -37,7 +37,6 @@ class SettingsScreen extends ConsumerWidget {
             ]),
             _SettingsGroup(children: [
               _SettingsCard(icon: Icons.system_update_rounded, title: '检查更新', subtitle: '当前 $kCurrentAppVersion · 每 24 小时自动检查', onTap: () => _checkUpdate(context, ref), showDivider: false),
-              _SettingsCard(icon: Icons.sync_alt_rounded, title: '恢复同步记录', subtitle: '恢复播放进度', onTap: () => _showResumeSync(context)),
               _SettingsCard(icon: Icons.restore_page_rounded, title: '备份与恢复', subtitle: '备份或恢复设置', onTap: () => _showBackupRestore(context)),
               _SettingsCard(icon: Icons.devices_rounded, title: '设备迁移', subtitle: '迁移到新设备', onTap: () => _showConfigMigration(context), showDivider: false),
             ]),
@@ -72,9 +71,6 @@ class SettingsScreen extends ConsumerWidget {
   // 通用代理设置仅桌面端入口（移动端交给系统代理软件）。
   void _showNetworkSettings(BuildContext context) =>
       _openSubPage(context, const NetworkSettingsScreen());
-
-  void _showResumeSync(BuildContext context) =>
-      _openSubPage(context, const ResumeSyncScreen());
 
   void _showAggregation(BuildContext context) =>
       _openSubPage(context, const AggregationSettingsScreen());

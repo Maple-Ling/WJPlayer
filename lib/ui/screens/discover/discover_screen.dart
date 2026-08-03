@@ -73,12 +73,24 @@ class _SourceSelector extends StatelessWidget {
       menuChildren: [
         for (final value in ReviewSource.values)
           MenuItemButton(
-            leadingIcon: value == source
-                ? Icon(Icons.check_rounded,
-                    color: Theme.of(context).colorScheme.primary)
-                : const SizedBox(width: 24),
             onPressed: () => onChanged(value),
-            child: Text(value.label),
+            child: SizedBox(
+              width: 120,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (value == source) ...[
+                    const Text('·',
+                        style: TextStyle(
+                            color: Color(0xFF34C759),
+                            fontWeight: FontWeight.w900,
+                            fontSize: 20)),
+                    const SizedBox(width: 6),
+                  ],
+                  Text(value.label),
+                ],
+              ),
+            ),
           ),
       ],
     );

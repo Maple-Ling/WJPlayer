@@ -25,6 +25,9 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
   String _searchQuery = '';
   bool _isSearching = false;
   bool _gridLayout = false;
+  bool _revealHidden = false;
+  int _titleTapCount = 0;
+  DateTime? _lastTitleTap;
 
   @override
   void initState() {
@@ -39,10 +42,26 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
     });
   }
 
+  /// 连点三次顶部“服务器”标题：切换隐藏服务器显示/隐藏。
+  void _onTitleTap() {
+    final now = DateTime.now();
+    if (_lastTitleTap != null &&
+        now.difference(_lastTitleTap!).inMilliseconds > 700) {
+      _titleTapCount = 0;
+    }
+    _lastTitleTap = now;
+    _titleTapCount++;
+    if (_titleTapCount >= 3) {
+      _titleTapCount = 0;
+      setState(() => _revealHidden = !_revealHidden);
+      AppToast.show(context, _revealHidden ? '已显示隐藏服务器' : '已隐藏服务器');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final allServers = ref.watch(serverListProvider);
-    final servers = _searchQuery.isEmpty
+    var visible = _searchQuery.isEmpty
         ? allServers
         : allServers
             .where((s) =>
@@ -53,6 +72,12 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
                     .toLowerCase()
                     .contains(_searchQuery.toLowerCase()))
             .toList();
+    if (!_revealHidden) {
+      visible = visible.where((s) => !s.hidden).toList();
+    } else {
+      // 显示隐藏时，隐藏的服务器排到最后。
+      visible = [...visible.where((s) => !s.hidden), ...visible.where((s) => s.hidden)];
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -69,7 +94,10 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
                     color: Theme.of(context).textTheme.bodyLarge?.color),
                 onChanged: (value) => setState(() => _searchQuery = value),
               )
-            : const Text('服务器'),
+            : GestureDetector(
+                onTap: _onTitleTap,
+                child: const Text('服务器'),
+              ),
         actions: [
           if (!_isSearching)
             IconButton(
@@ -101,9 +129,9 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
           ],
         ],
       ),
-      body: servers.isEmpty
+      body: visible.isEmpty
           ? _buildEmptyState(context)
-          : _buildServerList(context, servers),
+          : _buildServerList(context, visible),
     );
   }
 
@@ -187,7 +215,8 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
     final destination = server.sourceKind == SourceKind.feiniu
         ? '/home'
         : (server.isFileBrowse ? '/browse' : '/home');
-    context.go(destination);
+    // push 而非 go：保留分支栈，从服务器首页返回时回到服务器管理页（而非跳转影视页）。
+    context.push(destination);
   }
 
   void _showServerMenu(
@@ -207,19 +236,25 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.route),
-              title: const Text('服务器线路'),
-              onTap: () {
-                Navigator.pop(context);
-                context.push('/lines/${server.id}');
-              },
-            ),
-            ListTile(
               leading: const Icon(Icons.notes),
               title: const Text('修改备注'),
               onTap: () {
                 Navigator.pop(context);
                 _showEditRemarkDialog(context, ref, server);
+              },
+            ),
+            ListTile(
+              leading: Icon(
+                  server.hidden
+                      ? Icons.visibility_rounded
+                      : Icons.visibility_off_rounded,
+                  color: const Color(0xFF5B8DEF)),
+              title: Text(server.hidden ? '显示卡片' : '隐藏卡片'),
+              onTap: () {
+                Navigator.pop(context);
+                ref
+                    .read(serverListProvider.notifier)
+                    .setHidden(server.id, !server.hidden);
               },
             ),
             ListTile(
@@ -606,7 +641,27 @@ class _ServerCard extends ConsumerWidget {
                       : const Icon(Icons.dns, color: Color(0xFF5B8DEF)),
                 ),
                 const SizedBox(width: 10),
-                Expanded(child: Text(server.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: compact ? 14 : 16, fontWeight: FontWeight.w600))),
+                Expanded(
+                  child: Row(children: [
+                    Flexible(
+                      child: Text(server.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: compact ? 14 : 16,
+                              fontWeight: FontWeight.w600)),
+                    ),
+                    if (server.hidden) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                            color: Color(0xFF5B8DEF), shape: BoxShape.circle),
+                      ),
+                    ],
+                  ]),
+                ),
                 IconButton(icon: const Icon(Icons.more_vert), padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 32, minHeight: 32), onPressed: onMoreTap),
               ]),
               const SizedBox(height: 8),

@@ -12,6 +12,8 @@ import '../../../core/providers/media_providers.dart';
 import '../../../core/providers/playback_providers.dart';
 import '../../../core/providers/server_card_stats_provider.dart';
 import '../../../core/providers/server_providers.dart';
+import '../../../core/providers/watch_history_providers.dart';
+import '../../../core/services/watch_history/watch_history_models.dart';
 import '../../../core/sources/media_source_backend.dart';
 import '../../../core/sources/source_playback.dart';
 import '../../../core/sources/unified_media_adapter.dart';
@@ -434,6 +436,10 @@ class _UnifiedMediaDetailScreenState
   ExternalMediaDetail? _externalDetail;
   Color? _backgroundColor;
   int _generation = 0;
+  int? _resumePositionTicks;
+  int? _resumeRuntimeTicks;
+  int _lastWatchedEpIndex = 0;
+  List<WatchHistoryRecord> _scopeRecords = const [];
   final Map<String, UnifiedMediaDetail> _detailCache = {};
   final Map<String, List<UnifiedMediaResource>> _resourceCache = {};
   final ScrollController _episodeController = ScrollController();
@@ -480,6 +486,11 @@ class _UnifiedMediaDetailScreenState
       _detailCache[cacheKey] = detail;
       _detail = detail;
       await _loadExternalDetail(detail.entry);
+      // 加载作用域内观看记录（Q4 续播进度 / Q5 自动滚动）
+      final scopeKey = buildWatchHistoryScopeKey(widget.server);
+      if (scopeKey != null) {
+        _scopeRecords = await ref.read(watchHistoryProvider).loadScope(scopeKey);
+      }
       if (detail.seasons.isNotEmpty) {
         final preferred = detail.seasons.where((season) {
           final id = season.id.contains(':')
@@ -555,10 +566,23 @@ class _UnifiedMediaDetailScreenState
         _episodes = episodes;
         _selectedEntry = selected;
         _loadingMedia = selected != null;
+        if (_scopeRecords.isNotEmpty) {
+          _lastWatchedEpIndex = _lastWatchedEpisodeIndex(episodes);
+        }
       });
       if (selected != null) {
         await _loadResources(selected);
         if (widget.autoPlay && mounted) await _play();
+      }
+      // Q5：进入详情后，自动无感滑动到最近播放的剧集（若有）。
+      if (_lastWatchedEpIndex > 0 && _episodeController.hasClients) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_episodeController.hasClients) return;
+          _episodeController.jumpTo(
+            (_lastWatchedEpIndex * 228.0)
+                .clamp(0.0, _episodeController.position.maxScrollExtent),
+          );
+        });
       }
     } catch (error) {
       if (!mounted) return;
@@ -575,6 +599,7 @@ class _UnifiedMediaDetailScreenState
     final cached = _resourceCache[entry.id];
     setState(() {
       _selectedEntry = entry;
+      _updateResume(entry);
       if (cached != null) {
         _resources = cached;
         _resourceIndex = 0;
@@ -615,6 +640,7 @@ class _UnifiedMediaDetailScreenState
         }
         _loadingMedia = false;
       });
+      if (_scopeRecords.isNotEmpty) _updateResume(entry);
     } catch (_) {
       if (!mounted || generation != _generation) return;
       setState(() {
@@ -649,6 +675,50 @@ class _UnifiedMediaDetailScreenState
     _subtitleIndex = subtitleMax < 0
         ? -1
         : _subtitleIndex.clamp(-1, subtitleMax).toInt();
+  }
+
+  void _updateResume(UnifiedMediaEntry entry) {
+    _resumePositionTicks = null;
+    _resumeRuntimeTicks = null;
+    for (final record in _scopeRecords) {
+      final matchId = record.sourceEntryId ?? record.lastEmbyItemId;
+      if (matchId == entry.id) {
+        _resumePositionTicks = record.lastPositionTicks;
+        _resumeRuntimeTicks = record.runTimeTicks;
+        return;
+      }
+    }
+  }
+
+  int _lastWatchedEpisodeIndex(List<UnifiedMediaEntry> episodes) {
+    // 记录按最近播放排序，取第一个命中本季的记录对应索引。
+    final wantedSeason = int.tryParse(_selectedSeasonId ?? '') ?? -1;
+    for (final record in _scopeRecords) {
+      final seasonMatch = wantedSeason < 0 ||
+          (record.seasonNumber ?? -1) == wantedSeason;
+      if (!seasonMatch || record.episodeNumber == null) continue;
+      for (var i = 0; i < episodes.length; i++) {
+        final ep = episodes[i];
+        final epNum = ep.mediaItem?.indexNumber ?? ep.indexNumber;
+        if (epNum == record.episodeNumber) return i;
+      }
+    }
+    return 0;
+  }
+
+  String _resumeLabel() {    final ticks = _resumePositionTicks;
+    final runtime = _resumeRuntimeTicks;
+    if (ticks == null || ticks <= 0) return '播放';
+    if (runtime != null && runtime > 0 && ticks >= runtime) return '重新播放';
+    final seconds = ticks ~/ 10000000;
+    if (seconds <= 0) return '播放';
+    final h = seconds ~/ 3600;
+    final m = (seconds % 3600) ~/ 60;
+    final s = seconds % 60;
+    String two(int v) => v.toString().padLeft(2, '0');
+    return h > 0
+        ? '续播 ${two(h)}:${two(m)}:${two(s)}'
+        : '续播 ${two(m)}:${two(s)}';
   }
 
   Future<void> _play() async {
@@ -710,16 +780,19 @@ class _UnifiedMediaDetailScreenState
               pinned: true,
               stretch: true,
               backgroundColor: Colors.transparent,
+              leading: _roundButton(
+                  Icons.arrow_back_rounded, () => Navigator.of(context).maybePop()),
               actions: [
-                Padding(
-                  padding: const EdgeInsets.only(right: 12),
-                  child: Center(
-                    child: SelectedRatingBadge(
-                      item: entry.ratingItem,
-                      compact: false,
-                    ),
+                Center(
+                  child: SelectedRatingBadge(
+                    item: entry.ratingItem,
+                    compact: false,
                   ),
                 ),
+                if (_externalDetail != null)
+                  _roundButton(Icons.more_vert_rounded,
+                      () => _showLinksSheet(_externalDetail!)),
+                const SizedBox(width: 6),
               ],
               flexibleSpace: FlexibleSpaceBar(
                 collapseMode: CollapseMode.parallax,
@@ -736,50 +809,59 @@ class _UnifiedMediaDetailScreenState
                   child: Align(
                     alignment: Alignment.bottomCenter,
                     child: Padding(
-                      padding: const EdgeInsets.all(28),
-                      child: Column(children: [
-                      if (_externalDetail?.logoUrl?.isNotEmpty == true)
-                        SizedBox(
-                          width: 250,
-                          height: 90,
-                          child: MediaImage(
-                            imageUrl: _externalDetail!.logoUrl,
-                            fit: BoxFit.contain,
-                          ),
-                        )
-                      else
-                        Text(entry.name,
-                          textAlign: TextAlign.center,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 29,
-                              fontWeight: FontWeight.w900,
-                              color: Color(0xFF252525),
-                              shadows: [
-                                Shadow(color: Colors.white54, blurRadius: 8)
-                              ])),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        alignment: WrapAlignment.center,
-                        spacing: 10,
-                        children: [
-                          if (entry.rating != null)
-                            Text('⭐ ${entry.rating!.toStringAsFixed(1)}',
-                                style: const TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w800)),
-                          if (entry.year != null)
-                            Text('${entry.year}',
-                                style: const TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w800)),
-                          Text(entry.isSeries ? '电视剧' : '电影',
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 28, vertical: 28),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        if (_externalDetail?.logoUrl?.isNotEmpty == true)
+                          SizedBox(
+                            width: 250,
+                            height: 90,
+                            child: MediaImage(
+                              imageUrl: _externalDetail!.logoUrl,
+                              fit: BoxFit.contain,
+                            ),
+                          )
+                        else
+                          Text(entry.name,
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w800)),
+                                  fontSize: 29,
+                                  fontWeight: FontWeight.w900,
+                                  color: Color(0xFF252525),
+                                  shadows: [
+                                    Shadow(color: Colors.white70, blurRadius: 10)
+                                  ])),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          alignment: WrapAlignment.center,
+                          spacing: 10,
+                          runSpacing: 6,
+                          children: [
+                            if ((_externalDetail?.rating ?? entry.rating) != null)
+                              Text(
+                                  '⭐ ${(_externalDetail?.rating ?? entry.rating)!.toStringAsFixed(1)}',
+                                  style: _heroMeta),
+                            if ((_externalDetail?.year ??
+                                    entry.year?.toString()) !=
+                                null)
+                              Text(
+                                  '${_externalDetail?.year ?? entry.year}',
+                                  style: _heroMeta),
+                            if (_externalDetail?.numberOfSeasons != null)
+                              Text('共${_externalDetail!.numberOfSeasons}季',
+                                  style: _heroMeta)
+                            else
+                              Text(entry.isSeries ? '电视剧' : '电影',
+                                  style: _heroMeta),
+                          ],
+                        ),
+                        if (_externalDetail?.genres.isNotEmpty == true) ...[
+                          const SizedBox(height: 6),
+                          Text(_externalDetail!.genres.join(' · '),
+                              style: _heroMeta, textAlign: TextAlign.center),
                         ],
-                      ),
                       ]),
                     ),
                   ),
@@ -804,7 +886,10 @@ class _UnifiedMediaDetailScreenState
                           ? null
                           : _play,
                       icon: const Icon(Icons.play_arrow_rounded, size: 23),
-                      label: Text(_selectedEntry == null ? '暂无资源' : '播放',
+                      label: Text(
+                          _selectedEntry == null
+                              ? '暂无资源'
+                              : _resumeLabel(),
                           style: const TextStyle(
                               fontSize: 12, fontWeight: FontWeight.w800)),
                     ),
@@ -1186,10 +1271,13 @@ class _UnifiedMediaDetailScreenState
               codec: video['codec_name']?.toString(),
               size: resource.size,
               bitrate: (video['bitrate'] as num?)?.toInt(),
-              onTap: () => setState(() {
-                _resourceIndex = index;
-                _normalizeTracks();
-              }),
+              onTap: () {
+                setState(() {
+                  _resourceIndex = index;
+                  _normalizeTracks();
+                });
+                _play();
+              },
             ),
           );
         },
@@ -1275,6 +1363,44 @@ class _UnifiedMediaDetailScreenState
       ],
     );
   }
+
+  static const TextStyle _heroMeta =
+      TextStyle(fontSize: 15, fontWeight: FontWeight.w800);
+
+  Widget _roundButton(IconData icon, VoidCallback onTap) => Padding(
+        padding: const EdgeInsets.all(6),
+        child: Material(
+          color: Colors.black26,
+          shape: const CircleBorder(),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Icon(icon, size: 20, color: Colors.white),
+            ),
+          ),
+        ),
+      );
+
+  void _showLinksSheet(ExternalMediaDetail detail) => showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        builder: (_) => Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('外部链接',
+                  style:
+                      TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 16),
+              _buildExternalLinks(detail),
+            ],
+          ),
+        ),
+      );
 
   Widget _buildCompanies(List<ExternalCompany> companies) => SizedBox(
         height: 54,

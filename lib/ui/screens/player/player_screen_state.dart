@@ -728,6 +728,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   Future<void> _writeSourceWatchHistory(SourcePlayback sp,
       {bool force = false}) async {
+    if (sp.server.hidden) return; // 隐藏服务器不记播放记录
     final scopeKey = buildWatchHistoryScopeKey(sp.server);
     final duration = _playerService.duration;
     if (scopeKey == null || duration <= Duration.zero || !mounted) return;
@@ -2819,7 +2820,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }) async {
     // 播放器进度/停止回调可能在播放页销毁后仍触发，此时严禁再用 ref。
     if (!mounted) return;
-    final scopeKey = buildWatchHistoryScopeKey(ref.read(currentServerProvider));
+    final current = ref.read(currentServerProvider);
+    if (current?.hidden == true) return; // 隐藏服务器不记播放记录
+    final scopeKey = buildWatchHistoryScopeKey(current);
     if (scopeKey == null) {
       return;
     }

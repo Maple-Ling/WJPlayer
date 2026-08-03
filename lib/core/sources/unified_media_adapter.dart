@@ -18,6 +18,7 @@ class UnifiedMediaEntry {
     this.progress,
     this.mediaItem,
     this.sourceEntry,
+    this.indexNumber,
   });
 
   final String id;
@@ -33,6 +34,7 @@ class UnifiedMediaEntry {
   final double? progress;
   final MediaItem? mediaItem;
   final SourceEntry? sourceEntry;
+  final int? indexNumber;
 
   bool get isSeries =>
       type.toLowerCase() == 'series' || type.toLowerCase() == 'tv';
@@ -47,6 +49,23 @@ class UnifiedMediaEntry {
         type: isSeries ? 'Series' : 'Movie',
         providerIds: providerIds,
         productionYear: year,
+      );
+
+  UnifiedMediaEntry copyWith({int? indexNumber}) => UnifiedMediaEntry(
+        id: id,
+        name: name,
+        type: type,
+        posterUrl: posterUrl,
+        backdropUrl: backdropUrl,
+        imageHeaders: imageHeaders,
+        year: year,
+        rating: rating,
+        overview: overview,
+        providerIds: providerIds,
+        progress: progress,
+        mediaItem: mediaItem,
+        sourceEntry: sourceEntry,
+        indexNumber: indexNumber ?? this.indexNumber,
       );
 }
 
@@ -240,7 +259,7 @@ class EmbyUnifiedMediaAdapter implements UnifiedMediaAdapter {
         indexNumber: episode.indexNumber,
         mediaType: 'Video',
       );
-      return _entry(media);
+      return _entry(media).copyWith(indexNumber: episode.indexNumber);
     }).toList();
   }
 

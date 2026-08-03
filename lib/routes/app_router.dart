@@ -24,7 +24,6 @@ import '../ui/screens/search/search_screen.dart';
 import '../ui/screens/server/add_server_screen.dart';
 import '../ui/screens/server/edit_server_screen.dart';
 import '../ui/screens/server/icon_select_screen.dart';
-import '../ui/screens/server/server_lines_screen.dart';
 import '../ui/screens/server/server_list_screen.dart';
 import '../ui/screens/settings/settings_screen.dart';
 import '../core/sources/anirss/anirss_nav_args.dart';
@@ -146,16 +145,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                 path: '/edit/:serverId',
                 pageBuilder: (context, state) => _buildHorizontalPage(
                   child: EditServerScreen(
-                    serverId: state.pathParameters['serverId']!,
-                  ),
-                  state: state,
-                  direction: _PageTransitionDirection.forward,
-                ),
-              ),
-              GoRoute(
-                path: '/lines/:serverId',
-                pageBuilder: (context, state) => _buildHorizontalPage(
-                  child: ServerLinesScreen(
                     serverId: state.pathParameters['serverId']!,
                   ),
                   state: state,
@@ -429,8 +418,14 @@ class _MainShellState extends State<MainShell> {
   final ValueNotifier<double> _tabOpacity = ValueNotifier<double>(1.0);
   DateTime? _lastBackPress;
 
+  // 分支内 push 的页面（如从服务器管理页进入的 /home、/edit、/add 等）先逐级返回；
   // 分支根返回统一回到默认“影视”；影视根两次返回退出。
   void _handleShellPop() {
+    final router = GoRouter.of(context);
+    if (router.canPop()) {
+      router.pop();
+      return;
+    }
     if (widget.navigationShell.currentIndex != 0) {
       widget.navigationShell.goBranch(0);
       return;
