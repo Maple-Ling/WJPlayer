@@ -2590,7 +2590,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   const SizedBox(width: 6),
                   Flexible(
                     child: Text(
-                      '${server.name}${server.activeLineName.isNotEmpty ? ' · ${server.activeLineName}' : ''}',
+                      '${server.name}${server.lines.isNotEmpty ? ' · ${server.lines[server.activeLineIndex.clamp(0, server.lines.length - 1)].name}' : ''}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -2801,26 +2801,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   /// 底栏：左下=上一集/下一集，右下=弹幕/字幕/音轨/选集。
   /// 倍速→右侧倍速条；旋转→顶栏；截屏/锁定→左侧竖排；其余进「更多」。
   Widget _buildMediaInfoLine(MediaItem? item) {
-    final stats = _playerService.stats;
-    String? v(String key) => stats?[key];
-    String bitrate(String? val) {
-      final n = double.tryParse(val ?? '');
-      if (n == null || n <= 0) return '—';
-      if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(0)}Mbps';
-      if (n >= 1000) return '${(n / 1000).toStringAsFixed(0)}kbps';
-      return '${n.toStringAsFixed(0)}bps';
-    }
-
-    String fps(String? val) {
-      final n = double.tryParse(val ?? '');
-      return n == null || n <= 0 ? '—' : '${n.toStringAsFixed(0)}fps';
-    }
-
     final coreLabel = _currentCore == 'exoPlayer' ? 'EXO' : 'MPV';
-    final format = v('video-codec') ?? '—';
-    final bps = bitrate(v('video-bitrate') ??
-        v('current-tracks/video/default-bitrate'));
-    final frame = fps(v('fps') ?? v('container-fps'));
+    final format = item?.container ?? '—';
+    final bps = '—';
+    final frame = '—';
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 0, 24, 2),
@@ -2956,7 +2940,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 itemCount: matches.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 12),
+                separatorBuilder: (_, __) => const SizedBox(width: 12),
                 itemBuilder: (context, index) {
                   final match = matches[index];
                   final server = ref
@@ -3366,7 +3350,20 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     );
   }
 
-  void _toggleRotation() => _toggleOrientation();
+  void _toggleRotation() {
+    final orientation = MediaQuery.of(context).orientation;
+    if (orientation == Orientation.portrait) {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    } else {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ]);
+    }
+  }
 
   Future<void> _takeScreenshot() async {
     try {
