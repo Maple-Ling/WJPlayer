@@ -1,0 +1,122 @@
+name: wjplayer
+description: WJPlayer - Emby第三方客户端移动端
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  
+  # 状态管理
+  flutter_riverpod: ^2.5.1
+  
+  # 路由
+  go_router: ^14.0.0
+  
+  # 网络
+  dio: ^5.4.0
+  url_launcher: ^6.3.1
+  crypto: ^3.0.3
+  # 凭据安全：服务器密码/Token 用 OS 钥匙串加密落盘（H11）
+  flutter_secure_storage: ^9.2.2
+  # 备份口令加密（H12）：PBKDF2 + AES-GCM，纯 Dart 跨平台
+  cryptography: ^2.7.0
+  # SOCKS4/5 代理支持（Dart HttpClient 原生只支持 HTTP 代理）
+  socks5_proxy: ^1.0.4
+  # WJPlayer 仅保留 Android 手机端网络能力。
+  
+  # 图片加载
+  extended_image: ^8.2.0
+  http_client_helper: ^3.0.0
+  
+  # 本地存储
+  shared_preferences: ^2.2.2
+
+  # 二创版默认不接入任何第三方遥测服务。
+
+  # 原生播放器
+  # media_kit: 跨平台视频播放器（基于 libmpv 的封装库）
+  # 注意：PC 端 PGS/SUP 渲染依赖 libmpv 是否包含 hdmv_pgs_subtitle 解码器；
+  #       media-kit 的 Windows 预编译包默认不含该解码器，需额外替换 libmpv-2.dll。
+  media_kit: ^1.2.6
+  media_kit_video: ^2.0.1
+  media_kit_libs_video: ^1.0.7
+
+  # 工具
+  ffi: ^2.2.0
+  path_provider: ^2.1.2
+  # 便携化:直接重定向 PathProviderPlatform.instance(见 core/services/portable_paths.dart)
+  path_provider_platform_interface: ^2.1.0
+  path: ^1.9.0
+  uuid: ^4.3.3
+  win32: ^5.15.0
+  # 应用内更新：下载 APK 后调起系统安装器（Android/TV 覆盖更新）
+  open_filex: ^4.5.0
+  
+  # UI增强
+  cupertino_icons: ^1.0.6
+
+  # 局域网扫码遥控：生成二维码（内置 HTTP 服务用 dart:io，无需额外依赖）
+  qr_flutter: ^4.1.0
+  # 配置迁移：移动端相机扫码导入设备间的服务器配置（仅 Android/iOS UI 使用）
+  mobile_scanner: ^5.2.3
+
+  # 动效（统一三端动画：入场/错峰/shimmer/淡入缩放）
+  flutter_animate: ^4.5.0
+  
+  # 颜色提取
+  palette_generator: ^0.3.3+7
+
+  # 投屏使用纯HTTP扫描（无需原生插件）
+
+  # 下载：自建多线程(Range 分段)下载引擎，见 lib/core/services/download/
+
+  # 图片/文件选择
+  image_picker: ^1.1.2
+  file_picker: ^8.1.7
+  
+  # XML解析 (DLNA设备描述)
+  xml: ^6.5.0
+  # fluent_ui / macos_ui / window_manager 随 lib/desktop 一并移除:
+  # PC 已迁到 Rust+React+Tauri,苹果全线不做,此三者已零引用。
+
+  # 插件系统：QuickJS 脚本引擎（每个插件独立 isolate，崩溃/超时隔离）
+  # 使用仓库内 vendored 版本：已打 Dart 3 / ffi 2.x 兼容补丁（见 third_party/flutter_qjs）。
+  flutter_qjs:
+    path: third_party/flutter_qjs
+  # 插件系统：.lpk 打包解压（zip）
+  archive: ^3.6.1
+  app_links: ^7.1.2
+  # 筛选弹窗按拼音首字母排序（中文转拼音，纯 Dart 离线）
+  lpinyin: ^2.0.3
+
+  # 统一三端组件风格（腾讯 TDesign）。使用 vendored 版本：已打补丁修复
+  # td_icons.dart 中 `extends IconData`（新版 Flutter 把 IconData 改为 final class，
+  # 0.2.7 上游未修，会编译失败）。改成纯 IconData 常量，见 third_party/tdesign_flutter。
+  tdesign_flutter:
+    path: third_party/tdesign_flutter
+dependency_overrides:
+  # vendored 的 third_party/flutter_qjs 已放宽 ffi 约束为 >=1.0.0 <3.0.0，
+  # 与项目 ffi ^2.2.0 兼容，无需 override。
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/images/
+    - assets/icons/
+    - assets/mpv/shaders/
+
+# WJPlayer 只提供 Android arm64-v8a 手机构建。
+
+

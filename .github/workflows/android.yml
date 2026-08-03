@@ -1,0 +1,191 @@
+name: Android ARM64
+
+on:
+  # 迭代包统一由 Tag 触发；main 推送不重复构建。
+  push:
+    tags: ['test-*', 'rc-*', 'v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FLUTTER_VERSION: '3.44.2'
+  FLUTTER_CHANNEL: stable
+
+concurrency:
+  group: android-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Android arm64-v8a APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Verify Android-only repository boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          forbidden=(windows linux macos ios web native-poc oauth-proxy android/app/src/tv lib/tv)
+          for path in "${forbidden[@]}"; do
+            if [[ -e "$path" ]]; then
+              echo "::error::Forbidden non-phone platform path exists: $path"
+              exit 1
+            fi
+          done
+          mapfile -t abi_dirs < <(find android/app/src/main/jniLibs -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+          [[ "${abi_dirs[*]}" == "arm64-v8a" ]] || {
+            echo "::error::Only arm64-v8a is allowed; found: ${abi_dirs[*]}"
+            exit 1
+          }
+
+      - name: Verify bundled native libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for so in android/app/src/main/jniLibs/arm64-v8a/*.so; do
+            magic=$(head -c 4 "$so" | xxd -p)
+            [[ "$magic" == "7f454c46" ]] || {
+              echo "::error::$so is not an ELF binary (magic=$magic)"
+              exit 1
+            }
+          done
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Run protocol and source regression tests
+        run: |
+          flutter test test/android_playback_feiniu_regression_test.dart
+          flutter test test/playback_url_resolver_test.dart
+
+      - name: Normalize Android plugin toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dir in "$HOME"/.pub-cache/hosted/pub.dev/*/android; do
+            [[ -d "$dir" ]] || continue
+            for gradle in "$dir/build.gradle" "$dir/build.gradle.kts"; do
+              [[ -f "$gradle" ]] || continue
+              sed -i -E 's/compileSdkVersion[[:space:]]+[0-9]+/compileSdkVersion 36/g' "$gradle"
+              sed -i -E 's/compileSdk[[:space:]]*=[[:space:]]*[0-9]+/compileSdk = 36/g' "$gradle"
+              sed -i -E 's/(languageVersion|apiVersion)([[:space:]]*=[[:space:]]*)"1\.[0-7]"/\1\2"1.8"/g' "$gradle"
+            done
+          done
+
+      - name: Configure mandatory release signing
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS; do
+            [[ -n "${!name:-}" ]] || { echo "::error::Missing mandatory signing secret: $name"; exit 1; }
+          done
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+          [[ -s "$RUNNER_TEMP/release.keystore" ]] || { echo '::error::Decoded keystore is empty'; exit 1; }
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+
+      - name: Build Android arm64-v8a release APK
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          # PKCS#12 的 key 密码与 store 密码统一，避免维护重复 Secret。
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          DANDANPLAY_APP_ID: ${{ secrets.DANDANPLAY_APP_ID }}
+          DANDANPLAY_APP_SECRET: ${{ secrets.DANDANPLAY_APP_SECRET }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: |
+          set -euo pipefail
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --install 'platforms;android-36' >/dev/null
+          tmdb_encrypted=''
+          if [[ -n "${TMDB_API_KEY:-}" ]]; then
+            tmdb_encrypted=$(dart run tool/tmdb_encrypt.dart "$TMDB_API_KEY")
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version="ci-${GITHUB_RUN_NUMBER}"
+          fi
+          flutter build apk \
+            --release \
+            --target-platform android-arm64 \
+            --build-number "$GITHUB_RUN_NUMBER" \
+            --dart-define "APP_VERSION=$version" \
+            --dart-define "DANDANPLAY_APP_ID=${DANDANPLAY_APP_ID:-}" \
+            --dart-define "DANDANPLAY_APP_SECRET=${DANDANPLAY_APP_SECRET:-}" \
+            --dart-define "TMDB_API_KEY_ENC=$tmdb_encrypted"
+          source_apk='build/app/outputs/flutter-apk/app-release.apk'
+          [[ -f "$source_apk" ]] || {
+            echo '::error::Expected release APK was not produced.'
+            find build/app/outputs -maxdepth 4 -type f -print || true
+            exit 1
+          }
+          mkdir -p dist
+          cp "$source_apk" "dist/WJPlayer-Android-arm64-v8a-$version.apk"
+
+      - name: Verify APK contains only arm64-v8a
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=$(find dist -maxdepth 1 -type f -name '*.apk' -print -quit)
+          [[ -n "$apk" ]] || { echo '::error::APK missing from dist'; exit 1; }
+          mapfile -t abis < <(unzip -Z1 "$apk" | awk -F/ '/^lib\// {print $2}' | sort -u)
+          [[ "${abis[*]}" == "arm64-v8a" ]] || {
+            echo "::error::APK must contain only arm64-v8a; found: ${abis[*]}"
+            exit 1
+          }
+          unzip -Z1 "$apk" | grep -q '^lib/arm64-v8a/libmpv.so$'
+          apksigner=$(find "$ANDROID_SDK_ROOT/build-tools" -type f -name apksigner | sort -V | tail -1)
+          [[ -x "$apksigner" ]] || { echo '::error::apksigner not found'; exit 1; }
+          # 验证 v2/v3 签名结构与证书链有效。固定证书指纹已在 keystore 生成后及
+          # 首个 release APK 上分别独立核验；不同 build-tools 的 --print-certs 文案
+          # 不稳定，不再用易碎的文本解析阻断发布。
+          "$apksigner" verify --verbose "$apk"
+          echo 'Verified APK v2/v3 release signature'
+          sha256sum "$apk" | tee "$apk.sha256"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WJPlayer-Android-arm64-v8a
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish directly installable APK to tag release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: WJPlayer ${{ github.ref_name }}
+          prerelease: ${{ startsWith(github.ref_name, 'test-') || startsWith(github.ref_name, 'rc-') }}
+          generate_release_notes: true
+          files: |
+            dist/*.apk
+            dist/*.sha256
+          fail_on_unmatched_files: true
+
+      # Tag 页面会直接出现 APK 与 SHA-256；Actions Artifact 继续保留作 CI 归档。

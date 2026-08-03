@@ -1,0 +1,600 @@
+part of 'settings_screen.dart';
+
+class GeneralSettingsScreen extends ConsumerStatefulWidget {
+  const GeneralSettingsScreen({super.key});
+
+  @override
+  ConsumerState<GeneralSettingsScreen> createState() =>
+      _GeneralSettingsScreenState();
+}
+
+class _GeneralSettingsScreenState extends ConsumerState<GeneralSettingsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() {
+      _loadCacheSettings();
+      ref.read(cacheSizeProvider);
+    });
+  }
+
+  Future<void> _loadCacheSettings() async {
+    final expiryDays = await CacheService.getImageCacheExpiryDays();
+    final maxSizeMB = await CacheService.getVideoCacheMaxSizeMB();
+    if (mounted) {
+      ref.read(imageCacheExpiryDaysProvider.notifier).state = expiryDays;
+      ref.read(videoCacheMaxSizeMBProvider.notifier).state = maxSizeMB;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cacheSizeAsync = ref.watch(cacheSizeProvider);
+    return Scaffold(
+      backgroundColor: Theme.of(context).brightness == Brightness.light
+          ? AppColors.lightBackground
+          : AppColors.darkBackground,
+      appBar: AppBar(title: const Text('通用设置')),
+      body: ListView(
+        padding: const EdgeInsets.only(bottom: 120),
+        children: [
+          ListTile(
+            leading: const Icon(Icons.palette_outlined),
+            title: const Text('外观'),
+            subtitle: const Text('浅色、深色或跟随系统；壁纸与主题色'),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () => _showAppearanceMenu(context),
+          ),
+          ListTile(
+            leading: const Icon(Icons.language_rounded),
+            title: const Text('语言'),
+            subtitle: Text(localizedLocaleLabel(
+              ref.watch(localeProvider),
+              displayLocale: Localizations.localeOf(context),
+            )),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () => _showLanguageSelector(context),
+          ),
+          ListTile(
+            leading: const Icon(Icons.rocket_launch_outlined),
+            title: const Text('启动页'),
+            subtitle: Text(startupPageLabel(
+              ref.watch(startupPageProvider),
+              displayLocale: Localizations.localeOf(context),
+            )),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () => _showStartupPageSelector(context),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.image_outlined),
+            title: const Text('壁纸'),
+            subtitle: Text(ref.watch(customWallpaperPathProvider).isEmpty
+                ? '未设置'
+                : '已设置自定义壁纸'),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () => _showWallpaperMenu(context),
+          ),
+          ListTile(
+            leading: const Icon(Icons.cleaning_services_outlined),
+            title: const Text('缓存管理'),
+            subtitle: cacheSizeAsync.when(
+              data: (info) => Text('当前占用 ${info.totalFormatted}'),
+              loading: () => const Text('计算中…'),
+              error: (_, __) => const Text('获取失败'),
+            ),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () => _showCacheManagement(context),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAppearanceMenu(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Wrap(children: [
+          ListTile(
+            leading: const Icon(Icons.brightness_6_outlined),
+            title: const Text('明暗模式'),
+            onTap: () {
+              Navigator.pop(ctx);
+              _showThemeSelector(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.color_lens_outlined),
+            title: const Text('主题颜色'),
+            onTap: () {
+              Navigator.pop(ctx);
+              _showAccentColorSelector(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.wallpaper_outlined),
+            title: const Text('壁纸'),
+            onTap: () {
+              Navigator.pop(ctx);
+              _showWallpaperMenu(context);
+            },
+          ),
+        ]),
+      ),
+    );
+  }
+
+  void _showAccentColorSelector(BuildContext context) {
+    final current = ref.read(accentColorProvider);
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('主题颜色'),
+        content: Wrap(
+          spacing: 14,
+          runSpacing: 14,
+          children: [
+            for (final value in appearanceAccentColors)
+              InkWell(
+                onTap: () {
+                  ref.read(accentColorProvider.notifier).state = Color(value);
+                  Navigator.pop(ctx);
+                },
+                borderRadius: BorderRadius.circular(24),
+                child: CircleAvatar(
+                  radius: 22,
+                  backgroundColor: Color(value),
+                  child: current.value == Color(value).value
+                      ? const Icon(Icons.check, color: Colors.white)
+                      : null,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showWallpaperMenu(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Wrap(children: [
+          ListTile(
+            leading: const Icon(Icons.add_photo_alternate_outlined),
+            title: const Text('选择壁纸'),
+            onTap: () {
+              Navigator.pop(ctx);
+              _pickAndCropWallpaper(context);
+            },
+          ),
+          if (ref.read(customWallpaperPathProvider).isNotEmpty)
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('移除壁纸'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _clearWallpaper(context);
+              },
+            ),
+        ]),
+      ),
+    );
+  }
+
+  void _showCacheManagement(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Wrap(children: [
+          ListTile(
+            leading: const Icon(Icons.image_outlined),
+            title: const Text('清除图片缓存'),
+            onTap: () {
+              Navigator.pop(ctx);
+              _clearImageCache(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.video_library_outlined),
+            title: const Text('清除视频播放缓存'),
+            onTap: () {
+              Navigator.pop(ctx);
+              _clearVideoCache(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.delete_sweep_outlined),
+            title: const Text('清除全部缓存'),
+            onTap: () {
+              Navigator.pop(ctx);
+              _clearAllCache(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.tune_rounded),
+            title: const Text('缓存参数'),
+            onTap: () {
+              Navigator.pop(ctx);
+              showModalBottomSheet<void>(
+                context: context,
+                builder: (inner) => SafeArea(
+                  child: Wrap(children: [
+                    ListTile(
+                      title: const Text('图片缓存过期天数'),
+                      trailing: Text('${ref.read(imageCacheExpiryDaysProvider)} 天'),
+                      onTap: () {
+                        Navigator.pop(inner);
+                        _showImageCacheExpirySelector(context);
+                      },
+                    ),
+                    ListTile(
+                      title: const Text('视频播放缓存上限'),
+                      trailing: Text(CacheService.formatSizeMB(ref.read(videoCacheMaxSizeMBProvider))),
+                      onTap: () {
+                        Navigator.pop(inner);
+                        _showVideoCacheMaxSizeSelector(context);
+                      },
+                    ),
+                  ]),
+                ),
+              );
+            },
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _clearImageCache(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清除图片缓存'),
+        content: const Text('确定清除所有图片磁盘缓存？下次加载需重新下载。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('清除')),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await CacheService.clearAllImageCache();
+      if (!mounted) return;
+      ref.invalidate(cacheSizeProvider);
+      AppToast.show(this.context, '图片缓存已清除');
+    }
+  }
+
+  Future<void> _clearVideoCache(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清除视频播放缓存'),
+        content: const Text('确定清除视频播放的磁盘缓存？只影响临时播放缓冲，不影响已下载的影片。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('清除')),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await CacheService.clearVideoCache();
+      if (!mounted) return;
+      ref.invalidate(cacheSizeProvider);
+      AppToast.show(this.context, '视频缓存已清除');
+    }
+  }
+
+  Future<void> _clearAllCache(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清除全部缓存'),
+        content: const Text('确定清除所有图片和视频缓存？此操作不可恢复。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('全部清除')),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await CacheService.clearAllCache();
+      if (!mounted) return;
+      ref.invalidate(cacheSizeProvider);
+      AppToast.show(this.context, '所有缓存已清除');
+    }
+  }
+
+  void _showImageCacheExpirySelector(BuildContext context) {
+    final days = [7, 14, 30, 60, 90];
+    final current = ref.read(imageCacheExpiryDaysProvider);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('图片缓存过期天数'),
+        content: RadioGroup<int>(
+          groupValue: current,
+          onChanged: (value) async {
+            if (value != null) {
+              ref.read(imageCacheExpiryDaysProvider.notifier).state = value;
+              await CacheService.setImageCacheExpiryDays(value);
+            }
+            if (ctx.mounted) {
+              Navigator.pop(ctx);
+            }
+          },
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: days
+                .map((d) => RadioListTile<int>(
+                      title: Text('$d 天'),
+                      value: d,
+                    ))
+                .toList(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showVideoCacheMaxSizeSelector(BuildContext context) {
+    const minMB = CacheService.videoCacheMinMB; // 300
+    const maxMB = CacheService.videoCacheMaxMB; // 8192
+    var value =
+        ref.read(videoCacheMaxSizeMBProvider).clamp(minMB, maxMB).toDouble();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('视频播放缓存上限'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                CacheService.formatSizeMB(value.round()),
+                textAlign: TextAlign.center,
+                style:
+                    const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              Slider(
+                min: minMB.toDouble(),
+                max: maxMB.toDouble(),
+                // 约 100MB 一档
+                divisions: ((maxMB - minMB) / 100).round(),
+                value: value,
+                label: CacheService.formatSizeMB(value.round()),
+                onChanged: (v) => setLocal(() => value = v),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  '缓存写入磁盘（不占内存）。越大缓冲越多、拖动/弱网更稳，但占用磁盘越多。',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final mb = value.round();
+                ref.read(videoCacheMaxSizeMBProvider.notifier).state = mb;
+                await CacheService.setVideoCacheMaxSizeMB(mb);
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: const Text('确定'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showLanguageSelector(BuildContext context) {
+    final current = ref.read(localeProvider);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('语言'),
+        content: RadioGroup<String>(
+          groupValue: current?.toLanguageTag().replaceAll('-', '_') ?? 'system',
+          onChanged: (value) {
+            if (value == null) {
+              Navigator.pop(context);
+              return;
+            }
+            ref.read(localeProvider.notifier).state = switch (value) {
+              'zh_CN' => const Locale('zh', 'CN'),
+              'en' => const Locale('en'),
+              _ => null,
+            };
+            Navigator.pop(context);
+          },
+          child: const Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RadioListTile<String>(
+                title: Text('跟随系统'),
+                value: 'system',
+              ),
+              RadioListTile<String>(
+                title: Text('简体中文'),
+                value: 'zh_CN',
+              ),
+              RadioListTile<String>(
+                title: Text('English'),
+                value: 'en',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showStartupPageSelector(BuildContext context) {
+    final current = ref.read(startupPageProvider);
+    final displayLocale =
+        ref.read(localeProvider) ?? Localizations.localeOf(context);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('启动页'),
+        content: RadioGroup<StartupPageOption>(
+          groupValue: current,
+          onChanged: (value) {
+            if (value != null) {
+              ref.read(startupPageProvider.notifier).state = value;
+            }
+            Navigator.pop(context);
+          },
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RadioListTile<StartupPageOption>(
+                title: Text(startupPageLabel(StartupPageOption.home,
+                    displayLocale: displayLocale)),
+                value: StartupPageOption.home,
+              ),
+              RadioListTile<StartupPageOption>(
+                title: Text(startupPageLabel(StartupPageOption.servers,
+                    displayLocale: displayLocale)),
+                value: StartupPageOption.servers,
+              ),
+              RadioListTile<StartupPageOption>(
+                title: Text(startupPageLabel(StartupPageOption.resume,
+                    displayLocale: displayLocale)),
+                value: StartupPageOption.resume,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showSearchPrioritySelector(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('聚合搜索优先级'),
+        content: RadioGroup<String>(
+          groupValue: 'name',
+          onChanged: (_) => Navigator.pop(context),
+          child: const Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RadioListTile<String>(
+                title: Text('服务器名称优先'),
+                value: 'name',
+              ),
+              RadioListTile<String>(
+                title: Text('响应速度优先'),
+                value: 'speed',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 选择图片 → 进入裁剪页 → 保存为软件背景壁纸。
+  Future<void> _pickAndCropWallpaper(BuildContext context) async {
+    final result = await FilePicker.platform.pickFiles(
+      dialogTitle: '选择壁纸图片',
+      allowMultiple: false,
+      type: FileType.image,
+    );
+    final sourcePath = result?.files.single.path;
+    if (sourcePath == null || sourcePath.isEmpty) return;
+    if (!context.mounted) return;
+
+    final croppedPath = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => WallpaperCropScreen(sourcePath: sourcePath),
+      ),
+    );
+    if (croppedPath == null || croppedPath.isEmpty) return;
+
+    // 删除旧壁纸文件，避免支持目录残留。
+    final oldPath = ref.read(customWallpaperPathProvider);
+    if (oldPath.isNotEmpty && oldPath != croppedPath) {
+      try {
+        final old = File(oldPath);
+        if (await old.exists()) await old.delete();
+      } catch (_) {}
+    }
+    ref.read(customWallpaperPathProvider.notifier).state = croppedPath;
+
+    if (!context.mounted) return;
+    AppToast.show(context, '壁纸已设置');
+  }
+
+  Future<void> _clearWallpaper(BuildContext context) async {
+    final oldPath = ref.read(customWallpaperPathProvider);
+    ref.read(customWallpaperPathProvider.notifier).state = '';
+    if (oldPath.isNotEmpty) {
+      try {
+        final old = File(oldPath);
+        if (await old.exists()) await old.delete();
+      } catch (_) {}
+    }
+    if (!context.mounted) return;
+    AppToast.show(context, '已移除壁纸');
+  }
+
+  void _showThemeSelector(BuildContext context) {
+    final current = ref.read(themeModeProvider);
+    final displayLocale =
+        ref.read(localeProvider) ?? Localizations.localeOf(context);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('外观'),
+        content: RadioGroup<ThemeModeOption>(
+          groupValue: current,
+          onChanged: (value) {
+            if (value != null) {
+              ref.read(themeModeProvider.notifier).state = value;
+            }
+            Navigator.pop(context);
+          },
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: ThemeModeOption.values
+                .map((mode) => RadioListTile<ThemeModeOption>(
+                      title: Text(localizedThemeModeLabel(mode,
+                          displayLocale: displayLocale)),
+                      value: mode,
+                    ))
+                .toList(),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 播放器设置页

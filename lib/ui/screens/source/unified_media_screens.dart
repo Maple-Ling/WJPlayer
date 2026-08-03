@@ -1,0 +1,1637 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../../core/api/api_interfaces.dart';
+import '../../../core/providers/app_providers.dart';
+import '../../../core/providers/media_providers.dart';
+import '../../../core/providers/playback_providers.dart';
+import '../../../core/providers/server_card_stats_provider.dart';
+import '../../../core/providers/server_providers.dart';
+import '../../../core/sources/media_source_backend.dart';
+import '../../../core/sources/source_playback.dart';
+import '../../../core/sources/unified_media_adapter.dart';
+import '../../widgets/common/media_metadata_badges.dart';
+import '../../widgets/common/media_widgets.dart';
+
+UnifiedMediaEntry unifiedEntryFromSource(SourceEntry source) => UnifiedMediaEntry(
+      id: source.id,
+      name: source.name,
+      type: source.raw?['type']?.toString() ?? (source.isDir ? 'TV' : 'Movie'),
+      posterUrl: source.thumbUrl,
+      imageHeaders: source.thumbHeaders,
+      sourceEntry: source,
+    );
+
+
+class UnifiedEmbyDetailRoute extends ConsumerWidget {
+  const UnifiedEmbyDetailRoute({
+    super.key,
+    required this.itemId,
+    this.autoPlay = false,
+  });
+
+  final String itemId;
+  final bool autoPlay;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final server = ref.watch(currentServerProvider);
+    if (server == null || server.sourceKind != SourceKind.emby) {
+      return const Scaffold(body: Center(child: Text('当前不是 Emby 服务器')));
+    }
+    return UnifiedMediaDetailScreen(
+      server: server,
+      entry: UnifiedMediaEntry(id: itemId, name: '', type: 'Movie'),
+      autoPlay: autoPlay,
+    );
+  }
+}
+
+/// 飞牛视觉标准的统一影视首页。Emby 与飞牛仅替换数据适配器，不再切换页面。
+class UnifiedMediaHomeScreen extends ConsumerStatefulWidget {
+  const UnifiedMediaHomeScreen({super.key});
+
+  @override
+  ConsumerState<UnifiedMediaHomeScreen> createState() =>
+      _UnifiedMediaHomeScreenState();
+}
+
+class _UnifiedMediaHomeScreenState
+    extends ConsumerState<UnifiedMediaHomeScreen> {
+  List<UnifiedMediaLibrary> _libraries = const [];
+  List<UnifiedContinueItem> _continueItems = const [];
+  final Map<String, List<UnifiedMediaEntry>> _previews = {};
+  String? _serverId;
+  String? _error;
+  bool _loading = true;
+
+  UnifiedMediaAdapter _adapter(ServerConfig server) => unifiedMediaAdapterFor(
+        server,
+        embyApi: server.sourceKind == SourceKind.emby
+            ? ref.read(apiClientProvider)
+            : null,
+      );
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = ref.read(currentServerProvider);
+    if (initial != null) {
+      _serverId = initial.id;
+      Future<void>.microtask(_load);
+    }
+    ref.listenManual<ServerConfig?>(currentServerProvider, (previous, next) {
+      if (next != null && next.id != _serverId) {
+        _serverId = next.id;
+        Future<void>.microtask(_load);
+      }
+    });
+  }
+
+  Future<void> _load() async {
+    final server = ref.read(currentServerProvider);
+    if (server == null ||
+        (server.sourceKind != SourceKind.emby &&
+            server.sourceKind != SourceKind.feiniu)) {
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+      _previews.clear();
+    });
+    final adapter = _adapter(server);
+    try {
+      final results = await Future.wait<dynamic>([
+        adapter.libraries(),
+        adapter.continueWatching().catchError(
+              (_) => const <UnifiedContinueItem>[],
+            ),
+      ]);
+      if (!mounted || server.id != _serverId) return;
+      final hiddenLibraries = ref.read(hiddenLibrariesProvider);
+      final libraries = (results[0] as List<UnifiedMediaLibrary>)
+          .where((library) => !hiddenLibraries.contains(library.id))
+          .toList();
+      setState(() {
+        _libraries = libraries;
+        _continueItems = results[1] as List<UnifiedContinueItem>;
+        _loading = false;
+      });
+      await Future.wait(libraries.map((library) async {
+        try {
+          final items = await adapter.preview(library.id);
+          if (mounted && server.id == _serverId) {
+            setState(() => _previews[library.id] = items);
+          }
+        } catch (_) {
+          if (mounted && server.id == _serverId) {
+            setState(() => _previews[library.id] = const []);
+          }
+        }
+      }));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = '加载影视首页失败: $error';
+      });
+    }
+  }
+
+  Future<void> _openEntry(ServerConfig server, UnifiedMediaEntry entry) async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => UnifiedMediaDetailScreen(server: server, entry: entry),
+    ));
+    if (mounted) await _load();
+  }
+
+  Future<void> _openContinueDetail(
+      ServerConfig server, UnifiedContinueItem item) async {
+    await _openEntry(server, item.entry);
+  }
+
+  Future<void> _playContinue(
+      ServerConfig server, UnifiedContinueItem item) async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => UnifiedMediaDetailScreen(
+        server: server,
+        entry: item.entry,
+        autoPlay: true,
+      ),
+    ));
+    if (mounted) await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final server = ref.watch(currentServerProvider);
+    if (server == null) {
+      return const Scaffold(body: Center(child: Text('请先添加服务器')));
+    }
+    if (_loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    return Scaffold(
+      appBar: AppBar(
+        automaticallyImplyLeading: false,
+        centerTitle: true,
+        title: _UnifiedServerTitle(current: server),
+        actions: [
+          _ServerLineAction(server: server, onChanged: _load),
+        ],
+      ),
+      body: _error != null
+          ? _ErrorRetry(message: _error!, onRetry: _load)
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: _libraries.isEmpty && _continueItems.isEmpty
+                  ? ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: const [
+                        SizedBox(height: 260),
+                        Center(child: Text('暂无媒体内容')),
+                      ],
+                    )
+                  : ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.only(bottom: 24),
+                      children: [
+                        if (_continueItems.isNotEmpty)
+                          _ContinueSection(
+                            items: _continueItems,
+                            onTap: (item) => _openContinueDetail(server, item),
+                            onPlay: (item) => _playContinue(server, item),
+                          ),
+                        for (final library in _libraries)
+                          _LibrarySection(
+                            library: library,
+                            preview: _previews[library.id],
+                            onOpenLibrary: () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => UnifiedMediaLibraryScreen(
+                                  server: server,
+                                  library: library,
+                                ),
+                              ),
+                            ),
+                            onOpenEntry: (entry) => _openEntry(server, entry),
+                          ),
+                      ],
+                    ),
+            ),
+    );
+  }
+}
+
+class UnifiedMediaLibraryScreen extends ConsumerStatefulWidget {
+  const UnifiedMediaLibraryScreen({
+    super.key,
+    required this.server,
+    required this.library,
+  });
+
+  final ServerConfig server;
+  final UnifiedMediaLibrary library;
+
+  @override
+  ConsumerState<UnifiedMediaLibraryScreen> createState() =>
+      _UnifiedMediaLibraryScreenState();
+}
+
+class _UnifiedMediaLibraryScreenState
+    extends ConsumerState<UnifiedMediaLibraryScreen> {
+  List<UnifiedMediaEntry> _items = const [];
+  String _sortKey = 'create_time';
+  bool _descending = true;
+  String? _error;
+  bool _loading = true;
+
+  UnifiedMediaAdapter get _adapter => unifiedMediaAdapterFor(
+        widget.server,
+        embyApi: widget.server.sourceKind == SourceKind.emby
+            ? ref.read(apiClientProvider)
+            : null,
+      );
+
+  @override
+  void initState() {
+    super.initState();
+    Future<void>.microtask(_load);
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final items = await _adapter.libraryItems(widget.library.id);
+      if (!mounted) return;
+      setState(() {
+        _items = items;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = '加载媒体库失败: $error';
+      });
+    }
+  }
+
+  List<UnifiedMediaEntry> get _sortedItems {
+    final items = [..._items];
+    int compare(UnifiedMediaEntry a, UnifiedMediaEntry b) {
+      return switch (_sortKey) {
+        'title' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+        'year' => (a.year ?? 0).compareTo(b.year ?? 0),
+        'rating' => (a.rating ?? -1.0).compareTo(b.rating ?? -1.0),
+        _ => a.id.compareTo(b.id),
+      };
+    }
+
+    items.sort((a, b) {
+      final result = compare(a, b);
+      return _descending ? -result : result;
+    });
+    return items;
+  }
+
+  void _toggleSort(String key) {
+    setState(() {
+      if (_sortKey == key) {
+        _descending = !_descending;
+      } else {
+        _sortKey = key;
+        _descending = key != 'title';
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.library.name),
+        actions: [
+          PopupMenuButton<String>(
+            tooltip: '排序',
+            icon: const Icon(Icons.sort_rounded),
+            onSelected: _toggleSort,
+            itemBuilder: (_) => [
+              for (final option in const [
+                (key: 'create_time', label: '入库时间'),
+                (key: 'title', label: '标题排序'),
+                (key: 'year', label: '出品年份'),
+                (key: 'rating', label: '评分'),
+              ])
+                PopupMenuItem(
+                  value: option.key,
+                  child: Row(children: [
+                    Expanded(child: Text(option.label)),
+                    if (_sortKey == option.key)
+                      Icon(
+                        _descending
+                            ? Icons.arrow_downward_rounded
+                            : Icons.arrow_upward_rounded,
+                        size: 18,
+                      ),
+                  ]),
+                ),
+            ],
+          ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? _ErrorRetry(message: _error!, onRetry: _load)
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: _items.isEmpty
+                      ? ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          children: const [
+                            SizedBox(height: 240),
+                            Center(child: Text('暂无内容')),
+                          ],
+                        )
+                      : GridView.builder(
+                          padding: const EdgeInsets.all(12),
+                          gridDelegate:
+                              const SliverGridDelegateWithMaxCrossAxisExtent(
+                            maxCrossAxisExtent: 138,
+                            childAspectRatio: 0.58,
+                            crossAxisSpacing: 10,
+                            mainAxisSpacing: 14,
+                          ),
+                          itemCount: _sortedItems.length,
+                          itemBuilder: (_, index) {
+                            final entry = _sortedItems[index];
+                            return _UnifiedMediaCard(
+                              entry: entry,
+                              onTap: () => Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) => UnifiedMediaDetailScreen(
+                                    server: widget.server,
+                                    entry: entry,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+    );
+  }
+}
+
+/// 飞牛详情视觉标准的统一详情页。
+class UnifiedMediaDetailScreen extends ConsumerStatefulWidget {
+  const UnifiedMediaDetailScreen({
+    super.key,
+    required this.server,
+    required this.entry,
+    this.autoPlay = false,
+  });
+
+  final ServerConfig server;
+  final UnifiedMediaEntry entry;
+  final bool autoPlay;
+
+  @override
+  ConsumerState<UnifiedMediaDetailScreen> createState() =>
+      _UnifiedMediaDetailScreenState();
+}
+
+class _UnifiedMediaDetailScreenState
+    extends ConsumerState<UnifiedMediaDetailScreen> {
+  UnifiedMediaDetail? _detail;
+  List<UnifiedMediaEntry> _episodes = const [];
+  List<UnifiedMediaResource> _resources = const [];
+  UnifiedMediaEntry? _selectedEntry;
+  String? _selectedSeasonId;
+  int _resourceIndex = 0;
+  int _audioIndex = 0;
+  int _subtitleIndex = -1;
+  String _core = 'nativeMpv';
+  bool _loading = true;
+  bool _loadingMedia = false;
+  String? _error;
+  int _generation = 0;
+  final ScrollController _episodeController = ScrollController();
+
+  UnifiedMediaAdapter get _adapter => unifiedMediaAdapterFor(
+        widget.server,
+        embyApi: widget.server.sourceKind == SourceKind.emby
+            ? ref.read(apiClientProvider)
+            : null,
+      );
+
+  bool get _isSeries => _detail?.seasons.isNotEmpty == true;
+  UnifiedMediaResource? get _resource =>
+      _resources.isEmpty ? null : _resources[_resourceIndex];
+
+  @override
+  void initState() {
+    super.initState();
+    _core = normalizePlayerCore(ref.read(playerCoreProvider));
+    Future<void>.microtask(_load);
+  }
+
+  @override
+  void dispose() {
+    _episodeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final detail = await _adapter.detail(widget.entry);
+      if (!mounted) return;
+      _detail = detail;
+      if (detail.seasons.isNotEmpty) {
+        final preferred = detail.seasons.where((season) {
+          final id = season.id.contains(':')
+              ? season.id.substring(season.id.indexOf(':') + 1)
+              : season.id;
+          return season.id == detail.initialSeasonId ||
+              id == detail.initialSeasonId;
+        }).firstOrNull;
+        await _selectSeason((preferred ?? detail.seasons.first).id);
+      } else {
+        _selectedEntry = detail.entry;
+        await _loadResources(detail.entry);
+        if (widget.autoPlay && mounted) await _play();
+      }
+      if (!mounted) return;
+      setState(() => _loading = false);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = '获取媒体详情失败: $error';
+      });
+    }
+  }
+
+  Future<void> _selectSeason(String seasonId) async {
+    setState(() {
+      _selectedSeasonId = seasonId;
+      _episodes = const [];
+      _loadingMedia = true;
+    });
+    try {
+      final detail = _detail!;
+      final episodes = await _adapter.episodes(
+        detail.seriesId ?? detail.entry.id,
+        seasonId,
+      );
+      if (!mounted || _selectedSeasonId != seasonId) return;
+      final preferred = episodes
+          .where((episode) => episode.id == detail.initialEntryId)
+          .firstOrNull;
+      final selected =
+          preferred ?? (episodes.isEmpty ? null : episodes.first);
+      setState(() {
+        _episodes = episodes;
+        _selectedEntry = selected;
+        _loadingMedia = selected != null;
+      });
+      if (selected != null) {
+        await _loadResources(selected);
+        if (widget.autoPlay && mounted) await _play();
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _episodes = const [];
+        _selectedEntry = null;
+        _loadingMedia = false;
+      });
+    }
+  }
+
+  Future<void> _selectEpisode(UnifiedMediaEntry entry) async {
+    if (_selectedEntry?.id == entry.id) return;
+    setState(() => _selectedEntry = entry);
+    await _loadResources(entry);
+  }
+
+  Future<void> _loadResources(UnifiedMediaEntry entry) async {
+    final generation = ++_generation;
+    setState(() {
+      _loadingMedia = true;
+      _resources = const [];
+    });
+    try {
+      final resources = await _adapter.mediaResources(entry);
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _resources = resources;
+        _resourceIndex = resources.isEmpty
+            ? 0
+            : _resourceIndex.clamp(0, resources.length - 1).toInt();
+        _normalizeTracks();
+        if (_subtitleIndex < 0 && _resource?.subtitles.isNotEmpty == true) {
+          _subtitleIndex = _preferredSubtitleIndex(_resource!.subtitles);
+        }
+        _loadingMedia = false;
+      });
+    } catch (_) {
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _resources = const [];
+        _loadingMedia = false;
+      });
+    }
+  }
+
+  int _preferredSubtitleIndex(List<Map<String, dynamic>> tracks) {
+    String text(Map<String, dynamic> track) => [
+          track['title'], track['display_title'], track['language'],
+          track['codec_name'],
+        ].where((value) => value != null).join(' ').toLowerCase();
+    const simplified = ['简体', '简中', 'chs', 'zh-hans', 'zh_cn', 'gb'];
+    const chinese = ['中文', '中字', 'chi', 'zho', 'zh-cn', ' zh '];
+    for (var i = 0; i < tracks.length; i++) {
+      if (simplified.any(text(tracks[i]).contains)) return i;
+    }
+    for (var i = 0; i < tracks.length; i++) {
+      if (chinese.any(text(tracks[i]).contains)) return i;
+    }
+    return -1;
+  }
+
+  void _normalizeTracks() {
+    final resource = _resource;
+    final audioMax = (resource?.audios.length ?? 0) - 1;
+    final subtitleMax = (resource?.subtitles.length ?? 0) - 1;
+    _audioIndex =
+        audioMax < 0 ? 0 : _audioIndex.clamp(0, audioMax).toInt();
+    _subtitleIndex = subtitleMax < 0
+        ? -1
+        : _subtitleIndex.clamp(-1, subtitleMax).toInt();
+  }
+
+  Future<void> _play() async {
+    final entry = _selectedEntry;
+    if (entry == null) return;
+    if (widget.server.sourceKind == SourceKind.feiniu) {
+      final source = entry.sourceEntry;
+      if (source == null) return;
+      await context.push(
+        '/source-player',
+        extra: SourcePlayback(
+          server: ref.read(serverListProvider).firstWhere(
+              (server) => server.id == widget.server.id,
+              orElse: () => widget.server),
+          entry: source,
+          httpHeaders: source.thumbHeaders,
+          playerCoreOverride: _core,
+          preferredAudioListIndex:
+              _resource?.audios.isNotEmpty == true ? _audioIndex : null,
+          preferredSubtitleListIndex: _subtitleIndex,
+          playlist: _episodes
+              .map((item) => item.sourceEntry)
+              .whereType<SourceEntry>()
+              .toList(),
+        ),
+      );
+    } else {
+      ref.read(selectedMediaSourceProvider.notifier).state = _resource?.id;
+      ref.read(audioTrackProvider.notifier).state =
+          _resource?.audios.isNotEmpty == true
+              ? (_resource!.audios[_audioIndex]['index'] as num?)?.toInt()
+              : null;
+      ref.read(subtitleTrackProvider.notifier).state = _subtitleIndex < 0
+          ? -1
+          : (_resource!.subtitles[_subtitleIndex]['index'] as num?)?.toInt();
+      final mediaSourceQuery = _resource == null
+          ? ''
+          : '&mediaSourceId=${Uri.encodeQueryComponent(_resource!.id)}';
+      await context.push(
+        '/player/${entry.id}?core=${Uri.encodeQueryComponent(_core)}$mediaSourceQuery',
+      );
+    }
+    if (mounted) await _loadResources(entry);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (_error != null || _detail == null) {
+      return Scaffold(
+        appBar: AppBar(),
+        body: _ErrorRetry(message: _error ?? '详情为空', onRetry: _load),
+      );
+    }
+    final detail = _detail!;
+    final entry = detail.entry;
+    return Scaffold(
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverAppBar(
+              expandedHeight: 310,
+              pinned: true,
+              stretch: true,
+              actions: [
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: Center(
+                    child: SelectedRatingBadge(
+                      item: entry.ratingItem,
+                      compact: false,
+                    ),
+                  ),
+                ),
+              ],
+              flexibleSpace: FlexibleSpaceBar(
+                title: Text(entry.name,
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                background: Stack(fit: StackFit.expand, children: [
+                  MediaImage(
+                    imageUrl: entry.backdropUrl?.isNotEmpty == true
+                        ? entry.backdropUrl
+                        : entry.posterUrl,
+                    httpHeaders: entry.imageHeaders,
+                    fit: BoxFit.cover,
+                  ),
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.black12, Colors.black87],
+                        stops: [0.45, 1],
+                      ),
+                    ),
+                  ),
+                ]),
+              ),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
+              sliver: SliverList.list(children: [
+                _buildSummary(entry),
+                const SizedBox(height: 14),
+                _buildFormatBadges(),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed:
+                        _selectedEntry == null || _loadingMedia ? null : _play,
+                    icon: const Icon(Icons.play_arrow_rounded),
+                    label: Text(_selectedEntry == null
+                        ? '暂无可播放资源'
+                        : '播放  ${_selectedEntry!.name}'),
+                  ),
+                ),
+                if (entry.overview?.isNotEmpty == true) ...[
+                  const SizedBox(height: 22),
+                  Text(entry.overview!,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodyMedium
+                          ?.copyWith(height: 1.65)),
+                ],
+                if (detail.seasons.isNotEmpty) ...[
+                  const SizedBox(height: 26),
+                  _sectionTitle('剧集'),
+                  const SizedBox(height: 10),
+                  _buildSeasons(detail.seasons),
+                  const SizedBox(height: 12),
+                  _buildEpisodes(),
+                ],
+                const SizedBox(height: 28),
+                _sectionTitle('资源'),
+                const SizedBox(height: 12),
+                _buildPlaybackOptions(),
+                if (detail.people.isNotEmpty) ...[
+                  const SizedBox(height: 28),
+                  _sectionTitle('演员阵容'),
+                  const SizedBox(height: 12),
+                  _buildPeople(detail.people),
+                ],
+                const SizedBox(height: 28),
+                _sectionTitle('媒体信息'),
+                const SizedBox(height: 12),
+                if (_loadingMedia)
+                  const SizedBox(
+                    height: 180,
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else
+                  _buildMediaCards(),
+                if (_resource?.path?.isNotEmpty == true) ...[
+                  const SizedBox(height: 14),
+                  _buildFileCard(_resource!),
+                ],
+              ]),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSummary(UnifiedMediaEntry entry) => Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: SizedBox(
+              width: 104,
+              height: 150,
+              child: MediaImage(
+                imageUrl: entry.posterUrl,
+                httpHeaders: entry.imageHeaders,
+                fit: BoxFit.cover,
+              ),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(entry.name,
+                    style: Theme.of(context)
+                        .textTheme
+                        .headlineSmall
+                        ?.copyWith(fontWeight: FontWeight.w800)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (entry.rating != null)
+                      Chip(
+                          label: Text('★ ${entry.rating!.toStringAsFixed(1)}')),
+                    if (entry.year != null) Chip(label: Text('${entry.year}')),
+                    Chip(label: Text(entry.isSeries ? '电视剧' : '电影')),
+                  ],
+                ),
+                if (_selectedEntry != null && _isSeries) ...[
+                  const SizedBox(height: 10),
+                  Text(_selectedEntry!.name,
+                      maxLines: 2, overflow: TextOverflow.ellipsis),
+                ],
+              ],
+            ),
+          ),
+        ],
+      );
+
+  Widget _buildFormatBadges() {
+    final video = _resource?.video;
+    if (video == null) return const SizedBox.shrink();
+    final text = [
+      video['video_range_type'],
+      video['video_range'],
+      video['codec_name'],
+    ].where((item) => item != null).join(' ').toLowerCase();
+    final labels = <String>[];
+    if (text.contains('dovi') || text.contains('dolby')) {
+      labels.add('DV');
+    } else if (text.contains('hdr')) {
+      labels.add('HDR');
+    } else {
+      labels.add('SDR');
+    }
+    if (text.contains('hevc') || text.contains('265')) {
+      labels.add('265/HEVC');
+    } else if (text.contains('h264') || text.contains('avc')) {
+      labels.add('264');
+    }
+    return Wrap(
+      spacing: 6,
+      children: labels
+          .map((label) => Chip(
+                visualDensity: VisualDensity.compact,
+                label: Text(label,
+                    style: const TextStyle(fontWeight: FontWeight.w700)),
+              ))
+          .toList(),
+    );
+  }
+
+  Widget _buildSeasons(List<UnifiedSeason> seasons) => SizedBox(
+        height: 42,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: seasons.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (_, index) => ChoiceChip(
+            label: Text(seasons[index].name),
+            selected: _selectedSeasonId == seasons[index].id,
+            onSelected: (_) => _selectSeason(seasons[index].id),
+          ),
+        ),
+      );
+
+  Widget _buildEpisodes() => SizedBox(
+        height: 142,
+        child: _episodes.isEmpty
+            ? const Center(child: Text('本季暂无剧集'))
+            : ListView.separated(
+                controller: _episodeController,
+                scrollDirection: Axis.horizontal,
+                itemCount: _episodes.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemBuilder: (_, index) {
+                  final episode = _episodes[index];
+                  final selected = _selectedEntry?.id == episode.id;
+                  return SizedBox(
+                    width: 200,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => _selectEpisode(episode),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: selected
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(context).dividerColor,
+                            width: selected ? 2 : 1,
+                          ),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Stack(fit: StackFit.expand, children: [
+                            MediaImage(
+                              imageUrl: episode.backdropUrl?.isNotEmpty == true
+                                  ? episode.backdropUrl
+                                  : episode.posterUrl,
+                              httpHeaders: episode.imageHeaders,
+                              fit: BoxFit.cover,
+                            ),
+                            const DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [Colors.transparent, Colors.black87],
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              left: 10,
+                              right: 10,
+                              bottom: 8,
+                              child: Text(episode.name,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700)),
+                            ),
+                          ]),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+      );
+
+  Widget _buildPlaybackOptions() {
+    final resource = _resource;
+    final audios = resource?.audios ?? const [];
+    final subtitles = resource?.subtitles ?? const [];
+    final quick = <Widget>[
+      _quickOption(Icons.memory_rounded, '内核', _core == 'exoPlayer' ? 'ExoPlayer' : 'MPV', _showCorePicker),
+      _quickOption(Icons.route_rounded, '线路', _lineLabel(widget.server), widget.server.lines.isEmpty ? null : _showLinePicker),
+      _quickOption(Icons.audiotrack_rounded, '音频', audios.isEmpty ? '自动' : _trackLabel(audios[_audioIndex], _audioIndex, '音轨'), audios.isEmpty ? null : _showAudioPicker),
+      _quickOption(Icons.subtitles_rounded, '字幕', _subtitleIndex < 0 ? (subtitles.isEmpty ? '自动' : '关闭') : _trackLabel(subtitles[_subtitleIndex], _subtitleIndex, '字幕'), subtitles.isEmpty ? null : _showSubtitlePicker),
+    ];
+    return Column(children: [
+      if (_resources.length > 1) ...[
+        _optionRow(icon: Icons.video_file_rounded, label: '版本', value: resource?.name ?? '默认资源', onTap: _showResourcePicker),
+        const SizedBox(height: 8),
+      ],
+      Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: quick),
+    ]);
+  }
+
+  Widget _quickOption(IconData icon, String label, String value, VoidCallback? onTap) {
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(icon, size: 22),
+            const SizedBox(height: 4),
+            Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 2),
+            Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 10, color: Theme.of(context).textTheme.bodySmall?.color)),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _optionRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    VoidCallback? onTap,
+  }) =>
+      Material(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            child: Row(children: [
+              Icon(icon),
+              const SizedBox(width: 12),
+              Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(value,
+                    textAlign: TextAlign.end,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis),
+              ),
+              if (onTap != null) const Icon(Icons.chevron_right_rounded),
+            ]),
+          ),
+        ),
+      );
+
+  String _lineLabel(ServerConfig server) {
+    if (server.lines.isEmpty) return '默认线路';
+    final index = server.activeLineIndex.clamp(0, server.lines.length - 1);
+    return server.lines[index].name;
+  }
+
+  void _showLinePicker() {
+    final lines = widget.server.lines;
+    _showPicker(children: [
+      for (var index = 0; index < lines.length; index++)
+        RadioListTile<int>(
+          value: index,
+          groupValue: widget.server.activeLineIndex,
+          title: Text(lines[index].name),
+          subtitle: Text(lines[index].url, maxLines: 1, overflow: TextOverflow.ellipsis),
+          onChanged: (value) {
+            if (value == null) return;
+            ref.read(serverListProvider.notifier).setActiveLine(widget.server.id, value);
+            Navigator.pop(context);
+          },
+        ),
+    ]);
+  }
+
+  void _showResourcePicker() => _showPicker(
+        children: [
+          for (var index = 0; index < _resources.length; index++)
+            RadioListTile<int>(
+              value: index,
+              groupValue: _resourceIndex,
+              title: Text(_resources[index].name),
+              subtitle: Text(_resources[index].path ?? ''),
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() {
+                  _resourceIndex = value;
+                  _audioIndex = 0;
+                  _subtitleIndex = -1;
+                  _normalizeTracks();
+                });
+                Navigator.pop(context);
+              },
+            ),
+        ],
+      );
+
+  void _showCorePicker() => _showPicker(children: [
+        RadioListTile<String>(
+          value: 'exoPlayer',
+          groupValue: _core,
+          title: const Text('ExoPlayer'),
+          subtitle: const Text('Android Media3，轻量硬解'),
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() => _core = value);
+            Navigator.pop(context);
+          },
+        ),
+        RadioListTile<String>(
+          value: 'nativeMpv',
+          groupValue: _core,
+          title: const Text('MPV 原生'),
+          subtitle: const Text('全格式、多音轨与高级字幕'),
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() => _core = value);
+            Navigator.pop(context);
+          },
+        ),
+      ]);
+
+  void _showAudioPicker() => _showPicker(
+        children: [
+          for (var index = 0; index < _resource!.audios.length; index++)
+            RadioListTile<int>(
+              value: index,
+              groupValue: _audioIndex,
+              title: Text(_trackLabel(_resource!.audios[index], index, '音轨')),
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() => _audioIndex = value);
+                Navigator.pop(context);
+              },
+            ),
+        ],
+      );
+
+  void _showSubtitlePicker() => _showPicker(children: [
+        RadioListTile<int>(
+          value: -1,
+          groupValue: _subtitleIndex,
+          title: const Text('关闭字幕'),
+          onChanged: (_) {
+            setState(() => _subtitleIndex = -1);
+            Navigator.pop(context);
+          },
+        ),
+        for (var index = 0; index < _resource!.subtitles.length; index++)
+          RadioListTile<int>(
+            value: index,
+            groupValue: _subtitleIndex,
+            title: Text(_trackLabel(_resource!.subtitles[index], index, '字幕')),
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() => _subtitleIndex = value);
+              Navigator.pop(context);
+            },
+          ),
+      ]);
+
+  void _showPicker({required List<Widget> children}) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => SafeArea(
+        child: ListView(shrinkWrap: true, children: children),
+      ),
+    );
+  }
+
+  Widget _buildPeople(List<UnifiedPerson> people) => SizedBox(
+        height: 112,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: people.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 12),
+          itemBuilder: (_, index) => SizedBox(
+            width: 76,
+            child: Column(children: [
+              ClipOval(
+                child: SizedBox(
+                  width: 66,
+                  height: 66,
+                  child: MediaImage(
+                    imageUrl: people[index].imageUrl,
+                    httpHeaders: people[index].imageHeaders,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(people[index].name,
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+              Text(people[index].role ?? '',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11)),
+            ]),
+          ),
+        ),
+      );
+
+  Widget _buildMediaCards() {
+    final resource = _resource;
+    if (resource == null) {
+      return const SizedBox(
+        height: 120,
+        child: Center(child: Text('服务端未返回媒体流信息，播放后仍可由内核识别轨道')),
+      );
+    }
+    final cards = <Widget>[
+      if (resource.video != null)
+        _infoCard('视频', Icons.videocam_rounded, [
+          ('编码', resource.video!['codec_name']),
+          ('分辨率', _resolution(resource.video!)),
+          ('码率', _bitrate(resource.video!['bitrate'])),
+          (
+            '色彩',
+            resource.video!['video_range_type'] ??
+                resource.video!['video_range']
+          ),
+        ]),
+      for (var i = 0; i < resource.audios.length; i++)
+        _infoCard('音频 ${i + 1}', Icons.audiotrack_rounded, [
+          ('编码', resource.audios[i]['codec_name']),
+          ('语言', resource.audios[i]['language']),
+          ('标题', resource.audios[i]['title']),
+          ('声道', resource.audios[i]['channels']),
+          ('码率', _bitrate(resource.audios[i]['bitrate'])),
+        ]),
+      for (var i = 0; i < resource.subtitles.length; i++)
+        _infoCard('字幕 ${i + 1}', Icons.subtitles_rounded, [
+          ('编码', resource.subtitles[i]['codec_name']),
+          ('语言', resource.subtitles[i]['language']),
+          ('标题', resource.subtitles[i]['title']),
+          ('外挂', resource.subtitles[i]['is_external'] == true ? '是' : '否'),
+        ]),
+    ];
+    return SizedBox(
+      height: 240,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: cards.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (_, index) => cards[index],
+      ),
+    );
+  }
+
+  Widget _infoCard(String title, IconData icon, List<(String, dynamic)> rows) {
+    final visible =
+        rows.where((row) => row.$2 != null && '${row.$2}'.isNotEmpty).toList();
+    return Container(
+      width: 224,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(icon, size: 20),
+          const SizedBox(width: 8),
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+        ]),
+        const SizedBox(height: 12),
+        for (final row in visible)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              SizedBox(
+                width: 60,
+                child:
+                    Text(row.$1, style: Theme.of(context).textTheme.bodySmall),
+              ),
+              Expanded(
+                child: Text('${row.$2}',
+                    maxLines: 2, overflow: TextOverflow.ellipsis),
+              ),
+            ]),
+          ),
+      ]),
+    );
+  }
+
+  Widget _buildFileCard(UnifiedMediaResource resource) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Row(children: [
+            Icon(Icons.folder_open_rounded, size: 20),
+            SizedBox(width: 8),
+            Text('视频文件', style: TextStyle(fontWeight: FontWeight.w800)),
+          ]),
+          const SizedBox(height: 10),
+          SelectableText(resource.name),
+          if (resource.path?.isNotEmpty == true) ...[
+            const SizedBox(height: 8),
+            SelectableText(resource.path!,
+                style: Theme.of(context).textTheme.bodySmall),
+          ],
+          if ((resource.size ?? 0) > 0) ...[
+            const SizedBox(height: 8),
+            Text(formatSourceFileSize(resource.size!)),
+          ],
+        ]),
+      );
+
+  Widget _sectionTitle(String title) => Text(
+        title,
+        style: Theme.of(context)
+            .textTheme
+            .titleLarge
+            ?.copyWith(fontWeight: FontWeight.w800),
+      );
+
+  String _trackLabel(Map<String, dynamic> track, int index, String fallback) {
+    final title = track['title']?.toString().trim() ?? '';
+    final language = track['language']?.toString().trim() ?? '';
+    final codec = track['codec_name']?.toString().trim().toUpperCase() ?? '';
+    if (title.isNotEmpty) return title;
+    final parts = [language, codec].where((part) => part.isNotEmpty).toList();
+    return parts.isEmpty ? '$fallback ${index + 1}' : parts.join(' · ');
+  }
+
+  String _resolution(Map<String, dynamic> stream) {
+    final width = (stream['width'] as num?)?.toInt() ?? 0;
+    final height = (stream['height'] as num?)?.toInt() ?? 0;
+    return width > 0 && height > 0 ? '${width}×$height' : '';
+  }
+
+  String _bitrate(dynamic value) {
+    final bitrate = value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+    return bitrate <= 0 ? '' : '${(bitrate / 1000000).toStringAsFixed(1)} Mbps';
+  }
+}
+
+class _UnifiedServerTitle extends ConsumerWidget {
+  const _UnifiedServerTitle({required this.current});
+  final ServerConfig current;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final stats = ref.watch(serverCardStatsProvider(current.id));
+    Widget line(IconData icon, String label, int? value) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 13),
+            const SizedBox(width: 3),
+            Text('$label ${value ?? '—'}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600)),
+          ],
+        );
+    return Row(children: [
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          stats.when(
+            data: (value) => line(Icons.movie_outlined, '电影', value.movieCount),
+            loading: () => line(Icons.movie_outlined, '电影', null),
+            error: (_, __) => line(Icons.movie_outlined, '电影', null),
+          ),
+          stats.when(
+            data: (value) => line(Icons.tv_outlined, '电视剧', value.seriesCount),
+            loading: () => line(Icons.tv_outlined, '电视剧', null),
+            error: (_, __) => line(Icons.tv_outlined, '电视剧', null),
+          ),
+          stats.when(
+            data: (value) => line(Icons.video_library_outlined, '媒体', value.episodeCount),
+            loading: () => line(Icons.video_library_outlined, '媒体', null),
+            error: (_, __) => line(Icons.video_library_outlined, '媒体', null),
+          ),
+        ],
+      ),
+      const SizedBox(width: 8),
+      Flexible(child: _UnifiedServerSwitcher(current: current)),
+    ]);
+  }
+}
+
+class _ServerLineAction extends ConsumerWidget {
+  const _ServerLineAction({required this.server, required this.onChanged});
+  final ServerConfig server;
+  final Future<void> Function() onChanged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (server.lines.isEmpty) return const SizedBox.shrink();
+    return PopupMenuButton<int>(
+      tooltip: '切换线路',
+      icon: const Icon(Icons.route_rounded),
+      onSelected: (index) async {
+        ref.read(serverListProvider.notifier).setActiveLine(server.id, index);
+        final updated = ref.read(serverListProvider).firstWhere((item) => item.id == server.id);
+        ref.read(currentServerProvider.notifier).state = updated;
+        await onChanged();
+      },
+      itemBuilder: (_) => [
+        for (var i = 0; i < server.lines.length; i++)
+          CheckedPopupMenuItem<int>(value: i, checked: i == server.activeLineIndex, child: Text(server.lines[i].name)),
+      ],
+    );
+  }
+}
+
+class _UnifiedServerSwitcher extends ConsumerWidget {
+  const _UnifiedServerSwitcher({required this.current});
+  final ServerConfig current;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final servers = ref
+        .watch(serverListProvider)
+        .where((server) =>
+            server.sourceKind == SourceKind.emby ||
+            server.sourceKind == SourceKind.feiniu)
+        .toList();
+    return PopupMenuButton<String>(
+      tooltip: '切换服务器',
+      onSelected: (serverId) {
+        if (serverId == '__manage__') {
+          context.go('/servers');
+          return;
+        }
+        final server = servers.where((item) => item.id == serverId).firstOrNull;
+        if (server == null || server.id == current.id) return;
+        ref.read(currentServerProvider.notifier).state = server;
+        ref.read(authStateProvider.notifier).state = AuthState.authenticated;
+        context.go('/home');
+      },
+      itemBuilder: (_) => [
+        for (final server in servers)
+          PopupMenuItem<String>(
+            value: server.id,
+            child: Row(children: [
+              const Icon(Icons.video_library_rounded, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                  child: Text(server.name, overflow: TextOverflow.ellipsis)),
+              if (server.id == current.id)
+                const Icon(Icons.check_rounded, size: 18),
+            ]),
+          ),
+        const PopupMenuDivider(),
+        const PopupMenuItem<String>(
+          value: '__manage__',
+          child: Row(children: [
+            Icon(Icons.settings_rounded, size: 20),
+            SizedBox(width: 10),
+            Text('管理服务器'),
+          ]),
+        ),
+      ],
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 48, maxWidth: 220),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.video_library_rounded, size: 22),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(current.name,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w700)),
+          ),
+          const Icon(Icons.keyboard_arrow_down_rounded, size: 20),
+        ]),
+      ),
+    );
+  }
+}
+
+class _ContinueSection extends StatelessWidget {
+  const _ContinueSection({required this.items, required this.onTap, required this.onPlay});
+  final List<UnifiedContinueItem> items;
+  final ValueChanged<UnifiedContinueItem> onTap;
+  final ValueChanged<UnifiedContinueItem> onPlay;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 18, 16, 10),
+            child: Text('继续观看',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w700)),
+          ),
+          SizedBox(
+            height: 166,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              itemCount: items.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              itemBuilder: (_, index) {
+                final item = items[index];
+                return SizedBox(
+                  width: 220,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () => onTap(item),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Stack(fit: StackFit.expand, children: [
+                              GestureDetector(
+                                onTap: () => onPlay(item),
+                                child: MediaImage(
+                                  imageUrl:
+                                      item.entry.backdropUrl?.isNotEmpty == true
+                                          ? item.entry.backdropUrl
+                                          : item.entry.posterUrl,
+                                  httpHeaders: item.entry.imageHeaders,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                              Center(
+                                child: GestureDetector(
+                                  onTap: () => onPlay(item),
+                                  child: const Icon(Icons.play_circle_fill_rounded,
+                                      color: Colors.white, size: 42),
+                                ),
+                              ),
+                              Positioned(
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                child: LinearProgressIndicator(
+                                  value: item.progress,
+                                  minHeight: 4,
+                                ),
+                              ),
+                            ]),
+                          ),
+                        ),
+                        const SizedBox(height: 7),
+                        Text(item.entry.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w600)),
+                        Text('已观看 ${(item.progress * 100).round()}%',
+                            style: Theme.of(context).textTheme.bodySmall),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      );
+}
+
+class _LibrarySection extends StatelessWidget {
+  const _LibrarySection({
+    required this.library,
+    required this.preview,
+    required this.onOpenLibrary,
+    required this.onOpenEntry,
+  });
+  final UnifiedMediaLibrary library;
+  final List<UnifiedMediaEntry>? preview;
+  final VoidCallback onOpenLibrary;
+  final ValueChanged<UnifiedMediaEntry> onOpenEntry;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 18, 8, 8),
+            child: Row(children: [
+              Expanded(
+                child: Text(library.name,
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.copyWith(fontWeight: FontWeight.w700)),
+              ),
+              TextButton(onPressed: onOpenLibrary, child: const Text('查看全部')),
+            ]),
+          ),
+          if (preview == null)
+            const SizedBox(
+                height: 190, child: Center(child: CircularProgressIndicator()))
+          else if (preview!.isEmpty)
+            const SizedBox(height: 80, child: Center(child: Text('暂无内容')))
+          else
+            SizedBox(
+              height: 220,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                itemCount: preview!.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemBuilder: (_, index) => SizedBox(
+                  width: 126,
+                  child: _UnifiedMediaCard(
+                    entry: preview![index],
+                    onTap: () => onOpenEntry(preview![index]),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      );
+}
+
+class _UnifiedMediaCard extends StatelessWidget {
+  const _UnifiedMediaCard({required this.entry, required this.onTap});
+  final UnifiedMediaEntry entry;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final source = entry.mediaItem?.mediaSources?.firstOrNull;
+    final video = source?.primaryVideoStream;
+    final labels = <String>[];
+    if (video?.isDolbyVision == true) {
+      labels.add('DV');
+    } else if ((video?.videoRange ?? '').toUpperCase().contains('HDR')) {
+      labels.add('HDR');
+    }
+    final codec = (video?.codec ?? video?.videoCodec ?? '').toLowerCase();
+    if (codec.contains('hevc') || codec.contains('265')) {
+      labels.add('265/HEVC');
+    } else if (codec.contains('264') || codec.contains('avc')) {
+      labels.add('264');
+    }
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: onTap,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Stack(fit: StackFit.expand, children: [
+              MediaImage(
+                imageUrl: entry.posterUrl,
+                httpHeaders: entry.imageHeaders,
+                fit: BoxFit.cover,
+              ),
+              Positioned(
+                left: 7,
+                top: 7,
+                child: SelectedRatingBadge(item: entry.ratingItem),
+              ),
+              if (labels.isNotEmpty)
+                Positioned(
+                  right: 7,
+                  bottom: 7,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.76),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(labels.join(' · '),
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700)),
+                  ),
+                ),
+            ]),
+          ),
+        ),
+        const SizedBox(height: 7),
+        Text(entry.name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 13, height: 1.25)),
+      ]),
+    );
+  }
+}
+
+class _ErrorRetry extends StatelessWidget {
+  const _ErrorRetry({required this.message, required this.onRetry});
+  final String message;
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.error_outline_rounded, size: 44),
+            const SizedBox(height: 12),
+            Text(message, textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            FilledButton.tonal(onPressed: onRetry, child: const Text('重试')),
+          ]),
+        ),
+      );
+}
