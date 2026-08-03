@@ -9,6 +9,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   double? _sliderDragValue;
   Timer? _longPressTimer;
   Timer? _gestureHintTimer;
+  Timer? _statusTimer;
   String? _seekHint;
   Timer? _sleepTimer;
   Timer? _sourceProgressTimer;
@@ -168,6 +169,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     WidgetsBinding.instance.addObserver(this);
     // 播放期间保持屏幕常亮，防止观看中自动息屏。
     WakelockPlus.enable();
+    // 状态栏系统信息（电量/网速）：每秒刷新，仅在控件显示时可见。
+    SystemInfoService.instance.start();
+    _statusTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted && _playerService.showControls) setState(() {});
+    });
     _activeState = this;
     _activeSourcePlay = widget.sourcePlay;
     _sourceCoreOverride =
@@ -1721,6 +1727,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     WidgetsBinding.instance.removeObserver(this);
     // 离开播放器恢复系统息屏策略。
     WakelockPlus.disable();
+    _statusTimer?.cancel();
+    SystemInfoService.instance.stop();
     _streamTranslator?.stop();
     _streamTranslator = null;
     _introSkip.dispose();
@@ -2509,6 +2517,24 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
+          // 状态栏：左上时间、右上电量+网速
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            child: Row(
+              children: [
+                Text(
+                  _timeNow(),
+                  style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500),
+                ),
+                const Spacer(),
+                // 电量 + 网速
+                _buildStatusIcons(),
+              ],
+            ),
+          ),
           Row(
             children: [
               IconButton(
@@ -2636,7 +2662,51 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     return core == 'mpv' || core == 'nativeMpv';
   }
 
-  /// 媒体 logo 缩略图 URL（poster 优先，backdrop 兜底）。
+  /// 当前时间字符串（HH:mm）。
+  String _timeNow() {
+    final now = DateTime.now();
+    return '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+  }
+
+  /// 状态栏：电量 + 网速下行图标。
+  Widget _buildStatusIcons() {
+    final info = SystemInfoService.instance;
+    final battery = info.battery;
+    final speed = info.rxSpeed;
+    final speedText = speed > 1000000
+        ? '${(speed / 1000000).toStringAsFixed(1)}MB/s'
+        : speed > 1000
+            ? '${(speed / 1000).toStringAsFixed(0)}KB/s'
+            : '${speed.toStringAsFixed(0)}B/s';
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.wifi_rounded, size: 12, color: Colors.white60),
+        const SizedBox(width: 3),
+        Text(speedText,
+            style: const TextStyle(
+                color: Colors.white60,
+                fontSize: 10,
+                fontWeight: FontWeight.w500)),
+        const SizedBox(width: 10),
+        Icon(
+          battery >= 80
+              ? Icons.battery_full_rounded
+              : battery >= 40
+                  ? Icons.battery_std_rounded
+                  : Icons.battery_alert_rounded,
+          size: 14,
+          color: battery < 20 ? Colors.orangeAccent : Colors.white60,
+        ),
+        const SizedBox(width: 3),
+        Text('$battery%',
+            style: const TextStyle(
+                color: Colors.white60,
+                fontSize: 10,
+                fontWeight: FontWeight.w500)),
+      ],
+    );
+  }
   String? _mediaLogoUrl(MediaItem item) {
     final api = ref.read(apiClientProvider);
     try {

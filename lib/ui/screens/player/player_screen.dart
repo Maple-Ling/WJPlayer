@@ -13,6 +13,7 @@ import '../../../core/api/api_interfaces.dart';
 import '../../../core/network/prefetch_proxy/prefetch_proxy.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/services/cache_service.dart';
+import '../../../core/services/system_info_service.dart';
 import '../../../core/providers/media_providers.dart';
 import '../../../core/services/watch_history/watch_history_models.dart';
 import '../../../core/providers/sync_providers.dart';

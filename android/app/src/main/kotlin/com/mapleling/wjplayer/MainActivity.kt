@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.app.ApplicationExitInfo
 import android.content.ContentValues
 import android.content.Context
+import android.os.BatteryManager
 import android.media.AudioManager
 import android.provider.Settings
 import android.os.Build
@@ -147,6 +148,45 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        // 播放器状态栏：电量 / 网速
+        val systemInfoChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.mapleling.wjplayer/system_info"
+        )
+        systemInfoChannel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getBattery" -> {
+                    result.success(currentBatteryPercent())
+                }
+                "getTrafficBytes" -> {
+                    // 返回最近 1 秒收发的字节数（用于计算网速）
+                    val now = System.currentTimeMillis()
+                    val rx = android.net.TrafficStats.getTotalRxBytes()
+                    val tx = android.net.TrafficStats.getTotalTxBytes()
+                    val last = lastTrafficBytes
+                    if (last == null) {
+                        lastTrafficBytes = longArrayOf(now, rx, tx)
+                        result.success(doubleArrayOf(0.0, 0.0))
+                    } else {
+                        val dt = ((now - last[0]) / 1000.0).coerceAtLeast(0.01)
+                        val rxSpeed = (rx - last[1]).coerceAtLeast(0) / dt
+                        val txSpeed = (tx - last[2]).coerceAtLeast(0) / dt
+                        lastTrafficBytes = longArrayOf(now, rx, tx)
+                        result.success(doubleArrayOf(rxSpeed, txSpeed))
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private var lastTrafficBytes: LongArray? = null
+
+    private fun currentBatteryPercent(): Int {
+        val bm = getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+            ?: return 100
+        return bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
     }
 
     private fun currentWindowBrightness(): Double {
