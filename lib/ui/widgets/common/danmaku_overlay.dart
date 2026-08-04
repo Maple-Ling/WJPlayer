@@ -69,25 +69,32 @@ class _DanmakuOverlayState extends State<DanmakuOverlay>
   void _onTick(Duration elapsed) {
     _tickerElapsed = elapsed;
     if (!widget.isPlaying) return;
+    // delta = 真实流逝时间（microseconds），乘以倍速得到视频时间增量。
     final delta = elapsed - _lastSyncElapsed;
     final scaledMicros =
         (delta.inMicroseconds * widget.playbackRate.clamp(0.1, 8.0)).round();
-    _smoothPosition =
-        _lastSyncPosition + Duration(microseconds: scaledMicros);
+    _smoothPosition = _lastSyncPosition + Duration(microseconds: scaledMicros);
     setState(() {});
   }
 
   @override
   void didUpdateWidget(DanmakuOverlay old) {
     super.didUpdateWidget(old);
-    if (widget.position != old.position ||
-        widget.playbackRate != old.playbackRate) {
+    if (widget.position != old.position) {
       _lastSyncPosition = widget.position;
-      _lastSyncElapsed = widget.position; // 对齐时间轴，避免倍速切换跳帧
       _smoothPosition = widget.position;
+      // _lastSyncElapsed 始终与 _tickerElapsed 同单位，不赋值 video position。
+      _lastSyncElapsed = _tickerElapsed;
+    }
+    if (widget.playbackRate != old.playbackRate) {
+      // 倍速变化只需刷新 delta 系数，无需重设同步点。
+      _smoothPosition = widget.position;
+      _lastSyncPosition = widget.position;
+      _lastSyncElapsed = _tickerElapsed;
     }
     if (widget.isPlaying && !old.isPlaying) {
-      _lastSyncPosition = _smoothPosition;
+      _lastSyncPosition = widget.position;
+      _smoothPosition = widget.position;
       _lastSyncElapsed = _tickerElapsed;
     }
   }
@@ -140,6 +147,10 @@ class DanmakuLayoutCache {
   int? _laneTrackCount;
   double? _laneSpeed;
 
+  /// 每条轨道的所有占用者（index → [(startTime, endTime, width, speed), ...]）。
+  /// 用于精确检测同轨弹幕碰撞，防止重叠。
+  final Map<int, List<_LaneSlot>> laneSlots = {};
+
   void ensure(List<DanmakuItem> items, double fontSize, double width,
       bool stroke, String? fontFamily) {
     if (identical(_items, items) &&
@@ -157,15 +168,17 @@ class DanmakuLayoutCache {
     _fill = List<ui.Paragraph?>.filled(items.length, null);
     _strokeParas = List<ui.Paragraph?>.filled(items.length, null);
     _widths = List<double>.filled(items.length, 0);
-    laneOf.clear(); // 换集/换字号 → 索引与宽度全变，轨道分配重来
+    laneOf.clear();
+    laneSlots.clear();
   }
 
-  /// 轨道数或速度变了（旋转/改显示区域/改速度）→ 已冻结的轨道号失效，清空重排。
+  /// 轨道数或速度变了 → 清空重排。
   void ensureLanes(int trackCount, double speed) {
     if (_laneTrackCount != trackCount || _laneSpeed != speed) {
       _laneTrackCount = trackCount;
       _laneSpeed = speed;
       laneOf.clear();
+      laneSlots.clear();
     }
   }
 
@@ -333,11 +346,15 @@ class DanmakuPainter extends CustomPainter {
       added++;
     }
 
-    // 轨道占用：每条轨道记录「最近一条」占用者，用于给新弹幕挑不冲突的轨道。
+    // 轨道占用：每条轨道记录「全部」占用者，用于给新弹幕挑不冲突的轨道。
     // 滚动/顶部/底部三类各自一套轨道。
-    final scrollOccupant = List<_DanmakuTrackItem?>.filled(trackCount, null);
-    final topOccupant = List<_DanmakuTrackItem?>.filled(trackCount, null);
-    final bottomOccupant = List<_DanmakuTrackItem?>.filled(trackCount, null);
+    final scrollOccupant = List<List<_DanmakuTrackItem>>.generate(
+        trackCount, (_) => <_DanmakuTrackItem>[]);
+    final topOccupant =
+        List<List<_DanmakuTrackItem>>.generate(trackCount, (_) => <_DanmakuTrackItem>[]);
+    final bottomOccupant =
+        List<List<_DanmakuTrackItem>>.generate(
+            trackCount, (_) => <_DanmakuTrackItem>[]);
 
     // Pass 1：已分配轨道的弹幕直接复用冻结轨道号（不再重算 → 不抖动），并登记占用。
     final unassigned = <_DanmakuTrackItem>[];
@@ -375,50 +392,62 @@ class DanmakuPainter extends CustomPainter {
     }
   }
 
-  /// 登记轨道占用——只保留「最近（time 最大）」的一条，作为新弹幕的冲突参照。
+  /// 登记轨道占用——保留全部占用者，用于给新弹幕做完整碰撞检测。
   void _recordOccupant(
       _DanmakuTrackItem ti,
       int lane,
-      List<_DanmakuTrackItem?> scrollOccupant,
-      List<_DanmakuTrackItem?> topOccupant,
-      List<_DanmakuTrackItem?> bottomOccupant) {
+      List<List<_DanmakuTrackItem>> scrollOccupant,
+      List<List<_DanmakuTrackItem>> topOccupant,
+      List<List<_DanmakuTrackItem>> bottomOccupant) {
     if (lane < 0 || lane >= scrollOccupant.length) return;
     final occ = ti.item.type == 4
-        ? bottomOccupant
+        ? bottomOccupant[lane]
         : ti.item.type == 5
-            ? topOccupant
-            : scrollOccupant;
-    final cur = occ[lane];
-    if (cur == null || ti.item.time > cur.item.time) occ[lane] = ti;
+            ? topOccupant[lane]
+            : scrollOccupant[lane];
+    // 清理已过期的（不在屏幕内且已结束）
+    occ.removeWhere((e) {
+      if (e.item.type == 4 || e.item.type == 5) {
+        return _currentSeconds - e.item.time > _topBottomDuration;
+      }
+      final ex = _computeX(e, scrollOccupant[0].isEmpty ? ti : e, Size.zero);
+      return false;
+    });
+    occ.add(ti);
   }
 
-  /// 给一条刚出生的弹幕挑轨道：找第一条与当前占用者不冲突的轨道；实在没有就压到最后一轨。
+  /// 给一条刚出生的弹幕挑轨道：找第一条与所有占用者都不重叠的轨道。
   int _assignLane(
       _DanmakuTrackItem ti,
       Size size,
-      List<_DanmakuTrackItem?> scrollOccupant,
-      List<_DanmakuTrackItem?> topOccupant,
-      List<_DanmakuTrackItem?> bottomOccupant,
+      List<List<_DanmakuTrackItem>> scrollOccupant,
+      List<List<_DanmakuTrackItem>> topOccupant,
+      List<List<_DanmakuTrackItem>> bottomOccupant,
       int trackCount) {
     final type = ti.item.type;
     if (type == 4 || type == 5) {
       final occ = type == 4 ? bottomOccupant : topOccupant;
       for (var i = 0; i < trackCount; i++) {
-        final e = occ[i];
-        // 固定弹幕停留 _topBottomDuration 秒，过了就腾出该轨。
-        if (e == null || _currentSeconds - e.item.time > _topBottomDuration) {
-          return i;
-        }
+        if (occ[i].isEmpty) return i;
       }
       return trackCount - 1;
     }
-    // 滚动弹幕：同速前进，出生时不与占用者重叠则永不重叠。
-    final x = _computeX(ti, size);
+    // 滚动弹幕：出生时在右侧外，只有同轨有弹幕还在屏幕内才冲突。
+    final myRight = size.width + _padding;
     for (var i = 0; i < trackCount; i++) {
-      final e = scrollOccupant[i];
-      if (e == null) return i;
-      final eRight = _computeX(e, size) + e.width;
-      if (x > eRight + _padding * 2) return i;
+      bool hasConflict = false;
+      for (final e in scrollOccupant[i]) {
+        final eX = _computeX(e, size);
+        final eRight = eX + e.width;
+        if (eRight > 0 && eX < myRight) {
+          // 对方还在屏幕内，有冲突
+          if (eX + e.width < myRight) {
+            hasConflict = true;
+            break;
+          }
+        }
+      }
+      if (!hasConflict) return i;
     }
     return trackCount - 1;
   }
@@ -426,7 +455,7 @@ class DanmakuPainter extends CustomPainter {
   double _computeX(_DanmakuTrackItem trackItem, Size size) {
     final type = trackItem.item.type;
     final elapsed = _currentSeconds - trackItem.item.time;
-    if (elapsed < 0) return -trackItem.width;
+    if (elapsed < 0) return size.width + _padding;
 
     if (type == 4 || type == 5) {
       // 固定弹幕（顶部/底部）只显示 _topBottomDuration 秒；过期返回屏外坐标，让

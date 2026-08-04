@@ -2784,10 +2784,27 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                           borderRadius: BorderRadius.circular(4),
                           child: MediaImage(
                             imageUrl: server.iconUrl!,
-                            width: 16,
-                            height: 16,
+                            width: 18,
+                            height: 18,
                           ),
-                        ),
+                        )
+                      else
+                        if (server.sourceKind == SourceKind.feiniu)
+                          Image.asset(
+                            'assets/icons/fnico.png',
+                            width: 18,
+                            height: 18,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                          )
+                        else
+                          Image.asset(
+                            'assets/images/emby_default.png',
+                            width: 18,
+                            height: 18,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                          ),
                       const SizedBox(width: 6),
                       Flexible(
                         child: Text(
@@ -4375,7 +4392,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       ),
       if (!Platform.isAndroid)
         capsuleOption(
-          label: 'MPV (media_kit)',
+          label: '原生 MPV (media_kit)',
           selected: currentCore == 'mpv',
           onTap: () {
             Navigator.of(context).maybePop();
@@ -5030,7 +5047,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       ),
       if (Platform.isAndroid)
         PanelOptionTile(
-          label: 'MPV 原生',
+          label: '原生 MPV',
           subtitle: 'libplayer.so 直调 libmpv，全格式/HDR/字幕',
           selected: currentCore == 'nativeMpv',
           onTap: () {
@@ -5042,7 +5059,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         ),
       if (!Platform.isAndroid)
         PanelOptionTile(
-          label: 'MPV (media_kit)',
+          label: '原生 MPV (media_kit)',
           subtitle: 'libmpv FFI，全格式/HDR/高级字幕',
           selected: currentCore == 'mpv',
           onTap: () {
@@ -5076,8 +5093,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     if (mounted) {
       final normalized = normalizePlayerCore(core);
       final label = switch (normalized) {
-        'mpv' => 'MPV (media_kit)',
-        'nativeMpv' => 'MPV 原生',
+        'mpv' => '原生 MPV',
+        'nativeMpv' => '原生 MPV',
         _ => 'ExoPlayer',
       };
       AppToast.show(context, '已切换到 $label',

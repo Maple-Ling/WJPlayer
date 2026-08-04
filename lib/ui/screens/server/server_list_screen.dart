@@ -765,10 +765,33 @@ class _ServerCard extends ConsumerWidget {
                 Container(
                   width: compact ? 32 : 48,
                   height: compact ? 32 : 48,
-                  decoration: BoxDecoration(color: const Color(0xFF5B8DEF).withValues(alpha: 0.15), borderRadius: BorderRadius.circular(12)),
+                  decoration: BoxDecoration(
+                      color: const Color(0xFF5B8DEF).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(12)),
                   child: server.iconUrl != null
-                      ? ClipRRect(borderRadius: BorderRadius.circular(12), child: MediaImage(imageUrl: server.iconUrl, width: 48, height: 48, fit: BoxFit.contain, useDefaultUserAgent: true, errorWidget: const EmbyDefaultIcon()))
-                      : const Icon(Icons.dns, color: Color(0xFF5B8DEF)),
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: MediaImage(
+                              imageUrl: server.iconUrl,
+                              width: 48,
+                              height: 48,
+                              fit: BoxFit.contain,
+                              useDefaultUserAgent: true,
+                              errorWidget:
+                                  const EmbyDefaultIcon()))
+                      : server.sourceKind == SourceKind.feiniu
+                          ? Image.asset(
+                              'assets/icons/fnico.png',
+                              width: compact ? 32 : 48,
+                              height: compact ? 32 : 48,
+                              fit: BoxFit.cover,
+                              errorBuilder:
+                                  (_, __, ___) => const Icon(
+                                      Icons.dns,
+                                      color: Color(0xFF5B8DEF)),
+                            )
+                          : const Icon(Icons.dns,
+                              color: Color(0xFF5B8DEF)),
                 ),
                 const SizedBox(width: 10),
                 Expanded(

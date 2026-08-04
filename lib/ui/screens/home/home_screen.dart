@@ -475,11 +475,25 @@ class _ServerSelectorOverlayState extends State<_ServerSelectorOverlay>
                                                         const EmbyDefaultIcon(),
                                                   ),
                                                 )
-                                              : const Icon(
-                                                  Icons.dns,
-                                                  size: 16,
-                                                  color: Color(0xFF5B8DEF),
-                                                ),
+                                              : server.sourceKind == SourceKind.feiniu
+                                                  ? Image.asset(
+                                                      'assets/icons/fnico.png',
+                                                      width: 32,
+                                                      height: 32,
+                                                      fit: BoxFit.cover,
+                                                      errorBuilder:
+                                                          (_, __, ___) =>
+                                                              const Icon(
+                                                                  Icons.dns,
+                                                                  size: 16,
+                                                                  color: Color(
+                                                                      0xFF5B8DEF)),
+                                                    )
+                                                  : const Icon(
+                                                      Icons.dns,
+                                                      size: 16,
+                                                      color: Color(0xFF5B8DEF),
+                                                    ),
                                         ),
                                         const SizedBox(width: 10),
                                         Expanded(
@@ -636,8 +650,20 @@ class _HomeAppBarState extends ConsumerState<_HomeAppBar> {
                                   errorWidget: const EmbyDefaultIcon(),
                                 ),
                               )
-                            : const Icon(Icons.dns_rounded,
-                                size: 18, color: Color(0xFF5B8DEF)),
+                            : currentServer?.sourceKind == SourceKind.feiniu
+                                ? Image.asset(
+                                    'assets/icons/fnico.png',
+                                    width: 30,
+                                    height: 30,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) =>
+                                        const Icon(
+                                            Icons.dns_rounded,
+                                            size: 18,
+                                            color: Color(0xFF5B8DEF)),
+                                  )
+                                : const Icon(Icons.dns_rounded,
+                                    size: 18, color: Color(0xFF5B8DEF)),
                       ),
                       const SizedBox(width: 8),
                       Flexible(
