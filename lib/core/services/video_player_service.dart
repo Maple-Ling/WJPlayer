@@ -1229,7 +1229,7 @@ class VideoPlayerService extends ChangeNotifier {
   Future<void> setZeroCopyHwdec(bool enable) async {
     _zeroCopyHwdec = enable;
     final a = _adapter;
-    if (a is NativeMpvPlayerAdapter) await a.applyZeroCopyHwdec(enable);
+    if (a is NativeMpvPlayerAdapter) a.applyZeroCopyHwdec(enable);
     notifyListeners();
   }
 
