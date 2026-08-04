@@ -41,11 +41,10 @@ dependencies:
 
   # 原生播放器
   # media_kit: 跨平台视频播放器（基于 libmpv 的封装库）
-  # 注意：PC 端 PGS/SUP 渲染依赖 libmpv 是否包含 hdmv_pgs_subtitle 解码器；
-  #       media-kit 的 Windows 预编译包默认不含该解码器，需额外替换 libmpv-2.dll。
-  media_kit: ^1.2.6
-  media_kit_video: ^2.0.1
-  media_kit_libs_video: ^1.0.7
+  # 已废弃，改用自定义 JNI libmpv（native_mpv_player_adapter）
+  # media_kit: ^1.2.6
+  # media_kit_video: ^2.0.1
+  # media_kit_libs_video: ^1.0.7
 
   # 播放时保持屏幕常亮（防止观看中息屏）
   wakelock_plus: ^1.2.8
@@ -57,7 +56,7 @@ dependencies:
   path_provider_platform_interface: ^2.1.0
   path: ^1.9.0
   uuid: ^4.3.3
-  win32: ^5.15.0
+  # win32: ^5.15.0  # removed: only used by external_player MPV IPC (non-Android)
   # 应用内更新：下载 APK 后调起系统安装器（Android/TV 覆盖更新）
   open_filex: ^4.5.0
   

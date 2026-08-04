@@ -16,7 +16,7 @@ import 'package:path_provider/path_provider.dart';
 /// 别的播放器的「mpv 超分」用的就是 FSR/CAS 这类**轻量解析算法**（10KB/2KB），非重型 ML 超分。
 ///   - modeA（锐化·最安全）：CAS 对比度自适应锐化，**源分辨率就能跑**（无需抬渲染尺寸）、featherweight。
 ///   - modeAA（放大+锐化）：FSR1 EASU 边缘自适应放大 + RCAS 锐化；EASU 需「输出>源」才放大，
-///     故配合适配器把渲染尺寸抬到窗口分辨率（见 [MpvPlayerAdapter._applyMpvRenderSizeForShaders]）。
+///     故配合适配器把渲染尺寸抬到窗口分辨率。
 /// 全部 `//!COMPUTE` 为 0（片段，ANGLE 安全，不蓝屏）。'off'/未知档位返回空列表(=关超分)。
 /// 键名沿用 modeA/modeAA（持久化兼容），旧键自然落 off。
 /// **Anime4K Medium 官方 A/B/C 六档**（用户指定，也是最常用的一套）。全部**片段着色器**

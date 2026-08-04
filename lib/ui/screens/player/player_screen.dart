@@ -26,7 +26,6 @@ import '../../widgets/common/danmaku_overlay.dart';
 import '../../widgets/common/media_widgets.dart';
 import '../../utils/media_helpers.dart';
 import '../../../core/services/video_player_service.dart';
-import '../../../core/services/mpv_player_adapter.dart';
 import '../../../core/services/exo_player_adapter.dart';
 import '../../../core/services/native_mpv_player_adapter.dart';
 import '../../../core/services/app_logger.dart';

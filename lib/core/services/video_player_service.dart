@@ -10,7 +10,7 @@ import '../../plugins/runtime/plugin_player_bridge.dart';
 import 'app_logger.dart';
 import 'player_adapter.dart';
 import 'exo_player_adapter.dart';
-import 'mpv_player_adapter.dart';
+// MpvPlayerAdapter removed: unused, replaced by NativeMpvPlayerAdapter
 import 'native_mpv_player_adapter.dart';
 import 'windows_native_mpv_adapter.dart';
 
@@ -286,10 +286,6 @@ class VideoPlayerService extends ChangeNotifier {
       case PlayerCoreType.exoPlayer:
         return ExoPlayerAdapter();
       case PlayerCoreType.mpv:
-        if (Platform.isWindows && _windowsNativeRender) {
-          return WindowsNativeMpvAdapter();
-        }
-        return MpvPlayerAdapter();
       case PlayerCoreType.nativeMpv:
         return NativeMpvPlayerAdapter();
     }
@@ -884,41 +880,35 @@ class VideoPlayerService extends ChangeNotifier {
   /// 原生 mpv 属性读取（media_kit 与 Android 原生 mpv 内核，其他返回 null）。
   Future<String?> mpvGetProperty(String name) async {
     final a = _adapter;
-    if (a is MpvPlayerAdapter) return a.mpvGetProperty(name);
     if (a is NativeMpvPlayerAdapter) return a.mpvGetProperty(name);
     return null;
   }
 
-  /// 原生 mpv 属性设置（media_kit 与 Android 原生 mpv 内核）。
+  /// 原生 mpv 属性设置（NativeMpvPlayerAdapter）。
   Future<void> mpvSetProperty(String name, String value) async {
     final a = _adapter;
-    if (a is MpvPlayerAdapter) await a.mpvSetProperty(name, value);
     if (a is NativeMpvPlayerAdapter) await a.mpvSetProperty(name, value);
   }
 
-  /// 原生 mpv 命令（media_kit 与 Android 原生 mpv 内核）。
+  /// 原生 mpv 命令（NativeMpvPlayerAdapter）。
   Future<void> mpvCommand(List<String> args) async {
     final a = _adapter;
-    if (a is MpvPlayerAdapter) await a.mpvCommand(args);
     if (a is NativeMpvPlayerAdapter) await a.mpvCommand(args);
     if (a is WindowsNativeMpvAdapter) await a.mpvCommand(args);
   }
 
-  /// 当前内核是否为 media_kit/mpv。
-  bool get isMpvCore => _adapter is MpvPlayerAdapter;
+  /// 当前内核是否为 MPV（NativeMpvPlayerAdapter）。
+  bool get isMpvCore => _adapter is NativeMpvPlayerAdapter;
 
-  /// 是否支持 sub-step 从已缓冲区预读（凡是 libmpv 内核均可：media_kit + 原生 mpv）。
-  bool get supportsSubStep =>
-      _adapter is MpvPlayerAdapter || _adapter is NativeMpvPlayerAdapter;
+  /// 是否支持 sub-step 从已缓冲区预读（NativeMpvPlayerAdapter 支持）。
+  bool get supportsSubStep => _adapter is NativeMpvPlayerAdapter;
 
   /// 流式翻译期间隐藏/恢复播放器自带字幕渲染（原文/译文统一走叠加层按排版显示）。
   /// mpv（media_kit / 原生）用 `sub-visibility`，ExoPlayer 用其渲染开关。
   void setNativeSubtitleHidden(bool hidden) {
     final a = _adapter;
-    if (a is MpvPlayerAdapter) {
+    if (a is NativeMpvPlayerAdapter) {
       unawaited(a.mpvSetProperty('sub-visibility', hidden ? 'no' : 'yes'));
-    } else if (a is NativeMpvPlayerAdapter) {
-      a.setNativeSubtitleHidden(hidden);
     } else if (a is ExoPlayerAdapter) {
       a.setNativeSubtitleHidden(hidden);
     }
@@ -1226,7 +1216,7 @@ class VideoPlayerService extends ChangeNotifier {
   /// 届时桌面 UI 自动退回「下次播放生效」分支。）
   bool get superResolutionCanApplyLive {
     final a = _adapter;
-    if (a is MpvPlayerAdapter) return !a.isSoftwareTexture;
+    if (a is NativeMpvPlayerAdapter) return !a.isSoftwareTexture;
     return true; // 原生 mpv 恒硬件表面；其余内核不支持超分菜单也走不到这里
   }
 
@@ -1239,7 +1229,7 @@ class VideoPlayerService extends ChangeNotifier {
   Future<void> setZeroCopyHwdec(bool enable) async {
     _zeroCopyHwdec = enable;
     final a = _adapter;
-    if (a is MpvPlayerAdapter) await a.applyZeroCopyHwdec(enable);
+    if (a is NativeMpvPlayerAdapter) await a.applyZeroCopyHwdec(enable);
     notifyListeners();
   }
 
@@ -1281,7 +1271,6 @@ class VideoPlayerService extends ChangeNotifier {
   /// 下仍不会渲染。用于 UI 给用户「到底生效没」的确切反馈，取代盲猜。
   int get activeGlslShaderCount {
     final a = _adapter;
-    if (a is MpvPlayerAdapter) return a.activeGlslShaderCount;
     if (a is NativeMpvPlayerAdapter) return a.activeGlslShaderCount;
     return 0;
   }

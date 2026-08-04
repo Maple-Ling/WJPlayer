@@ -1135,7 +1135,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     if (subtitleTracks.isEmpty) {
       logger.w('Player', 'MPV 无可用字幕轨道 - 设置pending等待轨道就绪');
       final mpvAdapter = _playerService.adapter;
-      if (mpvAdapter is MpvPlayerAdapter) {
+      if (mpvAdapter is NativeMpvPlayerAdapter) {
         mpvAdapter.setPendingSubtitle(
           target.codec?.toLowerCase() ?? 'ass',
           title: target.displayTitle ?? target.title,
