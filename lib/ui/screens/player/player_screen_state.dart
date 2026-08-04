@@ -3800,14 +3800,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   String _episodeLabel(MediaItem? item) {
     if (item == null) return '';
-    if (item.seasonId != null && item.indexNumber != null) {
-      return '第 ${item.indexNumber} 集';
-    }
-    return item.name ?? '';
-  }
-
-  String _episodeLabel(MediaItem? item) {
-    if (item == null) return '';
     final number = item.indexNumber;
     if (number != null) return '第 $number 集';
     return item.name;
