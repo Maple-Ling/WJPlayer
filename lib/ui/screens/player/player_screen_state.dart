@@ -2728,7 +2728,24 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 ),
                 const Spacer(),
                 // 电量 + 网速
-                _buildStatusIcons(),
+                Row(
+                children: [
+                  _buildStatusIcons(),
+                  // 网速显示（WiFi 图标左侧）
+                  if (SystemInfoService.instance.rxSpeed > 0) ...[
+                    const SizedBox(width: 12),
+                    Text(
+                      _formatSpeed(
+                          SystemInfoService.instance.rxSpeed),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 10.5,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
               ],
             ),
           ),

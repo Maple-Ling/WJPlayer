@@ -1,27 +1,2 @@
-# 22项重构任务计划
-
-## 已完成（14项）
-1. ✅ 双击 1/4-1/2-1/4
-2. ✅ HUD 3/4 高度 + 长按倍速符号化
-3. ✅ 比例精简 3 项
-4. ✅ _switchLine 重连
-5. ✅ TopBar 网速
-6. ✅ MPV → 原生 MPV
-7. ✅ 飞牛图标（3处）
-8. ✅ 双排长按排序
-9. ✅ 首页隐藏过滤
-10. ✅ 弹幕轨道高度 32→24
-11. ✅ 卡顿网速显示
-12. ✅ PlayerOverlay 手势透传
-13. ✅ 弹幕入场跳屏修复
-14. ✅ 弹幕倍速同步修复
-15. ✅ 弹幕防重叠（全轨碰撞检测）
-16. ✅ 播放界面顶栏网速显示
-
-## 待完成（6项）
-17. ⬜ 首页数据缓存
-18. ⬜ 详情页浅蓝蒙版
-19. ⬜ 详情页分界线渐变
-20. ⬜ MPV 比例/倍速性能
-21. ⬜ 聚合搜索复用播放资源
-22. ⬜ 提交CI
+[CONTEXT OFFLOADED] Content (~113 tokens, 535 bytes) saved to: /var/minis/offloads/tools/file_write_422027390f2b.txt
+Use file_read tool to retrieve if needed.

@@ -60,7 +60,8 @@ class MpvPlayerAdapter implements PlayerAdapter {
   // 逐流取流鉴权（网盘/聚合源直链）：open 与 reload 共用，保证重签后仍带 Cookie/Token。
   Map<String, String>? _httpHeaders;
   String? _userAgentOverride;
-  String? _aspectRatio;
+  /// 默认比例：'-1' 表示保持视频原始宽高比，禁止拉伸变形。
+  String? _aspectRatio = '-1';
   List<String>? _glslShaders;
   // 当前是否硬件解码（initialize 传入，供 applyZeroCopyHwdec 决定是否可切）。
   bool _hardwareDecoding = true;
@@ -2070,21 +2071,27 @@ class MpvPlayerAdapter implements PlayerAdapter {
     switch (ratio) {
       case '16:9':
         value = '16/9';
+        break;
       case '4:3':
         value = '4/3';
+        break;
       case '21:9':
         value = '21/9';
+        break;
       case '原始':
-        value = '0';
-      case '拉伸': // 变形铺满
+      case '自动':
+        // 不覆盖，保持媒体原始宽高比
+        value = '-1';
+        keepAspect = true;
+        break;
+      case '拉伸':
         value = '-1';
         keepAspect = false;
-      case '铺满': // 裁切铺满
+        break;
+      case '铺满':
         value = '-1';
         panscan = 1.0;
-      default: // 自适应 / 自动 / 全屏：交给 mpv 使用媒体默认比例
-        value = '-1';
-    }
+        break;
     final np = _nativePlayer;
     if (np != null) {
       await np.setProperty('keepaspect', keepAspect ? 'yes' : 'no');

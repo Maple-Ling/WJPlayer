@@ -51,6 +51,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
+    // 首页数据缓存：不在 initState 中 invalidate，让 allLibrariesProvider
+    // 的 keepAlive 缓存持续生效。用户下拉刷新时才重新拉网络。
   }
 
   @override
