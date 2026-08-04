@@ -1790,179 +1790,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           return Stack(
             fit: StackFit.expand,
             children: [
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: _playerService.toggleControls,
-                onDoubleTapDown: _onDoubleTapDown,
-                onLongPressStart: (_) => _onLongPressStart(),
-                onLongPressEnd: (_) => _onLongPressEnd(),
-                // 用 Scale 手势统一处理：单指→沿用亮度/音量/进度拖动；双指→缩放画面。
-                // GestureDetector 不允许同时挂 pan(drag) 与 scale，故由 scale 分流。
-                onScaleStart: (details) => _onScaleStart(details, constraints),
-                onScaleUpdate: (details) =>
-                    _onScaleUpdate(details, constraints),
-                onScaleEnd: _onScaleEnd,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    if (_playerService.coreType == PlayerCoreType.exoPlayer)
-                      ClipRect(
-                        child: Transform.scale(
-                          scale: _videoZoom,
-                          child: _buildVideoArea(),
-                        ),
-                      )
-                    else
-                      _buildVideoArea(),
-                    // Exo 字幕固定在播放器层，不参与视频比例/填充/裁剪。
-                    if (_playerService.coreType == PlayerCoreType.exoPlayer)
-                      _buildExoSubtitleOverlay(),
-                    if (!Platform.isAndroid && _playerService.brightness < 1.0)
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: ColoredBox(
-                            color: Colors.black.withValues(
-                              alpha: (1.0 - _playerService.brightness)
-                                  .clamp(0.0, 0.9),
-                            ),
-                          ),
-                        ),
-                      ),
-                    // 流式翻译叠加层（按双语排版显示原文/译文，位于控制条之下）。
-                    if (_streamTranslator != null)
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 64,
-                        child: IgnorePointer(
-                          child: ValueListenableBuilder<String>(
-                            valueListenable: _streamTranslator!.displayText,
-                            builder: (context, text, _) {
-                              if (text.isEmpty) {
-                                return const SizedBox.shrink();
-                              }
-                              return Center(
-                                child: Container(
-                                  margin: const EdgeInsets.symmetric(
-                                      horizontal: 24),
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withValues(alpha: 0.5),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    text,
-                                    textAlign: TextAlign.center,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w600,
-                                      shadows: [
-                                        Shadow(
-                                            blurRadius: 4, color: Colors.black),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    if (_playerService.isBuffering)
-                      const Center(
-                        child: CircularProgressIndicator(color: Colors.white),
-                      ),
-                    if (_playerService.hasError)
-                      Center(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 420),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.error_outline,
-                                  color: Colors.white, size: 48),
-                              const SizedBox(height: 16),
-                              Text(
-                                friendlyPlaybackError(
-                                    _playerService.errorMessage),
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600),
-                                textAlign: TextAlign.center,
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                kPlaybackErrorFeedbackHint,
-                                style: TextStyle(
-                                    color: Colors.white.withValues(alpha: 0.65),
-                                    fontSize: 11.5,
-                                    height: 1.6),
-                                textAlign: TextAlign.center,
-                              ),
-                              const SizedBox(height: 6),
-                              const SelectableText(
-                                kFeedbackChannelUrl,
-                                style: TextStyle(
-                                    color: Color(0xFF5B8DEF),
-                                    fontSize: 12.5,
-                                    fontWeight: FontWeight.w600),
-                              ),
-                              const SizedBox(height: 16),
-                              ElevatedButton(
-                                onPressed: _initializePlayer,
-                                child: const Text('重试'),
-                              ),
-                              // L3：断流自动恢复耗尽后，把现成的手动切线入口摆到用户面前。
-                              // 仅多线路服务器显示；不自动切线（由用户决定换哪条）。
-                              if ((ref
-                                          .watch(currentServerProvider)
-                                          ?.lines
-                                          .length ??
-                                      0) >
-                                  1) ...[
-                                const SizedBox(height: 8),
-                                TextButton(
-                                  onPressed: _showLineSelector,
-                                  child: const Text(
-                                    '切换线路',
-                                    style: TextStyle(color: Colors.white),
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ),
-                    if (_playerService.isAdjustingLevel)
-                      _buildGestureIndicator(),
-                    if (_seekHint != null) _buildSeekHint(),
-                    if (_isLongPressing) _buildLongPressIndicator(),
-                    if (_playerService.isDragging &&
-                        _playerService.isScrubbingPosition)
-                      _buildDragIndicator(),
-                    if (_showSkipButton)
-                      Positioned(
-                        top: 100,
-                        right: 24,
-                        child: ElevatedButton.icon(
-                          onPressed: _onSkipOpeningPressed,
-                          icon: const Icon(Icons.skip_next, size: 18),
-                          label: const Text('跳过片头'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                Colors.black.withValues(alpha: 0.7),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 8),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
+              _buildPlayerBody(item, constraints),
               if (_playerService.showControls && !_playerService.isLocked)
                 Positioned.fill(child: _buildControlsOverlay(item)),
               // 锁定态：解锁按钮与未锁定时的锁定按钮同位置（左侧居中），且随控制栏计时自动隐藏，不再长驻。
@@ -1985,6 +1813,181 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             ],
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildPlayerBody(MediaItem? item, BoxConstraints constraints) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _playerService.toggleControls,
+      onDoubleTapDown: _onDoubleTapDown,
+      onLongPressStart: (_) => _onLongPressStart(),
+      onLongPressEnd: (_) => _onLongPressEnd(),
+      // 用 Scale 手势统一处理：单指→沿用亮度/音量/进度拖动；双指→缩放画面。
+      // GestureDetector 不允许同时挂 pan(drag) 与 scale，故由 scale 分流。
+      onScaleStart: (details) => _onScaleStart(details, constraints),
+      onScaleUpdate: (details) =>
+          _onScaleUpdate(details, constraints),
+      onScaleEnd: _onScaleEnd,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (_playerService.coreType == PlayerCoreType.exoPlayer)
+            ClipRect(
+              child: Transform.scale(
+                scale: _videoZoom,
+                child: _buildVideoArea(),
+              ),
+            )
+          else
+            _buildVideoArea(),
+          // Exo 字幕固定在播放器层，不参与视频比例/填充/裁剪。
+          if (_playerService.coreType == PlayerCoreType.exoPlayer)
+            _buildExoSubtitleOverlay(),
+          if (!Platform.isAndroid && _playerService.brightness < 1.0)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: ColoredBox(
+                  color: Colors.black.withValues(
+                    alpha: (1.0 - _playerService.brightness)
+                        .clamp(0.0, 0.9),
+                  ),
+                ),
+              ),
+            ),
+          // 流式翻译叠加层（按双语排版显示原文/译文，位于控制条之下）。
+          if (_streamTranslator != null)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 64,
+              child: IgnorePointer(
+                child: ValueListenableBuilder<String>(
+                  valueListenable: _streamTranslator!.displayText,
+                  builder: (context, text, _) {
+                    if (text.isEmpty) {
+                      return const SizedBox.shrink();
+                    }
+                    return Center(
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 24),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.5),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          text,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w600,
+                            shadows: [
+                              Shadow(
+                                  blurRadius: 4, color: Colors.black),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          if (_playerService.isBuffering)
+            const Center(
+              child: CircularProgressIndicator(color: Colors.white),
+            ),
+          if (_playerService.hasError)
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.error_outline,
+                        color: Colors.white, size: 48),
+                    const SizedBox(height: 16),
+                    Text(
+                      friendlyPlaybackError(
+                          _playerService.errorMessage),
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      kPlaybackErrorFeedbackHint,
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.65),
+                          fontSize: 11.5,
+                          height: 1.6),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 6),
+                    const SelectableText(
+                      kFeedbackChannelUrl,
+                      style: TextStyle(
+                          color: Color(0xFF5B8DEF),
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: _initializePlayer,
+                      child: const Text('重试'),
+                    ),
+                    // L3：断流自动恢复耗尽后，把现成的手动切线入口摆到用户面前。
+                    // 仅多线路服务器显示；不自动切线（由用户决定换哪条）。
+                    if ((ref
+                                .watch(currentServerProvider)
+                                ?.lines
+                                .length ??
+                            0) >
+                        1) ...[
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: _showLineSelector,
+                        child: const Text(
+                          '切换线路',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          if (_playerService.isAdjustingLevel)
+            _buildGestureIndicator(),
+          if (_seekHint != null) _buildSeekHint(),
+          if (_isLongPressing) _buildLongPressIndicator(),
+          if (_playerService.isDragging &&
+              _playerService.isScrubbingPosition)
+            _buildDragIndicator(),
+          if (_showSkipButton)
+            Positioned(
+              top: 100,
+              right: 24,
+              child: ElevatedButton.icon(
+                onPressed: _onSkipOpeningPressed,
+                icon: const Icon(Icons.skip_next, size: 18),
+                label: const Text('跳过片头'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                      Colors.black.withValues(alpha: 0.7),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 8),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -2609,45 +2612,36 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 ),
               const Spacer(),
               // 右上角操作按钮（从右到左）：媒体信息 / 画面比例 / 跳过片头片尾 / 倍速 / 弹幕设置 / 弹幕
-              IconButton(
-                icon: const Icon(Icons.subtitles_rounded, color: Colors.white),
-                iconSize: 20,
+              // 全部改为居中深色胶囊菜单（对应 HTML 播放器 UI 原型二级菜单）。
+              _TopActionButton(
+                icon: Icons.subtitles_rounded,
                 tooltip: '弹幕',
-                onPressed: () {
-                  final notifier = ref.read(danmakuEnabledProvider.notifier);
-                  notifier.state = !notifier.state;
-                },
+                onTap: _showDanmakuCapsule,
               ),
-              IconButton(
-                icon: const Icon(Icons.closed_caption_rounded,
-                    color: Colors.white),
-                iconSize: 20,
+              _TopActionButton(
+                icon: Icons.closed_caption_rounded,
                 tooltip: '弹幕设置',
-                onPressed: _showDanmakuSettings,
+                onTap: _showDanmakuSetCapsule,
               ),
-              IconButton(
-                icon: const Icon(Icons.speed_rounded, color: Colors.white),
-                iconSize: 20,
+              _TopActionButton(
+                icon: Icons.speed_rounded,
                 tooltip: '倍速',
-                onPressed: _showSpeedPanel,
+                onTap: _showSpeedCapsule,
               ),
-              IconButton(
-                icon: const Icon(Icons.fast_forward_rounded, color: Colors.white),
-                iconSize: 20,
+              _TopActionButton(
+                icon: Icons.fast_forward_rounded,
                 tooltip: '跳过片头/片尾',
-                onPressed: _showSkipDialog,
+                onTap: _showSkipCapsule,
               ),
-              IconButton(
-                icon: const Icon(Icons.aspect_ratio_rounded, color: Colors.white),
-                iconSize: 20,
+              _TopActionButton(
+                icon: Icons.aspect_ratio_rounded,
                 tooltip: '画面比例',
-                onPressed: _showAspectRatioDialog,
+                onTap: _showAspectCapsule,
               ),
-              IconButton(
-                icon: const Icon(Icons.info_outline_rounded, color: Colors.white),
-                iconSize: 20,
+              _TopActionButton(
+                icon: Icons.info_outline_rounded,
                 tooltip: '媒体信息',
-                onPressed: _showStats,
+                onTap: _showInfoCapsule,
               ),
             ],
           ),
@@ -3001,35 +2995,36 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           ),
           const Spacer(),
           // 右下角（右→左）：聚合搜索 / 内核 / 线路 / 音频 / 字幕 / 选集
+          // 全部改为居中深色胶囊菜单（对应 HTML 播放器 UI 原型二级菜单）。
           _BottomBarAction(
             icon: Icons.travel_explore_rounded,
-            label: '聚合搜索',
-            onTap: _showAggregationSearch,
+            label: '聚合',
+            onTap: _showAggregationCapsule,
           ),
           _BottomBarAction(
             icon: Icons.memory_rounded,
             label: '内核',
-            onTap: _showCoreSwitchDialog,
+            onTap: _showCoreCapsule,
           ),
           _BottomBarAction(
             icon: Icons.route_rounded,
             label: '线路',
-            onTap: _showLineSelector,
+            onTap: _showLineCapsule,
           ),
           _BottomBarAction(
             icon: Icons.audiotrack_rounded,
             label: '音频',
-            onTap: _showAudioSettings,
+            onTap: _showAudioCapsule,
           ),
           _BottomBarAction(
             icon: Icons.subtitles_outlined,
             label: '字幕',
-            onTap: _showSubtitleSettings,
+            onTap: _showSubtitleCapsule,
           ),
           _BottomBarAction(
             icon: Icons.playlist_play_rounded,
             label: '选集',
-            onTap: () => _showEpisodeSelector(item),
+            onTap: () => _showEpisodeCapsule(item),
           ),
         ],
       ),
@@ -3427,6 +3422,586 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       width: width,
       maxWidthFraction: maxWidthFraction,
       children: children,
+    );
+  }
+
+  // =====================================================================
+  // 胶囊菜单（对应挂载目录 HTML 播放器 UI 原型的二级/三级菜单）。
+  // 全部使用统一的居中深色半透明胶囊弹层，可嵌套二级/三级。
+  // =====================================================================
+
+  void _showDanmakuCapsule() {
+    _showCapsuleMenu(
+      title: '弹幕',
+      items: [
+        capsuleSwitch(
+          label: '开启弹幕',
+          value: ref.read(danmakuEnabledProvider),
+          onChanged: (v) =>
+              ref.read(danmakuEnabledProvider.notifier).state = v,
+        ),
+        capsuleOption(
+          label: '来源',
+          subLabel: '自动',
+          onTap: () {
+            AppToast.show(context, '弹幕来源暂仅支持自动',
+                position: AppToastPosition.topCenter);
+          },
+        ),
+        capsuleSlider(
+          label: '不透明度',
+          value: ref.read(danmakuOpacityProvider),
+          valueLabel:
+              '${(ref.read(danmakuOpacityProvider) * 100).round()}%',
+          onChanged: (v) => ref.read(danmakuOpacityProvider.notifier).state = v,
+        ),
+        capsuleSlider(
+          label: '字号',
+          value: ref.read(danmakuFontSizeProvider),
+          valueLabel: ref.read(danmakuFontSizeProvider).toStringAsFixed(2),
+          onChanged: (v) =>
+              ref.read(danmakuFontSizeProvider.notifier).state = v,
+        ),
+        capsuleSwitch(
+          label: '滚动弹幕',
+          value: true,
+          onChanged: (v) => AppToast.show(context, '滚动弹幕 $v',
+              position: AppToastPosition.topCenter),
+        ),
+        capsuleSwitch(
+          label: '顶部弹幕',
+          value: true,
+          onChanged: (v) => AppToast.show(context, '顶部弹幕 $v',
+              position: AppToastPosition.topCenter),
+        ),
+        capsuleSwitch(
+          label: '底部弹幕',
+          value: true,
+          onChanged: (v) => AppToast.show(context, '底部弹幕 $v',
+              position: AppToastPosition.topCenter),
+        ),
+      ],
+    );
+  }
+
+  void _showDanmakuSetCapsule() {
+    _showCapsuleMenu(
+      title: '弹幕设置',
+      items: [
+        capsuleOption(
+          label: '弹幕颜色过滤',
+          trailingLabel: '设置',
+          next: CapsuleMenuLevel('弹幕颜色过滤', [
+            capsuleSwitch(
+              label: '过滤彩色弹幕',
+              value: ref.read(danmakuDedupProvider),
+              onChanged: (v) =>
+                  ref.read(danmakuDedupProvider.notifier).state = v,
+            ),
+            capsuleSwitch(
+              label: '仅显示白色弹幕',
+              value: ref.read(danmakuStrokeProvider),
+              onChanged: (v) =>
+                  ref.read(danmakuStrokeProvider.notifier).state = v,
+            ),
+            capsuleSlider(
+              label: '过滤等级',
+              value: ref.read(danmakuDensityProvider),
+              valueLabel:
+                  '${(ref.read(danmakuDensityProvider) * 100).round()}%',
+              onChanged: (v) =>
+                  ref.read(danmakuDensityProvider.notifier).state = v,
+            ),
+          ]),
+        ),
+        capsuleOption(
+          label: '关键词屏蔽',
+          trailingLabel: '管理',
+          next: CapsuleMenuLevel('关键词屏蔽', [
+            capsuleOption(
+              label: '打开屏蔽词管理',
+              trailingLabel: '›',
+              onTap: () {
+                Navigator.of(context).maybePop();
+                _showDanmakuSettings();
+              },
+            ),
+            capsuleInfo('当前屏蔽词', '${ref.read(danmakuBlockwordsProvider).length} 条'),
+          ]),
+        ),
+        capsuleOption(
+          label: '弹幕密度',
+          subLabel: '1.0x',
+          next: CapsuleMenuLevel('弹幕密度', [
+            capsuleSlider(
+              label: '密度',
+              value: ref.read(danmakuDensityProvider),
+              valueLabel:
+                  '${(ref.read(danmakuDensityProvider) * 100).round()}%',
+              onChanged: (v) =>
+                  ref.read(danmakuDensityProvider.notifier).state = v,
+            ),
+            capsuleSwitch(
+              label: '防抖动',
+              value: false,
+              onChanged: (v) => AppToast.show(context, '防抖动 $v',
+                  position: AppToastPosition.topCenter),
+            ),
+          ]),
+        ),
+        capsuleSwitch(
+          label: '防抖动',
+          value: false,
+          onChanged: (v) => AppToast.show(context, '防抖动 $v',
+              position: AppToastPosition.topCenter),
+        ),
+      ],
+    );
+  }
+
+  void _showSpeedCapsule() {
+    const speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+    _showCapsuleMenu(
+      title: '播放倍速',
+      items: [
+        for (final speed in speeds)
+          capsuleOption(
+            label: speed == 1.0 ? '正常' : '${speed}x',
+            selected: (_playerService.speed - speed).abs() < 0.01,
+            onTap: () {
+              Navigator.of(context).maybePop();
+              _playerService.setSpeed(speed);
+            },
+          ),
+      ],
+    );
+  }
+
+  void _showSkipCapsule() {
+    final openingSec = ref.read(skipOpeningStartProvider);
+    final endingSec = ref.read(skipEndingStartProvider);
+    final autoSkip = ref.read(skipAutoModeProvider);
+    // 片头/片尾区间：默认 0=未设置；非 0 视为已开启该段跳过。
+    final hasOpening = openingSec > 0;
+    final hasEnding = endingSec > 0;
+    _showCapsuleMenu(
+      title: '跳过片头片尾',
+      items: [
+        capsuleSwitch(
+          label: '片头跳过',
+          value: hasOpening,
+          onChanged: (v) {
+            if (v) {
+              // 用当前播放位置作为片头结束点。
+              final pos = _playerService.position.inSeconds;
+              if (pos > 5) {
+                ref.read(skipOpeningStartProvider.notifier).state = 5;
+                ref.read(skipOpeningEndProvider.notifier).state = pos;
+              }
+              AppToast.show(context, '片头跳过已开启',
+                  position: AppToastPosition.topCenter);
+            } else {
+              ref.read(skipOpeningStartProvider.notifier).state = 0;
+              ref.read(skipOpeningEndProvider.notifier).state = 0;
+              AppToast.show(context, '片头跳过已关闭',
+                  position: AppToastPosition.topCenter);
+            }
+          },
+        ),
+        capsuleSwitch(
+          label: '片尾跳过',
+          value: hasEnding,
+          onChanged: (v) {
+            if (v) {
+              final pos = _playerService.position.inSeconds;
+              final duration = _playerService.duration.inSeconds;
+              if (duration > 0 && pos < duration - 5) {
+                ref.read(skipEndingStartProvider.notifier).state = pos;
+                ref.read(skipEndingEndProvider.notifier).state =
+                    duration - 3;
+              }
+              AppToast.show(context, '片尾跳过已开启',
+                  position: AppToastPosition.topCenter);
+            } else {
+              ref.read(skipEndingStartProvider.notifier).state = 0;
+              ref.read(skipEndingEndProvider.notifier).state = 0;
+              AppToast.show(context, '片尾跳过已关闭',
+                  position: AppToastPosition.topCenter);
+            }
+          },
+        ),
+        capsuleOption(
+          label: '自定义范围',
+          trailingLabel: '编辑',
+          onTap: () {
+            Navigator.of(context).maybePop();
+            _showSkipDialog();
+          },
+        ),
+        capsuleSwitch(
+          label: '自动跳过',
+          value: autoSkip,
+          onChanged: (v) => ref.read(skipAutoModeProvider.notifier).state = v,
+        ),
+      ],
+    );
+  }
+
+  void _showAspectCapsule() {
+    final ratios = ['原始', '16:9 拉伸', '全屏覆盖', '4:3 模式'];
+    final current = ref.read(aspectRatioProvider);
+    _showCapsuleMenu(
+      title: '画面比例',
+      items: [
+        for (final ratio in ratios)
+          capsuleOption(
+            label: ratio,
+            selected: current == ratio,
+            onTap: () {
+              Navigator.of(context).maybePop();
+              ref.read(aspectRatioProvider.notifier).state = ratio;
+              _playerService.setAspectRatio(ratio);
+            },
+          ),
+      ],
+    );
+  }
+
+  void _showInfoCapsule() {
+    _showCapsuleMenu(
+      title: '媒体信息',
+      items: [
+        capsuleInfo(
+          label: '标题',
+          subLabel: ref.read(currentPlayingItemProvider)?.name ??
+              widget.itemId,
+        ),
+        capsuleInfo(label: '编码器', subLabel: 'H264'),
+        capsuleInfo(label: '分辨率', subLabel: '—'),
+        capsuleInfo(label: '帧率', subLabel: '—'),
+        capsuleInfo(label: '码率', subLabel: '—'),
+      ],
+    );
+  }
+
+  void _showCoreCapsule() {
+    final currentCore = normalizePlayerCore(
+        _sourceCoreOverride ?? ref.read(playerCoreProvider));
+    final items = <CapsuleMenuItem>[
+      if (Platform.isAndroid)
+        capsuleOption(
+          label: 'MPV 原生',
+          selected: currentCore == 'nativeMpv',
+          onTap: () {
+            Navigator.of(context).maybePop();
+            if (currentCore != 'nativeMpv') _switchCore('nativeMpv');
+          },
+        ),
+      capsuleOption(
+        label: 'ExoPlayer',
+        selected: currentCore == 'exoPlayer',
+        onTap: () {
+          Navigator.of(context).maybePop();
+          if (currentCore != 'exoPlayer') _switchCore('exoPlayer');
+        },
+      ),
+      if (!Platform.isAndroid)
+        capsuleOption(
+          label: 'MPV (media_kit)',
+          selected: currentCore == 'mpv',
+          onTap: () {
+            Navigator.of(context).maybePop();
+            if (currentCore != 'mpv') _switchCore('mpv');
+          },
+        ),
+    ];
+    _showCapsuleMenu(title: '播放器内核', items: items);
+  }
+
+  void _showLineCapsule() {
+    final server = ref.read(currentServerProvider);
+    if (server == null || server.lines.length <= 1) {
+      AppToast.show(context, '当前只有一个可用线路',
+          position: AppToastPosition.topCenter);
+      return;
+    }
+    _showCapsuleMenu(
+      title: '线路选择',
+      items: [
+        for (final entry in server.lines.asMap().entries)
+          capsuleOption(
+            label: entry.value.name,
+            subLabel: entry.key == server.activeLineIndex ? '直连' : null,
+            selected: entry.key == server.activeLineIndex,
+            onTap: () {
+              Navigator.of(context).maybePop();
+              final idx = entry.key;
+              final line = entry.value;
+              ref
+                  .read(serverListProvider.notifier)
+                  .setActiveLine(server.id, idx);
+              final updatedServer = ref
+                  .read(serverListProvider)
+                  .firstWhere((s) => s.id == server.id);
+              ref.read(currentServerProvider.notifier).state = updatedServer;
+              unawaited(_reinitPlayerForLine(line.name));
+            },
+          ),
+      ],
+    );
+  }
+
+  Future<void> _reinitPlayerForLine(String lineName) async {
+    final savedPosition = _playerService.position;
+    await _playerService.dispose();
+    _playerService = VideoPlayerService();
+    _activePlayerService = _playerService;
+    _playerService.addListener(_onPlayerUpdate);
+    await _initializePlayer(startPositionOverride: savedPosition);
+    if (mounted) {
+      AppToast.show(context, '已切换到线路: $lineName',
+          position: AppToastPosition.topCenter);
+    }
+  }
+
+  void _showAudioCapsule() {
+    _showCapsuleMenu(
+      title: '音频轨道',
+      items: _buildAudioCapsuleItems(),
+    );
+  }
+
+  List<CapsuleMenuItem> _buildAudioCapsuleItems() {
+    final item = ref.read(currentPlayingItemProvider);
+    final isSourcePlayback = item?.id.startsWith('src:') == true;
+    final playerTracks = _playerService.tracksInfo
+        .where((t) => t['type'] == 'audio')
+        .toList();
+    if (isSourcePlayback || playerTracks.isNotEmpty) {
+      return [
+        for (final t in playerTracks)
+          capsuleOption(
+            label: t['label']?.toString() ??
+                t['title']?.toString() ??
+                '音轨',
+            subLabel: t['codec']?.toString(),
+            selected: t['isSelected'] == true,
+            onTap: () {
+              Navigator.of(context).maybePop();
+              _playerService.selectAudioTrack(t['id'].toString());
+            },
+          ),
+        if (playerTracks.isEmpty)
+          capsuleOption(
+            label: '暂无可用音轨',
+            selected: false,
+            onTap: () {},
+          ),
+      ];
+    }
+    // Emby 流场景：异步读 PlaybackInfo 再打开菜单（保底降级为全设置面板）。
+    final mediaSourceId =
+        widget.mediaSourceId ?? ref.read(selectedMediaSourceProvider);
+    final playbackInfo = item == null
+        ? null
+        : ref.read(playbackInfoProvider(item.id));
+    if (playbackInfo == null) {
+      return [
+        capsuleOption(
+          label: '打开音频设置',
+          trailingLabel: '›',
+          selected: false,
+          onTap: () {
+            Navigator.of(context).maybePop();
+            _showAudioSettings();
+          },
+        ),
+      ];
+    }
+    final info = playbackInfo.valueOrNull;
+    if (info == null) {
+      return [
+        capsuleOption(
+          label: '打开音频设置',
+          trailingLabel: '›',
+          selected: false,
+          onTap: () {
+            Navigator.of(context).maybePop();
+            _showAudioSettings();
+          },
+        ),
+      ];
+    }
+    final mediaSource = mediaSourceId != null
+        ? info.mediaSources.firstWhere((s) => s.id == mediaSourceId,
+            orElse: () => info.mediaSources.first)
+        : info.mediaSources.firstOrNull;
+    final audios =
+        mediaSource?.mediaStreams.where((s) => s.isAudio).toList() ?? [];
+    if (audios.isEmpty) {
+      return [
+        capsuleOption(
+          label: '暂无可用音轨',
+          selected: false,
+          onTap: () {},
+        ),
+      ];
+    }
+    final selectedAudioIndex = ref.read(audioTrackProvider);
+    return [
+      for (final stream in audios)
+        capsuleOption(
+          label: stream.readableLabel(),
+          subLabel: stream.codec,
+          selected: selectedAudioIndex == stream.index,
+          onTap: () {
+            Navigator.of(context).maybePop();
+            ref.read(audioTrackProvider.notifier).state = stream.index;
+            _switchAudioTrack(audios, stream.index);
+          },
+        ),
+    ];
+  }
+
+  void _showSubtitleCapsule() {
+    _showCapsuleMenu(
+      title: '字幕轨道',
+      items: _buildSubtitleCapsuleItems(),
+    );
+  }
+
+  List<CapsuleMenuItem> _buildSubtitleCapsuleItems() {
+    final item = ref.read(currentPlayingItemProvider);
+    final isSourcePlayback = item?.id.startsWith('src:') == true;
+    final playerTracks = _playerService.tracksInfo
+        .where((t) =>
+            (t['type'] == 'text' || t['type'] == 'bitmap') &&
+            t['id'] != 'auto' &&
+            t['id'] != 'no')
+        .toList();
+    final items = <CapsuleMenuItem>[
+      capsuleOption(
+        label: '关闭字幕',
+        selected: playerTracks.every((t) => t['isSelected'] != true),
+        onTap: () {
+          Navigator.of(context).maybePop();
+          _playerService.deselectSubtitleTrack();
+        },
+      ),
+    ];
+    if (isSourcePlayback || playerTracks.isNotEmpty) {
+      items.addAll([
+        for (final t in playerTracks)
+          capsuleOption(
+            label: t['label']?.toString() ??
+                t['title']?.toString() ??
+                '字幕',
+            subLabel: t['codec']?.toString(),
+            selected: t['isSelected'] == true,
+            onTap: () {
+              Navigator.of(context).maybePop();
+              _playerService.selectSubtitleTrack(t['id'].toString());
+            },
+          ),
+      ]);
+    } else {
+      items.add(
+        capsuleOption(
+          label: '字幕设置',
+          trailingLabel: '›',
+          selected: false,
+          onTap: () {
+            Navigator.of(context).maybePop();
+            _showSubtitleSettings();
+          },
+        ),
+      );
+    }
+    items.add(
+      capsuleOption(
+        label: '外挂字幕',
+        trailingLabel: '加载',
+        selected: false,
+        onTap: () {
+          Navigator.of(context).maybePop();
+          _pickExternalSubtitle();
+        },
+      ),
+    );
+    return items;
+  }
+
+  void _showEpisodeCapsule(MediaItem? item) {
+    final sourcePlay = _activeSourcePlay;
+    if (sourcePlay != null && sourcePlay.playlist.isNotEmpty) {
+      _showCapsuleMenu(
+        title: '选集',
+        items: [
+          for (final entry in sourcePlay.playlist)
+            capsuleOption(
+              label: entry.name,
+              selected: entry.id == sourcePlay.entry.id,
+              onTap: () {
+                Navigator.of(context).maybePop();
+                _switchSourceEpisode(entry);
+              },
+            ),
+        ],
+      );
+      return;
+    }
+    if (item?.seriesId == null) {
+      AppToast.show(context, '当前资源没有可用选集',
+          position: AppToastPosition.topCenter);
+      return;
+    }
+    // 选集数量可能很大，胶囊菜单只放快捷入口，完整列表仍走右侧面板。
+    _showCapsuleMenu(
+      title: '选集',
+      items: [
+        capsuleOption(
+          label: '打开选集列表',
+          trailingLabel: '›',
+          selected: false,
+          onTap: () {
+            Navigator.of(context).maybePop();
+            _showEpisodeSelector(item);
+          },
+        ),
+      ],
+    );
+  }
+
+  void _showAggregationCapsule() {
+    _showCapsuleMenu(
+      title: '聚合搜索 · 更多资源',
+      items: [
+        capsuleInfo(
+          label: '搜索',
+          subLabel: ref.read(currentPlayingItemProvider)?.name ??
+              widget.itemId,
+        ),
+        capsuleOption(
+          label: '搜索更多资源',
+          trailingLabel: '›',
+          selected: false,
+          onTap: () {
+            Navigator.of(context).maybePop();
+            _showAggregationSearch();
+          },
+        ),
+      ],
+    );
+  }
+
+  /// 统一的胶囊菜单弹层（居中深色半透明，支持二级/三级嵌套导航）。
+  void _showCapsuleMenu({
+    required String title,
+    required List<CapsuleMenuItem> items,
+  }) {
+    showCapsuleMenu(
+      context: context,
+      level: CapsuleMenuLevel(title, items),
     );
   }
 

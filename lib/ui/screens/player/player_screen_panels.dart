@@ -204,6 +204,31 @@ class _BottomBarAction extends StatelessWidget {
   }
 }
 
+/// 顶栏按钮：无边框白色图标按钮（HTML 原型顶栏纯图标风格）。
+class _TopActionButton extends StatelessWidget {
+  const _TopActionButton({
+    required this.icon,
+    required this.onTap,
+    this.tooltip,
+  });
+
+  final IconData icon;
+  final VoidCallback onTap;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      icon: Icon(icon, color: Colors.white, size: 20),
+      tooltip: tooltip,
+      onPressed: onTap,
+      padding: const EdgeInsets.all(6),
+      constraints: const BoxConstraints(),
+      splashRadius: 18,
+    );
+  }
+}
+
 /// 跳过片头/片尾弹窗
 class _SkipDialog extends ConsumerStatefulWidget {
   final Duration currentPosition;
