@@ -1382,6 +1382,10 @@ class VideoPlayerService extends ChangeNotifier {
     if (_isLocked || !isInitialized) return;
     _isDragging = true;
     _isScrubbingPosition = false;
+    // 触摸操作即使从隐藏 HUD 开始，也必须让原有进度条实时出现。
+    if (!_showControls) {
+      _showControls = true;
+    }
     _gestureAxis = 0;
     _dragStartX = details.globalPosition.dx;
     _dragStartY = details.globalPosition.dy;

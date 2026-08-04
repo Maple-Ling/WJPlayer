@@ -83,14 +83,17 @@ class _DetailContentState extends State<_DetailContent> {
             ),
 
             // 简介（媒体信息栏）——放在剧集选择之上，方便先看剧情再选集。
-            if (widget.item.overview != null &&
-                widget.item.overview!.isNotEmpty)
-              SliverToBoxAdapter(
-                child: _OverviewSection(
-                  overview: widget.item.overview!,
-                  textColor: foregroundColor,
-                ),
+            SliverToBoxAdapter(
+              child: _OverviewSection(
+                overview: widget.item.overview?.trim().isNotEmpty == true
+                    ? widget.item.overview!.trim()
+                    : '暂无简介',
+                textColor: foregroundColor,
               ),
+            ),
+            SliverToBoxAdapter(
+              child: _CastSection(itemId: widget.itemId),
+            ),
 
             // 剧集相关区块（季 + 集；集数走懒加载 Sliver，几百集也只构建可视项）。
             if (widget.item.type == 'Series') ...[
@@ -955,6 +958,106 @@ class _EpisodeListTile extends ConsumerWidget {
   }
 }
 
+/// 演职人员区块：数据为空时仍保留可见状态，避免请求成功但 UI 静默消失。
+class _CastSection extends ConsumerWidget {
+  final String itemId;
+
+  const _CastSection({required this.itemId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final personsAsync = ref.watch(personsProvider(itemId));
+    return personsAsync.when(
+      data: (persons) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionHeader(title: '演职人员'),
+          if (persons.isEmpty)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Text('暂无演职人员信息'),
+            )
+          else
+            HorizontalList(
+              height: 140,
+              children: persons
+                  .map((person) => _PersonCard(person: person))
+                  .toList(),
+            ),
+        ],
+      ),
+      loading: () => const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SectionHeader(title: '演职人员'),
+          Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Text('正在加载演职人员…'),
+          ),
+        ],
+      ),
+      error: (_, __) => const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SectionHeader(title: '演职人员'),
+          Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Text('暂无演职人员信息'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PersonCard extends ConsumerWidget {
+  final Person person;
+
+  const _PersonCard({required this.person});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final api = ref.read(apiClientProvider);
+    final imageUrl = person.primaryImageTag == null
+        ? null
+        : api.image.getPrimaryImageUrl(
+            person.id,
+            tag: person.primaryImageTag,
+            maxWidth: 200,
+          );
+    return SizedBox(
+      width: 80,
+      child: Column(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(40),
+            child: Container(
+              width: 72,
+              height: 72,
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              child: imageUrl == null
+                  ? const Icon(Icons.person, size: 32, color: Colors.grey)
+                  : MediaImage(
+                      imageUrl: imageUrl,
+                      width: 72,
+                      height: 72,
+                      fit: BoxFit.cover,
+                    ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            person.name.isEmpty ? '未知' : person.name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// 电影播放区块（选项 + 按钮 + 版本信息）
 class _MoviePlaybackSection extends ConsumerWidget {
   final String itemId;
@@ -1432,8 +1535,6 @@ class _VersionInfoSection extends ConsumerWidget {
 
     return playbackAsync.when(
       data: (info) {
-        if (info.mediaSources.isEmpty) return const SizedBox.shrink();
-
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1441,9 +1542,17 @@ class _VersionInfoSection extends ConsumerWidget {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Column(
-                children: info.mediaSources
-                    .map((source) => MediaSourceInfoCard(source: source))
-                    .toList(),
+                children: info.mediaSources.isEmpty
+                    ? [
+                        const ListTile(
+                          leading: Icon(Icons.info_outline),
+                          title: Text('暂无媒体流参数'),
+                          subtitle: Text('服务器未返回可用的媒体源信息'),
+                        ),
+                      ]
+                    : info.mediaSources
+                        .map((source) => MediaSourceInfoCard(source: source))
+                        .toList(),
               ),
             ),
           ],

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -39,6 +40,7 @@ class EmbyApiClient implements ApiClientFactory {
         'X-Emby-Device-Id': kEmbyProtocolDeviceId,
         'X-Emby-Client': kEmbyProtocolClient,
         'X-Emby-Client-Version': kAppVersion,
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
         if (authToken != null) 'X-Emby-Token': authToken,
       },
     ));
@@ -387,6 +389,7 @@ class EmbyServerApi implements ServerApi {
         'X-Emby-Device-Id': kEmbyProtocolDeviceId,
         'X-Emby-Client': kEmbyProtocolClient,
         'X-Emby-Client-Version': kAppVersion,
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
       },
     ));
 
@@ -434,6 +437,7 @@ class EmbyServerApi implements ServerApi {
           'X-Emby-Device-Id': kEmbyProtocolDeviceId,
           'X-Emby-Client': kEmbyProtocolClient,
           'X-Emby-Client-Version': kAppVersion,
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
         },
       ));
       applyProxyToDio(dio);
@@ -582,6 +586,40 @@ class EmbyLibraryApi implements LibraryApi {
     double? ratingMax,
   }) async {
     final uid = _requireUserId(_client);
+    // limit<=0 表示调用方需要完整媒体库；改为标准 StartIndex/Limit 分页，
+    // 避免一次无上限响应被 Emby/反向代理截断。
+    if (limit <= 0) {
+      const pageSize = 200;
+      final all = <MediaItem>[];
+      var offset = startIndex;
+      for (var page = 0; page < 1000; page++) {
+        final chunk = await getLibraryItems(
+          libraryId: libraryId,
+          sortBy: sortBy,
+          sortOrder: sortOrder,
+          startIndex: offset,
+          limit: pageSize,
+          genres: genres,
+          tags: tags,
+          studioIds: studioIds,
+          studios: studios,
+          years: years,
+          // 评分区间必须在聚合全部分页后过滤，否则某页过滤不足 pageSize
+          // 会被误判为末页，导致后续资源遗漏。
+          ratingMin: null,
+          ratingMax: null,
+        );
+        all.addAll(chunk);
+        if (chunk.length < pageSize) break;
+        offset += pageSize;
+      }
+      return all.where((it) {
+        final rating = it.communityRating;
+        if (ratingMin != null && (rating == null || rating < ratingMin)) return false;
+        if (ratingMax != null && (rating == null || rating > ratingMax)) return false;
+        return true;
+      }).toList();
+    }
     final params = <String, dynamic>{
       'ParentId': libraryId,
       'UserId': uid,
@@ -733,7 +771,7 @@ class EmbyMediaApi implements MediaApi {
       'ParentThumbImageTag,ParentPrimaryImageItemId,ParentPrimaryImageTag,'
       'SeriesThumbImageTag,SeriesPrimaryImageTag,BackdropImageTags,'
       'ChildCount,RecursiveItemCount,CanDownload,SupportsSync,ProviderIds,'
-      'PresentationUniqueKey,Path,'
+      'PresentationUniqueKey,Path,MediaSources,MediaStreams,'
       'ParentLogoItemId,ParentLogoImageTag,'
       'BackdropImageTags,ParentBackdropItemId,ParentBackdropImageTags';
 
@@ -751,13 +789,17 @@ class EmbyMediaApi implements MediaApi {
     try {
       final resp = await _client.get('/Items/$itemId',
           queryParameters: params, cancelToken: cancelToken);
-      return _parseMediaItem(resp.data as Map<String, dynamic>);
+      final raw = (resp.data as Map).cast<String, dynamic>();
+      _logMediaPayload('Emby detail $itemId', raw);
+      return _parseMediaItem(raw);
     } on DioException catch (e) {
       if (e.response?.statusCode == 404 && uid != null) {
         try {
           final resp = await _client.get('/Users/$uid/Items/$itemId',
               queryParameters: params, cancelToken: cancelToken);
-          return _parseMediaItem(resp.data as Map<String, dynamic>);
+          final raw = (resp.data as Map).cast<String, dynamic>();
+          _logMediaPayload('Emby detail fallback $itemId', raw);
+          return _parseMediaItem(raw);
         } catch (_) {
           // fallback 失败，继续抛出原始错误
         }
@@ -881,9 +923,13 @@ class EmbyMediaApi implements MediaApi {
         rethrow;
       }
     }
-    final sources = (data['MediaSources'] as List<dynamic>?) ?? const [];
+    final sources = ((data['MediaSources'] ?? data['mediaSources']) as List<dynamic>?) ?? const [];
+    if (kDebugMode) {
+      debugPrint('[MediaParse] media sources raw=${jsonEncode(data)}');
+    }
     return sources
-        .map((e) => _parseMediaSource(e as Map<String, dynamic>))
+        .whereType<Map>()
+        .map((e) => _parseMediaSource(e.cast<String, dynamic>()))
         .toList();
   }
 }
@@ -951,13 +997,39 @@ class EmbyPlaybackApi implements PlaybackApi {
   @override
   Future<PlaybackInfo> getPlaybackInfo(String itemId) async {
     final uid = _requireUserId(_client);
-    final resp = await _client.post('/Items/$itemId/PlaybackInfo', data: {
+    final base = <String, dynamic>{
       'UserId': uid,
       'StartTimeTicks': 0,
       'IsPlayback': true,
       'AutoOpenLiveStream': true,
-    });
-    return _parsePlaybackInfo(resp.data as Map<String, dynamic>, itemId);
+    };
+    try {
+      final resp = await _client.post(
+        '/Items/$itemId/PlaybackInfo',
+        data: {
+          ...base,
+          'EnableDirectPlay': true,
+          'EnableDirectStream': true,
+          'EnableTranscoding': true,
+          'AllowVideoStreamCopy': true,
+          'AllowAudioStreamCopy': true,
+        },
+      );
+      return _parsePlaybackInfo(resp.data as Map<String, dynamic>, itemId);
+    } on DioException catch (e) {
+      // 部分 Emby 版本拒绝扩展协商字段或首次直连策略；用最小兼容请求重试。
+      if (e.response?.statusCode != 500) rethrow;
+      final resp = await _client.post(
+        '/Items/$itemId/PlaybackInfo',
+        data: {
+          ...base,
+          'EnableDirectPlay': true,
+          'EnableDirectStream': true,
+          'EnableTranscoding': true,
+        },
+      );
+      return _parsePlaybackInfo(resp.data as Map<String, dynamic>, itemId);
+    }
   }
 
   @override
@@ -1242,22 +1314,45 @@ List<MediaItem> _parseItemList(dynamic data) {
   return items.map((e) => _parseMediaItem(e as Map<String, dynamic>)).toList();
 }
 
+void _logMediaPayload(String label, Map<String, dynamic> raw) {
+  if (!kDebugMode) return;
+  debugPrint('[MediaParse] $label raw=${jsonEncode(raw)}');
+  debugPrint('[MediaParse] keys=${raw.keys.toList()}');
+}
+
+String? _stringField(Map<String, dynamic> d, String name) {
+  final value = d[name] ?? d[name.toLowerCase()] ?? d[_lowerCamel(name)];
+  final text = value?.toString().trim();
+  return text == null || text.isEmpty ? null : text;
+}
+
+String _lowerCamel(String value) =>
+    value.isEmpty ? value : '${value[0].toLowerCase()}${value.substring(1)}';
+
 MediaItem _parseMediaItem(Map<String, dynamic> d) {
-  final ud = d['UserData'] as Map<String, dynamic>?;
+  _logMediaPayload('item ${d['Id'] ?? d['id'] ?? ''}', d);
+  final ud = (d['UserData'] ?? d['userData']) as Map<String, dynamic>?;
   final int? childCount = d['ChildCount'] as int?;
   final int? recursiveItemCount = d['RecursiveItemCount'] as int?;
-  final people = (d['People'] as List<dynamic>?)
-      ?.map((e) => _parsePersonFromItem(e as Map<String, dynamic>))
+  final people = ((d['People'] ?? d['people']) as List<dynamic>?)
+      ?.whereType<Map>()
+      .map((e) => _parsePersonFromItem(e.cast<String, dynamic>()))
       .toList();
   final backdrop = _extractBackdrop(d);
+  if (kDebugMode) {
+    debugPrint('[MediaParse] parsed id=${d['Id'] ?? d['id']} '
+        'overview=${_stringField(d, 'Overview')?.length ?? 0} '
+        'people=${people?.length ?? 0} '
+        'mediaSources=${((d['MediaSources'] ?? d['mediaSources']) as List?)?.length ?? 0}');
+  }
   return MediaItem(
     id: d['Id']?.toString() ?? '',
     name: d['Name'] ?? '',
     type: d['Type'] ?? '',
     providerIds: _parseProviderIds(d['ProviderIds']),
     presentationUniqueKey: d['PresentationUniqueKey']?.toString(),
-    path: d['Path']?.toString(),
-    overview: d['Overview']?.toString(),
+    path: _stringField(d, 'Path'),
+    overview: _stringField(d, 'Overview'),
     primaryImageTag: _extractImageTag(d, 'Primary'),
     thumbImageTag: _extractImageTag(d, 'Thumb'),
     backdropImageTag: backdrop?.tag,
@@ -1308,9 +1403,9 @@ MediaItem _parseMediaItem(Map<String, dynamic> d) {
         .toList(),
     logoItemId: _extractLogoItemId(d),
     logoImageTag: _extractLogoImageTag(d),
-    mediaSources: (d['MediaSources'] as List<dynamic>?)
-        ?.whereType<Map<String, dynamic>>()
-        .map(_parseMediaSource)
+    mediaSources: ((d['MediaSources'] ?? d['mediaSources']) as List<dynamic>?)
+        ?.whereType<Map>()
+        .map((e) => _parseMediaSource(e.cast<String, dynamic>()))
         .toList(),
   );
 }

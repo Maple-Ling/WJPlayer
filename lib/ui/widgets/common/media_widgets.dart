@@ -129,9 +129,14 @@ class MediaImage extends StatelessWidget {
   }
 
   Widget _buildLocalImage(BuildContext context, String pathOrUri) {
-    final path = pathOrUri.startsWith('file://')
-        ? Uri.parse(pathOrUri).toFilePath()
-        : pathOrUri;
+    String path;
+    try {
+      path = pathOrUri.startsWith('file://')
+          ? Uri.parse(pathOrUri).toFilePath()
+          : pathOrUri;
+    } catch (_) {
+      return errorWidget ?? _buildError(context);
+    }
     return Image.file(
       File(path),
       width: width,

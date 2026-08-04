@@ -97,6 +97,7 @@ class _LibraryDetailScreenState extends ConsumerState<LibraryDetailScreen> {
       body: CustomScrollView(
         controller: _scrollController,
         slivers: [
+          // 使用 API 内部分页聚合，UI 保持懒构建网格，避免一次性构建全部卡片。
           // 筛选面板：随网格下滑往上渐隐并滚出（与桌面端一致——面板不再固定占顶）。
           filtersAsync.maybeWhen(
             data: (facets) => SliverToBoxAdapter(

@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../providers/server_providers.dart';
 import 'media_source_backend.dart';
@@ -543,9 +544,15 @@ class FeiniuBackend implements MediaSourceBackend {
     final item = results[0] is Map
         ? Map<String, dynamic>.from(results[0] as Map)
         : <String, dynamic>{};
+    if (kDebugMode) {
+      debugPrint('[FeiniuParse] item/$guid raw=${jsonEncode(item)}');
+    }
     final playInfo = results[1] is Map
         ? Map<String, dynamic>.from(results[1] as Map)
         : <String, dynamic>{};
+    if (kDebugMode) {
+      debugPrint('[FeiniuParse] play/info/$guid raw=${jsonEncode(playInfo)}');
+    }
     final entryType = entry.raw?['type']?.toString();
     final merged = <String, dynamic>{...item};
     final nested = playInfo['item'];

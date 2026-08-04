@@ -51,8 +51,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
-    // 首页数据缓存：不在 initState 中 invalidate，让 allLibrariesProvider
-    // 的 keepAlive 缓存持续生效。用户下拉刷新时才重新拉网络。
   }
 
   @override
@@ -477,25 +475,11 @@ class _ServerSelectorOverlayState extends State<_ServerSelectorOverlay>
                                                         const EmbyDefaultIcon(),
                                                   ),
                                                 )
-                                              : server.sourceKind == SourceKind.feiniu
-                                                  ? Image.asset(
-                                                      'assets/icons/fnico.png',
-                                                      width: 32,
-                                                      height: 32,
-                                                      fit: BoxFit.cover,
-                                                      errorBuilder:
-                                                          (_, __, ___) =>
-                                                              const Icon(
-                                                                  Icons.dns,
-                                                                  size: 16,
-                                                                  color: Color(
-                                                                      0xFF5B8DEF)),
-                                                    )
-                                                  : const Icon(
-                                                      Icons.dns,
-                                                      size: 16,
-                                                      color: Color(0xFF5B8DEF),
-                                                    ),
+                                              : const Icon(
+                                                  Icons.dns,
+                                                  size: 16,
+                                                  color: Color(0xFF5B8DEF),
+                                                ),
                                         ),
                                         const SizedBox(width: 10),
                                         Expanded(
@@ -556,9 +540,10 @@ class _HomeAppBarState extends ConsumerState<_HomeAppBar> {
   final GlobalKey _serverButtonKey = GlobalKey();
 
   void _showServerSelector() {
-    final servers = ref.read(serverListProvider);
-    final visibleServers = servers.where((s) => !s.hidden).toList();
-    if (visibleServers.isEmpty) {
+    final servers = ref.read(serverListProvider)
+        .where((server) => !server.hidden)
+        .toList(growable: false);
+    if (servers.isEmpty) {
       AppToast.show(context, '暂无服务器');
       return;
     }
@@ -577,7 +562,7 @@ class _HomeAppBarState extends ConsumerState<_HomeAppBar> {
 
     _serverMenuOverlay = OverlayEntry(
       builder: (context) => _ServerSelectorOverlay(
-        servers: visibleServers,
+        servers: servers,
         buttonPosition: position,
         buttonSize: size,
         screenWidth: screenWidth,
@@ -652,20 +637,8 @@ class _HomeAppBarState extends ConsumerState<_HomeAppBar> {
                                   errorWidget: const EmbyDefaultIcon(),
                                 ),
                               )
-                            : currentServer?.sourceKind == SourceKind.feiniu
-                                ? Image.asset(
-                                    'assets/icons/fnico.png',
-                                    width: 30,
-                                    height: 30,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) =>
-                                        const Icon(
-                                            Icons.dns_rounded,
-                                            size: 18,
-                                            color: Color(0xFF5B8DEF)),
-                                  )
-                                : const Icon(Icons.dns_rounded,
-                                    size: 18, color: Color(0xFF5B8DEF)),
+                            : const Icon(Icons.dns_rounded,
+                                size: 18, color: Color(0xFF5B8DEF)),
                       ),
                       const SizedBox(width: 8),
                       Flexible(

@@ -77,12 +77,13 @@ class _AdaptivePosterBlendState extends State<AdaptivePosterBlend> {
             ),
           ),
         ),
-        // 底部朦胧层先扩散颜色，再由渐变自然融入内容底色。
+        // 底部融合层覆盖到头图最底部，随 SliverAppBar 一起上移，
+        // 不再出现独立浅蓝色遮罩或突兀分界线。
         Positioned(
           left: -24,
           right: -24,
-          bottom: -18,
-          height: 180,
+          bottom: -36,
+          height: 230,
           child: ImageFiltered(
             imageFilter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
             child: ColoredBox(color: background.withValues(alpha: 0.82)),
