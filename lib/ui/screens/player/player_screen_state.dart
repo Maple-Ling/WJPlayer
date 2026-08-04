@@ -3526,7 +3526,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 _showDanmakuSettings();
               },
             ),
-            capsuleInfo('当前屏蔽词', '${ref.read(danmakuBlockwordsProvider).length} 条'),
+            capsuleInfo(
+              label: '当前屏蔽词',
+              subLabel: '${ref.read(danmakuBlockwordsProvider).length} 条',
+            ),
           ]),
         ),
         capsuleOption(
