@@ -770,6 +770,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   String get _currentCore => normalizePlayerCore(
       _sourceCoreOverride ?? ref.read(playerCoreProvider));
 
+  /// 内核显示标签：mpv→"原生 MPV"，nativeMpv→"原生 MPV"，exoPlayer→"ExoPlayer"。
+  String _formatCoreLabel(String core) {
+    if (core == 'nativeMpv' || core == 'mpv') return '原生 MPV';
+    if (core == 'exoPlayer') return 'ExoPlayer';
+    return core;
+  }
+
   Future<void> _reportSourceProgress(SourcePlayback sp,
       {bool force = false}) async {
     if (sp.server.sourceKind != SourceKind.feiniu ||
@@ -1817,6 +1824,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   position: _playerService.position,
                   duration: _playerService.duration,
                   bufferedProgress: _playerService.bufferedProgress,
+                  isScrubbingPosition: _playerService.isScrubbingPosition,
+                  dragPreviewProgress: _playerService.dragPreviewProgress !=
+                          Duration.zero
+                      ? (_playerService.dragPreviewPosition.inMilliseconds /
+                              _playerService.duration.inMilliseconds)
+                      : null,
+                  isBuffering: _playerService.isBuffering,
+                  rxSpeed: SystemInfoService.instance.rxSpeed,
                   title: item?.name ?? '',
                   episode: _episodeLabel(item),
                   meta: _metaLabel(item, mediaSource),
@@ -2007,8 +2022,23 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
               ),
             ),
           if (_playerService.isBuffering)
-            const Center(
-              child: CircularProgressIndicator(color: Colors.white),
+            Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(color: Colors.white),
+                  const SizedBox(height: 10),
+                  Text(
+                    _formatNetworkSpeed(
+                        SystemInfoService.instance.rxSpeed),
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ),
             ),
           if (_playerService.hasError)
             Center(
@@ -2275,22 +2305,21 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   void _onDoubleTapDown(TapDownDetails details) {
     if (_playerService.isLocked) return;
-    // 双击快进/快退关闭时，双击中部仍可播放/暂停，但两侧不再快进快退。
-    if (!ref.read(doubleTapSeekGestureProvider)) {
-      _playerService.togglePlay();
-      return;
-    }
     final screenWidth = MediaQuery.of(context).size.width;
     final tapX = details.globalPosition.dx;
 
     final step = ref.read(skipForwardStepProvider);
-    if (tapX < screenWidth / 3) {
+    // 严格 1/4 / 1/2 / 1/4 区域划分。
+    if (tapX < screenWidth * 0.25) {
+      // 左侧 1/4：快退（不论 doubleTapSeek 开关）。
       _playerService.seekBy(Duration(seconds: -step));
       _showSeekHint('«  -${step}s');
-    } else if (tapX > screenWidth * 2 / 3) {
+    } else if (tapX > screenWidth * 0.75) {
+      // 右侧 1/4：快进（不论 doubleTapSeek 开关）。
       _playerService.seekBy(Duration(seconds: step));
       _showSeekHint('+${step}s  »');
     } else {
+      // 中央 1/2：播放/暂停。
       _playerService.togglePlay();
     }
   }
@@ -2334,37 +2363,45 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       value = _playerService.volume;
     }
 
-    return Center(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.7),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: Colors.white, size: 32),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              style: const TextStyle(color: Colors.white, fontSize: 14),
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              width: 100,
-              child: LinearProgressIndicator(
-                value: value,
-                backgroundColor: Colors.white24,
-                valueColor: const AlwaysStoppedAnimation(Colors.white),
+    return Align(
+      alignment: const Alignment(0, 0.333),
+      child: IgnorePointer(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.7),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: Colors.white, size: 32),
+              const SizedBox(height: 8),
+              Text(
+                label,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
               ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${(value * 100).toInt()}%',
-              style: const TextStyle(color: Colors.white, fontSize: 12),
-            ),
-          ],
+              const SizedBox(height: 8),
+              SizedBox(
+                width: 120,
+                child: LinearProgressIndicator(
+                  value: value,
+                  backgroundColor: Colors.white24,
+                  valueColor: const AlwaysStoppedAnimation(Colors.white),
+                  minHeight: 3,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${(value * 100).toInt()}%',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -2410,9 +2447,57 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     );
   }
 
-  Widget _buildLongPressIndicator() =>
-      _hintBar(_formatSpeed(ref.read(longPressSpeedProvider)),
-          icon: Icons.fast_forward_rounded);
+  /// 长按倍速的符号化显示：
+  /// 1.5x → '>·', 2.0x → '>>', 2.5x → '>>>', 3.0x → '>>>>', 1.0x → '='
+  String _formatSpeedSymbol(double speed) {
+    if (speed < 1.1) return '=';
+    if (speed < 1.7) return '>·';
+    if (speed < 2.2) return '>>';
+    if (speed < 2.7) return '>>>';
+    if (speed < 3.2) return '>>>>';
+    if (speed < 3.7) return '>>>>>';
+    return '>>>>>>';
+  }
+
+  Widget _buildLongPressIndicator() {
+    final speed = ref.read(longPressSpeedProvider);
+    return Align(
+      alignment: const Alignment(0, 0.333),
+      child: IgnorePointer(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.7),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _formatSpeedSymbol(speed),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 36,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 4,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _formatSpeed(speed),
+                style: const TextStyle(
+                  color: Color(0xFF5B8DEF),
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _buildSeekHint() => _hintBar(_seekHint ?? '');
 
@@ -3015,7 +3100,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   /// 底栏：左下=上一集/下一集，右下=弹幕/字幕/音轨/选集。
   /// 倍速→右侧倍速条；旋转→顶栏；截屏/锁定→左侧竖排；其余进「更多」。
   Widget _buildMediaInfoLine(MediaItem? item) {
-    final coreLabel = _currentCore == 'exoPlayer' ? 'EXO' : 'MPV';
+    final coreLabel = _formatCoreLabel(_currentCore);
     final format = '—';
     final bps = '—';
     final frame = '—';
@@ -3239,12 +3324,48 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     final delta = preview - _playerService.position;
     final sign = delta.isNegative ? '-' : '+';
     final magnitude = delta.isNegative ? -delta : delta;
-    return _hintBar(
-      '${_formatDuration(_playerService.position)} $sign${_formatDuration(magnitude)} / ${_formatDuration(_playerService.duration)}',
-      icon: delta.isNegative
-          ? Icons.fast_rewind_rounded
-          : Icons.fast_forward_rounded,
+    return Align(
+      alignment: const Alignment(0, 0.85),
+      child: IgnorePointer(
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.75),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                delta.isNegative ? Icons.fast_rewind_rounded : Icons.fast_forward_rounded,
+                color: Colors.white,
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  '${_formatDuration(_playerService.position)} $sign${_formatDuration(magnitude)} / ${_formatDuration(_playerService.duration)}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
+  }
+
+  String _formatNetworkSpeed(double bytesPerSecond) {
+    if (bytesPerSecond < 1024) return '${bytesPerSecond.toInt()} B/s';
+    if (bytesPerSecond < 1024 * 1024)
+      return '${(bytesPerSecond / 1024).toStringAsFixed(1)} KB/s';
+    return '${(bytesPerSecond / 1024 / 1024).toStringAsFixed(2)} MB/s';
   }
 
   String _formatDuration(Duration duration) {
@@ -4129,11 +4250,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     final index = server.lines.indexWhere((l) => l.name == lineName);
     if (index < 0) return;
     ref.read(serverListProvider.notifier).setActiveLine(server.id, index);
-    AppToast.show(context, '已切换线路: $lineName',
+    AppToast.show(context, '已切换线路: $lineName，正在重连…',
         position: AppToastPosition.topCenter);
-    if (mounted) {
-      context.replace('/player/${widget.itemId}');
-    }
+    // 切换线路后立即重建播放器并刷新播放链接，完成重连。
+    final savedPosition = _playerService.position;
+    await _playerService.dispose();
+    _playerService = VideoPlayerService();
+    _playerService.addListener(_onPlayerUpdate);
+    await _initializePlayer(startPositionOverride: savedPosition);
+    if (mounted) _playerService.play();
   }
 
   Future<void> _switchEpisode(int episode) async {
@@ -4233,7 +4358,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     final items = <CapsuleMenuItem>[
       if (Platform.isAndroid)
         capsuleOption(
-          label: 'MPV 原生',
+          label: '原生 MPV',
           selected: currentCore == 'nativeMpv',
           onTap: () {
             Navigator.of(context).maybePop();

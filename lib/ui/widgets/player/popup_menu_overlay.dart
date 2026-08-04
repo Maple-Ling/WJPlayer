@@ -793,14 +793,11 @@ class PopupAspectRatioMenu extends StatelessWidget {
   final String selectedAspect;
   final ValueChanged<String> onAspectSelected;
 
+  /// 比例选项精简为 3 项：自适应 / 裁切铺满 / 等比填充（双向拉伸，禁单向）。
   static const values = <MapEntry<String, String>>[
     MapEntry('自动', '自适应'),
-    MapEntry('原始', '原始'),
-    MapEntry('16:9', '16:9'),
-    MapEntry('4:3', '4:3'),
-    MapEntry('21:9', '21:9'),
     MapEntry('铺满', '裁切铺满'),
-    MapEntry('拉伸', '拉伸填充'),
+    MapEntry('拉伸', '等比填充'),
   ];
 
   @override
@@ -872,7 +869,7 @@ class PopupCoreMenu extends StatelessWidget {
       case 'exoPlayer':
         return 'ExoPlayer';
       case 'nativeMpv':
-        return 'MPV 原生';
+        return '原生 MPV';
       case 'mpv':
         return 'MPV';
       default:

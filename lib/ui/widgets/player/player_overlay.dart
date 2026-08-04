@@ -22,6 +22,10 @@ class PlayerOverlay extends StatefulWidget {
     required this.position,
     required this.duration,
     required this.bufferedProgress,
+    this.isScrubbingPosition = false,
+    this.dragPreviewProgress,
+    this.isBuffering = false,
+    this.rxSpeed = 0,
     required this.title,
     required this.episode,
     required this.meta,
@@ -100,6 +104,10 @@ class PlayerOverlay extends StatefulWidget {
   final Duration position;
   final Duration duration;
   final double bufferedProgress;
+  final bool isScrubbingPosition;
+  final double? dragPreviewProgress;
+  final bool isBuffering;
+  final double rxSpeed;
 
   final String title;
   final String episode;
@@ -299,17 +307,6 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
     _clockTimer?.cancel();
     _toastTimer?.cancel();
     super.dispose();
-  }
-
-  void _handleBlankTap() {
-    if (activeMenu != null) {
-      _closeMenu();
-      return;
-    }
-
-    final next = !isUiVisible;
-    setState(() => isUiVisible = next);
-    widget.onUiVisibilityChanged?.call(next);
   }
 
   void _openMenu(
@@ -611,6 +608,95 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
     );
   }
 
+  /// 手势拖动进度时的极简进度条（UI 隐藏时也可见）。
+  Widget _buildScrubbingProgress(BuildContext context, Size size) {
+    final dragProgress = widget.dragPreviewProgress ?? 0;
+    final progress = widget.duration.inMilliseconds > 0
+        ? (widget.position.inMilliseconds / widget.duration.inMilliseconds)
+        : 0.0;
+    return Positioned(
+      left: 0,
+      right: 0,
+      top: size.height * 0.5,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 40),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _formatDuration(widget.duration == Duration.zero
+                  ? _estimatePositionFromProgress(dragProgress, widget.duration)
+                  : widget.duration == Duration.zero
+                      ? Duration.zero
+                      : widget.duration == Duration.zero
+                          ? Duration.zero
+                          : _posFromProg(dragProgress, widget.duration)),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value: dragProgress.clamp(0.0, 1.0),
+                backgroundColor: Colors.white24,
+                valueColor: const AlwaysStoppedAnimation(
+                    Color(0xFF5B8DEF)),
+                minHeight: 4,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Duration _posFromProg(double prog, Duration dur) {
+    if (dur.inMilliseconds <= 0) return Duration.zero;
+    return Duration(
+        milliseconds: (prog * dur.inMilliseconds).round().clamp(
+            0, dur.inMilliseconds));
+  }
+
+  Duration _estimatePositionFromProgress(double prog, Duration dur) {
+    return _posFromProg(prog, dur);
+  }
+
+  /// 缓冲/卡顿时的网速 + 转圈。
+  Widget _buildBufferingSpeed(BuildContext context) {
+    final rx = widget.rxSpeed;
+    final tx = 0.0; // todo
+    return Align(
+      alignment: const Alignment(0, 0.333),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(
+            valueColor: AlwaysStoppedAnimation(Colors.white),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '加载中 ${_formatSpeed(rx)}',
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatSpeed(double bytesPerSecond) {
+    if (bytesPerSecond < 1024) {
+      return '${bytesPerSecond.toInt()} B/s';
+    } else if (bytesPerSecond < 1024 * 1024) {
+      return '${(bytesPerSecond / 1024).toStringAsFixed(1)} KB/s';
+    } else {
+      return '${(bytesPerSecond / 1024 / 1024).toStringAsFixed(2)} MB/s';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -624,12 +710,31 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
         final size = Size(width, height);
         final info = SystemInfoService.instance;
 
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: _handleBlankTap,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            // 透传层：visible=false 时完全忽略所有点，让底层的
+            // _buildPlayerBody GestureDetector 接管全部手势（双击/长按/拖动）。
+            // visible=true 时由下方 GestureDetector 接管空白处点击。
+            Positioned.fill(
+              child: IgnorePointer(
+                ignoring: !isUiVisible,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onTap: () {
+                    if (activeMenu != null) {
+                      _closeMenu();
+                      return;
+                    }
+                    // 空白处点击：隐藏控制栏（如果已显示）。
+                    if (isUiVisible) {
+                      setState(() => isUiVisible = false);
+                      widget.onUiVisibilityChanged?.call(false);
+                    }
+                  },
+                ),
+              ),
+            ),
               IgnorePointer(
                 ignoring: !isUiVisible,
                 child: AnimatedOpacity(
@@ -654,6 +759,7 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                           batteryLevel: info.battery,
                           networkIcon: _networkIcon,
                           networkLabel: _networkLabel,
+                          networkSpeed: _formatSpeed(info.rxSpeed),
                           topActions: const [
                             PlayerTopAction.danmaku,
                             PlayerTopAction.speed,
@@ -821,6 +927,10 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                   ),
                 ),
               if (_toastMessage != null) _buildToast(size),
+              // 手势拖动进度时，即使主控制栏已隐藏也单独渲染一条极简进度条。
+              if (isScrubbingPosition) _buildScrubbingProgress(context, size),
+              // 卡顿缓冲时，中央显示网速 + 转圈。
+              if (isBuffering && !isUiVisible) _buildBufferingSpeed(context),
             ],
           ),
         );

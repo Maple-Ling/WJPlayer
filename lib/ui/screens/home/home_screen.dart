@@ -541,7 +541,8 @@ class _HomeAppBarState extends ConsumerState<_HomeAppBar> {
 
   void _showServerSelector() {
     final servers = ref.read(serverListProvider);
-    if (servers.isEmpty) {
+    final visibleServers = servers.where((s) => !s.hidden).toList();
+    if (visibleServers.isEmpty) {
       AppToast.show(context, '暂无服务器');
       return;
     }
@@ -560,7 +561,7 @@ class _HomeAppBarState extends ConsumerState<_HomeAppBar> {
 
     _serverMenuOverlay = OverlayEntry(
       builder: (context) => _ServerSelectorOverlay(
-        servers: servers,
+        servers: visibleServers,
         buttonPosition: position,
         buttonSize: size,
         screenWidth: screenWidth,

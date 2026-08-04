@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/api/emby_api.dart';
 import '../../../core/providers/app_providers.dart';
+import '../../../core/providers/server_providers.dart';
 import '../../../core/sources/anirss_backend.dart';
 import '../../../core/sources/feiniu_backend.dart';
 import '../../../core/sources/openlist_backend.dart';
@@ -12,6 +13,145 @@ import '../../../core/theme/app_theme.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../widgets/common/media_widgets.dart';
 import '../source/quark_qr_login_view.dart';
+
+/// 双排长按拖拽排序网格。
+///
+/// 实现方式：每个单元格包裹 GestureDetector（onLongPressStart 启动拖拽）+
+/// LongPressDraggable（data = 单元格索引）。
+/// 放置时通过 GlobalKey 计算目标位置索引，然后调用 onReorder。
+class _ReorderableGrid extends ConsumerStatefulWidget {
+  const _ReorderableGrid({
+    super.key,
+    required this.servers,
+    required this.onReorder,
+    required this.onTap,
+    required this.onMoreTap,
+  });
+
+  final List<ServerConfig> servers;
+  final void Function(int oldIndex, int newIndex) onReorder;
+  final void Function(ServerConfig) onTap;
+  final void Function(ServerConfig) onMoreTap;
+
+  @override
+  ConsumerState<_ReorderableGrid> createState() => _ReorderableGridState();
+}
+
+class _ReorderableGridState extends ConsumerState<_ReorderableGrid> {
+  /// 每个单元格的 GlobalKey，用于计算拖拽放置位置。
+  final _cellKeys = <GlobalKey>[];
+  /// 当前正在拖拽的源索引。
+  int? _dragIndex;
+
+  void _ensureKeys() {
+    if (_cellKeys.length < widget.servers.length) {
+      _cellKeys.addAll(
+          List.generate(widget.servers.length - _cellKeys.length,
+              (_) => GlobalKey()));
+    }
+  }
+
+  /// 根据手指放下时的全局坐标，找到最近的单元格索引。
+  int _nearestIndex(Offset globalPosition) {
+    if (_dragIndex == null) return -1;
+    double minDist = double.infinity;
+    int nearest = _dragIndex!;
+    for (int i = 0; i < _cellKeys.length; i++) {
+      final render = _cellKeys[i].currentContext
+          ?.findRenderObject() as RenderBox?;
+      if (render == null) continue;
+      final center = render.localToGlobal(render.size.center(Offset.zero));
+      final dist = (center - globalPosition).distance;
+      if (dist < minDist) {
+        minDist = dist;
+        nearest = i;
+      }
+    }
+    return nearest;
+  }
+
+  Widget _cell(int index) {
+    _ensureKeys();
+    final server = widget.servers[index];
+    final key = _cellKeys[index];
+
+    final child = _ServerCard(
+      key: key,
+      server: server,
+      compact: true,
+      onTap: () => widget.onTap(server),
+      onMoreTap: () => widget.onMoreTap(server),
+    );
+
+    return LongPressDraggable<int>(
+      data: index,
+      feedback: Material(
+        color: Colors.transparent,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: const Color(0xFF5B8DEF).withOpacity(0.85),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white, width: 2),
+          ),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.drag_indicator, color: Colors.white, size: 28),
+                const SizedBox(height: 4),
+                Text(
+                  server.name,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      childWhenDragging: Opacity(
+        opacity: 0.3,
+        child: child,
+      ),
+      onDragStarted: () {
+        setState(() => _dragIndex = index);
+      },
+      onDragEnd: (details) {
+        final target = _nearestIndex(details.offset);
+        if (target >= 0 && target != _dragIndex) {
+          widget.onReorder(_dragIndex!, target);
+        }
+        setState(() => _dragIndex = null);
+      },
+      child: child,
+    );
+  }
+
+  @override
+  void dispose() {
+    // GlobalKey 无需 dispose
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final servers = widget.servers;
+    return GridView.builder(
+      padding: const EdgeInsets.all(12),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 10,
+        mainAxisSpacing: 10,
+        childAspectRatio: 1.12,
+      ),
+      itemCount: servers.length,
+      itemBuilder: (context, index) => _cell(index),
+    );
+  }
+}
 
 /// 服务器列表页面
 class ServerListScreen extends ConsumerStatefulWidget {
@@ -168,25 +308,15 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
 
   Widget _buildServerList(BuildContext context, List<ServerConfig> servers) {
     if (_gridLayout) {
-      return GridView.builder(
-        padding: const EdgeInsets.all(12),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 10,
-          mainAxisSpacing: 10,
-          childAspectRatio: 1.12,
-        ),
-        itemCount: servers.length,
-        itemBuilder: (context, index) {
-          final server = servers[index];
-          return _ServerCard(
-            key: ValueKey(server.id),
-            server: server,
-            compact: true,
-            onTap: () => _openServer(context, server),
-            onMoreTap: () => _showServerMenu(context, ref, server),
-          );
+      return _ReorderableGrid(
+        servers: servers,
+        onReorder: (oldIndex, newIndex) {
+          ref
+              .read(serverListProvider.notifier)
+              .reorderServers(oldIndex, newIndex);
         },
+        onTap: (server) => _openServer(context, server),
+        onMoreTap: (server) => _showServerMenu(context, ref, server),
       );
     }
     return ReorderableListView.builder(

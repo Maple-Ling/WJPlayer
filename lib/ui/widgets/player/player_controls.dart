@@ -1,6 +1,7 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import '../../../core/services/system_info_service.dart';
 
 const Color playerUiBlue = Color(0xFF4A7BD0);
 const Color playerUiPink = Color(0xFFE94560);
@@ -92,6 +93,7 @@ class TopBar extends StatelessWidget {
     this.batteryCharging = false,
     required this.networkIcon,
     required this.networkLabel,
+    this.networkSpeed = '',
     required this.topActions,
     required this.selectedActions,
     this.onBack,
@@ -113,6 +115,7 @@ class TopBar extends StatelessWidget {
   final bool batteryCharging;
   final IconData networkIcon;
   final String networkLabel;
+  final String networkSpeed;
 
   final List<PlayerTopAction> topActions;
   final Set<PlayerTopAction> selectedActions;
@@ -187,6 +190,20 @@ class TopBar extends StatelessWidget {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // 网速显示（WiFi 图标左侧）
+              if (networkSpeed.isNotEmpty) ...[
+                Text(
+                  networkSpeed,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w500,
+                    height: 1,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(width: 9),
+              ],
               Tooltip(
                 message: networkLabel,
                 child: Icon(

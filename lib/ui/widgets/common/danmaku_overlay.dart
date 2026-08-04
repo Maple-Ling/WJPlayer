@@ -60,6 +60,9 @@ class _DanmakuOverlayState extends State<DanmakuOverlay>
     super.initState();
     _smoothPosition = widget.position;
     _lastSyncPosition = widget.position;
+    // 同步起始：以 _lastSyncElapsed = _lastSyncPosition 为基准线，
+    // 这样 _tickerElapsed 和 videoPosition 同一时间轴，消除跳帧。
+    _lastSyncElapsed = _lastSyncPosition;
     _ticker = createTicker(_onTick)..start();
   }
 
@@ -80,7 +83,7 @@ class _DanmakuOverlayState extends State<DanmakuOverlay>
     if (widget.position != old.position ||
         widget.playbackRate != old.playbackRate) {
       _lastSyncPosition = widget.position;
-      _lastSyncElapsed = _tickerElapsed;
+      _lastSyncElapsed = widget.position; // 对齐时间轴，避免倍速切换跳帧
       _smoothPosition = widget.position;
     }
     if (widget.isPlaying && !old.isPlaying) {
@@ -216,11 +219,13 @@ class DanmakuPainter extends CustomPainter {
 
   static const double _maxFontSize = 36.0;
   static const double _minFontSize = 12.0;
-  static const double _baseSpeed = 120.0;
-  static const double _topBottomDuration = 5.0;
-  static const double _trackHeight = 32.0;
-  static const double _padding = 4.0;
+  static const double _baseSpeed = 140.0;
+  static const double _topBottomDuration = 7.0;
+  static const double _trackHeight = 24.0;
+  static const double _padding = 6.0;
   static const double _visibleWindow = 30.0;
+  /// 进场时从屏幕右侧外 0.5 屏处出发，避免跳入。
+  static const double _entryOffsetX = 0.5;
 
   DanmakuPainter({
     required this.items,
