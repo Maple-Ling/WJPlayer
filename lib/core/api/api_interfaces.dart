@@ -426,6 +426,96 @@ class MediaItem {
       userData?.playbackPositionTicks != null && runTimeTicks != null
           ? userData!.playbackPositionTicks! / runTimeTicks!
           : null;
+
+  factory MediaItem.fromJson(Map<String, dynamic> json) {
+    final user = json['userData'];
+    final userMap = user is Map ? user : null;
+    return MediaItem(
+      id: json['id']?.toString() ?? '',
+      name: json['name']?.toString() ?? '',
+      type: json['type']?.toString() ?? '',
+      providerIds: (json['providerIds'] as Map?)?.map(
+        (key, value) => MapEntry(key.toString(), value.toString()),
+      ),
+      path: json['path']?.toString(),
+      overview: json['overview']?.toString(),
+      primaryImageTag: json['primaryImageTag']?.toString(),
+      thumbImageTag: json['thumbImageTag']?.toString(),
+      backdropImageTag: json['backdropImageTag']?.toString(),
+      backdropItemId: json['backdropItemId']?.toString(),
+      communityRating: (json['communityRating'] as num?)?.toDouble(),
+      officialRating: json['officialRating']?.toString(),
+      premiereDate: DateTime.tryParse(json['premiereDate']?.toString() ?? ''),
+      runTimeTicks: (json['runTimeTicks'] as num?)?.toInt(),
+      productionYear: (json['productionYear'] as num?)?.toInt(),
+      genres: (json['genres'] as List?)?.map((e) => e.toString()).toList(),
+      tags: (json['tags'] as List?)?.map((e) => e.toString()).toList(),
+      userData: userMap == null
+          ? null
+          : UserData(
+              playbackPositionTicks:
+                  (userMap['playbackPositionTicks'] as num?)?.toDouble(),
+              played: userMap['played'] as bool?,
+              isFavorite: userMap['isFavorite'] as bool?,
+              playCount: (userMap['playCount'] as num?)?.toDouble(),
+              unplayedItemCount:
+                  (userMap['unplayedItemCount'] as num?)?.toInt(),
+            ),
+      seriesName: json['seriesName']?.toString(),
+      indexNumber: (json['indexNumber'] as num?)?.toInt(),
+      parentIndexNumber: (json['parentIndexNumber'] as num?)?.toInt(),
+      seriesId: json['seriesId']?.toString(),
+      seasonId: json['seasonId']?.toString(),
+      parentId: json['parentId']?.toString(),
+      childCount: (json['childCount'] as num?)?.toInt(),
+      recursiveItemCount: (json['recursiveItemCount'] as num?)?.toInt(),
+      mediaType: json['mediaType']?.toString(),
+      canDownload: json['canDownload'] as bool?,
+      logoItemId: json['logoItemId']?.toString(),
+      logoImageTag: json['logoImageTag']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'type': type,
+        'providerIds': providerIds,
+        'path': path,
+        'overview': overview,
+        'primaryImageTag': primaryImageTag,
+        'thumbImageTag': thumbImageTag,
+        'backdropImageTag': backdropImageTag,
+        'backdropItemId': backdropItemId,
+        'communityRating': communityRating,
+        'officialRating': officialRating,
+        'premiereDate': premiereDate?.toIso8601String(),
+        'runTimeTicks': runTimeTicks,
+        'productionYear': productionYear,
+        'genres': genres,
+        'tags': tags,
+        'userData': userData == null
+            ? null
+            : {
+                'playbackPositionTicks': userData!.playbackPositionTicks,
+                'played': userData!.played,
+                'isFavorite': userData!.isFavorite,
+                'playCount': userData!.playCount,
+                'unplayedItemCount': userData!.unplayedItemCount,
+              },
+        'seriesName': seriesName,
+        'indexNumber': indexNumber,
+        'parentIndexNumber': parentIndexNumber,
+        'seriesId': seriesId,
+        'seasonId': seasonId,
+        'parentId': parentId,
+        'childCount': childCount,
+        'recursiveItemCount': recursiveItemCount,
+        'mediaType': mediaType,
+        'canDownload': canDownload,
+        'logoItemId': logoItemId,
+        'logoImageTag': logoImageTag,
+      };
 }
 
 class UserData {
@@ -560,6 +650,20 @@ class Library {
     this.primaryImageTag,
     required this.collectionType,
   });
+
+  factory Library.fromJson(Map<String, dynamic> json) => Library(
+        id: json['id']?.toString() ?? '',
+        name: json['name']?.toString() ?? '',
+        primaryImageTag: json['primaryImageTag']?.toString(),
+        collectionType: json['collectionType']?.toString() ?? 'mixed',
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'primaryImageTag': primaryImageTag,
+        'collectionType': collectionType,
+      };
 }
 
 // ==================== 搜索相关 ====================

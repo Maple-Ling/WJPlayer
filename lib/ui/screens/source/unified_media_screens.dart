@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -419,6 +421,112 @@ class UnifiedMediaDetailScreen extends ConsumerStatefulWidget {
       _UnifiedMediaDetailScreenState();
 }
 
+/// 播放区域持久化 Header：随 SliverAppBar 滚动渐隐，分界线与渐变融为一体
+class _PlaybackHeaderDelegate extends SliverPersistentHeaderDelegate {
+  _PlaybackHeaderDelegate({
+    required this.backgroundColor,
+    required this.selectedEntry,
+    required this.loadingMedia,
+    required this.resumeLabel,
+    required this.onPlay,
+    required this.playbackOptions,
+  });
+
+  final Color backgroundColor;
+  final UnifiedMediaEntry? selectedEntry;
+  final bool loadingMedia;
+  final String resumeLabel;
+  final VoidCallback? onPlay;
+  final Widget playbackOptions;
+
+  @override
+  double get minExtent => 0;
+
+  @override
+  double get maxExtent => 128;
+
+  @override
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
+    final double progress = (shrinkOffset / maxExtent).clamp(0.0, 1.0);
+    final Color headerBg = Color.lerp(Colors.transparent, backgroundColor, progress)!;
+    final double playBtnAlpha = lerpDouble(1.0, 0.0, progress)!;
+    final double optionsAlpha = lerpDouble(1.0, 0.0, progress * 1.5)!;
+
+    return Container(
+      color: headerBg,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // 渐变过渡层：从透明到背景色，与顶部海报渐变融合
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                stops: const [0.0, 0.6, 1.0],
+                colors: [
+                  Colors.transparent,
+                  backgroundColor.withValues(alpha: 0.5 * progress),
+                  backgroundColor,
+                ],
+              ),
+            ),
+          ),
+          // 播放按钮与选项随滚动淡出
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: Opacity(
+              opacity: playBtnAlpha,
+              child: Center(
+                child: SizedBox(
+                  width: 185,
+                  height: 50,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: Colors.black,
+                      shape: const StadiumBorder(),
+                      elevation: 0,
+                    ),
+                    onPressed: onPlay,
+                    icon: const Icon(Icons.play_arrow_rounded, size: 23),
+                    label: Text(
+                      selectedEntry == null ? '暂无资源' : resumeLabel,
+                      style: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // 播放选项（音频/字幕/版本/线路）随滚动渐隐
+          Positioned(
+            left: 16,
+            right: 16,
+            top: 64,
+            child: Opacity(
+              opacity: optionsAlpha.clamp(0.0, 1.0),
+              child: playbackOptions,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant _PlaybackHeaderDelegate oldDelegate) {
+    return backgroundColor != oldDelegate.backgroundColor ||
+        selectedEntry != oldDelegate.selectedEntry ||
+        loadingMedia != oldDelegate.loadingMedia ||
+        resumeLabel != oldDelegate.resumeLabel ||
+        onPlay != oldDelegate.onPlay ||
+        playbackOptions != oldDelegate.playbackOptions;
+  }
+}
+
 class _UnifiedMediaDetailScreenState
     extends ConsumerState<UnifiedMediaDetailScreen> {
   UnifiedMediaDetail? _detail;
@@ -800,7 +908,7 @@ class _UnifiedMediaDetailScreenState
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverAppBar(
-              expandedHeight: MediaQuery.sizeOf(context).height * 0.44,
+              expandedHeight: MediaQuery.sizeOf(context).height * 0.52,
               pinned: true,
               stretch: true,
               backgroundColor: Colors.transparent,
@@ -892,35 +1000,20 @@ class _UnifiedMediaDetailScreenState
                 ),
               ),
             ),
+            SliverPersistentHeader(
+              delegate: _PlaybackHeaderDelegate(
+                backgroundColor: background,
+                selectedEntry: _selectedEntry,
+                loadingMedia: _loadingMedia,
+                resumeLabel: _resumeLabel(),
+                onPlay: _selectedEntry == null || _loadingMedia ? null : _play,
+                playbackOptions: _buildPlaybackOptions(),
+              ),
+              pinned: false,
+            ),
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
               sliver: SliverList.list(children: [
-                Center(
-                  child: SizedBox(
-                    width: 185,
-                    height: 50,
-                    child: FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: Colors.black,
-                        shape: const StadiumBorder(),
-                        elevation: 0,
-                      ),
-                      onPressed: _selectedEntry == null || _loadingMedia
-                          ? null
-                          : _play,
-                      icon: const Icon(Icons.play_arrow_rounded, size: 23),
-                      label: Text(
-                          _selectedEntry == null
-                              ? '暂无资源'
-                              : _resumeLabel(),
-                          style: const TextStyle(
-                              fontSize: 12, fontWeight: FontWeight.w800)),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _buildPlaybackOptions(),
                 if (entry.overview?.isNotEmpty == true) ...[
                   const SizedBox(height: 22),
                   CollapsibleOverview(text: entry.overview!),

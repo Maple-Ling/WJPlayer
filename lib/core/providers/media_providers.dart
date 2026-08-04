@@ -8,6 +8,7 @@ import '../api/discover/discover_models.dart';
 import 'discover_providers.dart';
 import '../providers/app_providers.dart';
 import '../services/app_logger.dart';
+import '../services/home_data_cache.dart';
 import '../sources/feiniu_backend.dart';
 import '../sources/media_source_backend.dart';
 
@@ -69,12 +70,27 @@ class EmbyMediaCounts {
 /// 继续观看
 final resumeItemsProvider = FutureProvider<List<MediaItem>>((ref) async {
   ref.keepAlive();
-  final api = ref.watch(apiClientProvider);
-  return await api.home.getResumeItems();
+  final server = ref.watch(currentServerProvider);
+  if (server == null) return <MediaItem>[];
+
+  return await HomeCacheLoader.load<List<MediaItem>>(
+    serverId: server.id,
+    dataType: 'resume',
+    decode: (json) =>
+        (json as List).map((e) => MediaItem.fromJson(e)).toList(),
+    encode: (value) => value.map((item) => item.toJson()).toList(),
+    load: () async {
+      final api = ref.watch(apiClientProvider);
+      return await api.home.getResumeItems();
+    },
+  );
 });
 
 /// 下一集
 final nextUpProvider = FutureProvider<List<MediaItem>>((ref) async {
+  final server = ref.watch(currentServerProvider);
+  if (server == null) return <MediaItem>[];
+
   final api = ref.watch(apiClientProvider);
   return await api.home.getNextUp();
 });
@@ -82,8 +98,19 @@ final nextUpProvider = FutureProvider<List<MediaItem>>((ref) async {
 /// 媒体库列表（全部，未过滤屏蔽）——供媒体库管理页常驻屏蔽/解除屏蔽用。
 final allLibrariesProvider = FutureProvider<List<Library>>((ref) async {
   ref.keepAlive();
-  final api = ref.watch(apiClientProvider);
-  return await api.home.getLibraries();
+  final server = ref.watch(currentServerProvider);
+  if (server == null) return <Library>[];
+
+  return await HomeCacheLoader.load<List<Library>>(
+    serverId: server.id,
+    dataType: 'libraries',
+    decode: (json) => (json as List).map((e) => Library.fromJson(e)).toList(),
+    encode: (value) => value.map((item) => item.toJson()).toList(),
+    load: () async {
+      final api = ref.watch(apiClientProvider);
+      return await api.home.getLibraries();
+    },
+  );
 });
 
 /// 媒体库列表（已过滤被屏蔽的）
@@ -100,38 +127,80 @@ final librariesProvider = FutureProvider<List<Library>>((ref) async {
 final latestItemsProvider =
     FutureProvider.family<List<MediaItem>, String>((ref, libraryId) async {
   ref.keepAlive();
-  final api = ref.watch(apiClientProvider);
-  return await api.home.getLatestItems(libraryId, limit: 20);
+  final server = ref.watch(currentServerProvider);
+  if (server == null) return <MediaItem>[];
+
+  return await HomeCacheLoader.load<List<MediaItem>>(
+    serverId: server.id,
+    dataType: 'latest:$libraryId',
+    decode: (json) =>
+        (json as List).map((e) => MediaItem.fromJson(e)).toList(),
+    encode: (value) => value.map((item) => item.toJson()).toList(),
+    load: () async {
+      final api = ref.watch(apiClientProvider);
+      return await api.home.getLatestItems(libraryId, limit: 20);
+    },
+  );
 });
 
 /// 随机推荐
 final randomRecommendationsProvider =
     FutureProvider<List<MediaItem>>((ref) async {
   ref.keepAlive();
-  final api = ref.watch(apiClientProvider);
-  return await api.home.getRandomRecommendations();
+  final server = ref.watch(currentServerProvider);
+  if (server == null) return <MediaItem>[];
+
+  return await HomeCacheLoader.load<List<MediaItem>>(
+    serverId: server.id,
+    dataType: 'random',
+    decode: (json) =>
+        (json as List).map((e) => MediaItem.fromJson(e)).toList(),
+    encode: (value) => value.map((item) => item.toJson()).toList(),
+    load: () async {
+      final api = ref.watch(apiClientProvider);
+      return await api.home.getRandomRecommendations();
+    },
+  );
 });
 
 final embyMediaCountsProvider = FutureProvider<EmbyMediaCounts>((ref) async {
   ref.keepAlive();
-  final api = ref.watch(apiClientProvider);
-
-  try {
-    final counts = await api.home.getMediaCounts();
-    return EmbyMediaCounts(
-      movieCount: counts.movieCount,
-      seriesCount: counts.seriesCount,
-      episodeCount: counts.episodeCount,
-      itemCount: counts.itemCount,
+  final server = ref.watch(currentServerProvider);
+  if (server == null) {
+    return const EmbyMediaCounts(
+      movieCount: 0,
+      seriesCount: 0,
+      episodeCount: 0,
+      itemCount: null,
     );
-  } catch (error, stackTrace) {
-    debugPrint('[MediaCountsProvider] Failed to load media counts: $error');
-    debugPrintStack(
-      label: '[MediaCountsProvider] Stack trace',
-      stackTrace: stackTrace,
-    );
-    Error.throwWithStackTrace(error, stackTrace);
   }
+
+  return await HomeCacheLoader.load<EmbyMediaCounts>(
+    serverId: server.id,
+    dataType: 'counts',
+    decode: (json) => EmbyMediaCounts(
+      movieCount: json['movieCount'] as int? ?? 0,
+      seriesCount: json['seriesCount'] as int? ?? 0,
+      episodeCount: json['episodeCount'] as int? ?? 0,
+      itemCount: json['itemCount'] as int?,
+    ),
+    encode: (value) => {
+      'movieCount': value.movieCount,
+      'seriesCount': value.seriesCount,
+      'episodeCount': value.episodeCount,
+      'itemCount': value.itemCount,
+    },
+    load: () async {
+      final api = ref.watch(apiClientProvider);
+      final counts = await api.home.getMediaCounts();
+      return EmbyMediaCounts(
+        movieCount: counts.movieCount,
+        seriesCount: counts.seriesCount,
+        episodeCount: counts.episodeCount,
+        itemCount: counts.itemCount,
+      );
+    },
+  );
 });
 
 /// ==========================================
@@ -292,8 +361,20 @@ final filtersProvider =
 
 /// 全部合集（BoxSet）——首页底部"合集"栏用，点开复用媒体库详情展示成员。
 final collectionsProvider = FutureProvider<List<MediaItem>>((ref) async {
-  final api = ref.watch(apiClientProvider);
-  return await api.library.getCollections();
+  final server = ref.watch(currentServerProvider);
+  if (server == null) return <MediaItem>[];
+
+  return await HomeCacheLoader.load<List<MediaItem>>(
+    serverId: server.id,
+    dataType: 'collections',
+    decode: (json) =>
+        (json as List).map((e) => MediaItem.fromJson(e)).toList(),
+    encode: (value) => value.map((item) => item.toJson()).toList(),
+    load: () async {
+      final api = ref.watch(apiClientProvider);
+      return await api.library.getCollections();
+    },
+  );
 });
 
 /// ==========================================

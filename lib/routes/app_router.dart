@@ -406,7 +406,7 @@ class _AnimatedBranchContainerState extends State<_AnimatedBranchContainer>
   }
 }
 
-class MainShell extends StatefulWidget {
+class MainShell extends ConsumerStatefulWidget {
   const MainShell({
     super.key,
     required this.navigationShell,
@@ -417,10 +417,10 @@ class MainShell extends StatefulWidget {
   final String currentPath;
 
   @override
-  State<MainShell> createState() => _MainShellState();
+  ConsumerState<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> {
+class _MainShellState extends ConsumerState<MainShell> {
   // 性能要点：滚动时只更新 ValueNotifier，由 ValueListenableBuilder 局部重建
   // 浮动 TabBar 的透明度，避免每个滚动事件 setState 整个 shell（含 navigationShell）。
   final ValueNotifier<double> _tabOpacity = ValueNotifier<double>(1.0);
@@ -482,6 +482,10 @@ class _MainShellState extends State<MainShell> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.currentPath != widget.currentPath && _isServerListPage) {
       _tabOpacity.value = 1.0;
+    }
+    if (oldWidget.currentPath != widget.currentPath &&
+        widget.currentPath == '/history') {
+      ref.read(watchHistoryRefreshProvider.notifier).state++;
     }
   }
 

@@ -46,6 +46,29 @@ class HistoryScreen extends ConsumerStatefulWidget {
 class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   final Set<String> _selectedIds = {};
   bool get _selecting => _selectedIds.isNotEmpty;
+  bool _hasRefreshed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 进入页面自动触发一次刷新
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_hasRefreshed) {
+        _hasRefreshed = true;
+        ref.read(watchHistoryRefreshProvider.notifier).state++;
+      }
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 从其他页面返回时再次刷新
+    if (!_hasRefreshed) {
+      _hasRefreshed = true;
+      ref.read(watchHistoryRefreshProvider.notifier).state++;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

@@ -3,6 +3,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../common/playback_resource_card.dart';
+
 const Color popupMenuBlue = Color(0xFF4A7BD0);
 const Color popupMenuSelectedBlue = Color(0x664A7BD0);
 const Color popupMenuSurface = Color(0xEB0C1016);
@@ -449,91 +451,14 @@ class AggregateSearchCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Container(
-        width: 150,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-        decoration: BoxDecoration(
-          color: selected
-              ? popupMenuBlue.withOpacity(0.3)
-              : Colors.white.withOpacity(0.06),
-          border: Border.all(
-            color: selected
-                ? popupMenuBlue
-                : Colors.white.withOpacity(0.1),
-          ),
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: selected
-              ? [
-                  BoxShadow(
-                    color: popupMenuBlue.withOpacity(0.35),
-                    blurRadius: 10,
-                    offset: const Offset(0, 2),
-                  ),
-                ]
-              : null,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: const BoxDecoration(
-                    color: popupMenuBlue,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    source.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 1,
-                  ),
-                  decoration: BoxDecoration(
-                    color: popupMenuBlue.withOpacity(0.4),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    source.resolution,
-                    style: const TextStyle(
-                      color: Color(0xFF9DBDF5),
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 5),
-            Text(
-              source.metadata,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.55),
-                fontSize: 10,
-              ),
-            ),
-          ],
-        ),
+    return SizedBox(
+      width: 240,
+      child: PlaybackResourceCard(
+        serverName: source.name,
+        isCurrent: selected,
+        resolution: source.resolution.isEmpty ? null : source.resolution,
+        codec: source.metadata.isEmpty ? null : source.metadata,
+        onTap: onTap,
       ),
     );
   }

@@ -49,6 +49,13 @@ class PersistentJsonCache {
 
   static Future<dynamic> readValue(String key) async => (await read(key))?['value'];
 
+  static Future<void> delete(String key) async {
+    try {
+      final file = File(path.join(await root, _fileName(key)));
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
   /// 启动展示优先命中永久缓存；没有缓存才访问网络。
   static Future<T> cacheFirst<T>({
     required String key,

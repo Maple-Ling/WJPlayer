@@ -104,7 +104,8 @@ class ColorExtractor {
                 .withSaturation(bgHsl.saturation * 0.7)
                 .withLightness(0.12)
                 .toColor();
-        gradientStart = _mute(avgColor, 0.2).withValues(alpha: 0.7);
+        // gradientStart 使用背景色而非提取色，避免海报蓝色调导致的浅蓝蒙版
+        gradientStart = safeBackground.withValues(alpha: 0.7);
       }
 
       return _writeCache(
