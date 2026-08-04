@@ -1782,6 +1782,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   @override
   Widget build(BuildContext context) {
     final item = ref.watch(currentPlayingItemProvider);
+    final server = ref.watch(currentServerProvider);
+    final lineName = (server != null &&
+            server.lines.isNotEmpty &&
+            server.activeLineIndex < server.lines.length)
+        ? server.lines[server.activeLineIndex].name
+        : '默认线路';
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -1791,16 +1797,64 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             fit: StackFit.expand,
             children: [
               _buildPlayerBody(item, constraints),
-              if (_playerService.showControls && !_playerService.isLocked)
-                Positioned.fill(child: _buildControlsOverlay(item)),
-              // 锁定态：解锁按钮与未锁定时的锁定按钮同位置（左侧居中），且随控制栏计时自动隐藏，不再长驻。
-              if (_playerService.isLocked && _playerService.showControls)
-                Positioned(
-                  left: 4,
-                  top: 0,
-                  bottom: 0,
-                  child: SafeArea(child: Center(child: _lockButton())),
+              // 新播放器控制层：视频层之上叠加 PlayerOverlay（TopBar/BottomBar/
+              // SideButtons/PopupMenuOverlay + 状态栏），替换原胶囊菜单控制层。
+              Positioned.fill(
+                child: PlayerOverlay(
+                  visible: _playerService.showControls,
+                  isPlaying: _playerService.isPlaying,
+                  position: _playerService.position,
+                  duration: _playerService.duration,
+                  bufferedProgress: _playerService.bufferedProgress,
+                  title: item?.name ?? '',
+                  episode: _episodeLabel(item),
+                  meta: _metaLabel(),
+                  serverName: server?.name ?? '',
+                  serverLine: lineName,
+                  logoText: _logoText,
+                  logoImage: _logoImage,
+                  mediaInfoTitle: _mediaInfoTitle(),
+                  encoder: _mediaEncoder(),
+                  resolution: _mediaResolution(),
+                  frameRate: _mediaFrameRate(),
+                  bitrate: _mediaBitrate(),
+                  initialEpisode: _currentEpisodeNumber(),
+                  episodeCount: _episodeCount(),
+                  initialSource: _aggregateSourceName(),
+                  initialCore: _currentCore,
+                  initialAspectRatio: _aspectRatioValue(),
+                  initialAudioTrack: _currentAudioTrackLabel(),
+                  initialSubtitleTrack: _currentSubtitleTrackLabel(),
+                  onUiVisibilityChanged: (visible) {
+                    if (visible != _playerService.showControls) {
+                      _playerService.toggleControls();
+                    }
+                  },
+                  onBack: () => Navigator.maybePop(context),
+                  onPrevious: _playPrevious,
+                  onNext: _playNext,
+                  onPlayPause: () => _playerService.togglePlay(),
+                  onSeek: (progress) =>
+                      _playerService.seekTo(_durationFromProgress(progress)),
+                  onPlaybackRateChanged: (speed) =>
+                      _playerService.setSpeed(speed),
+                  onAspectRatioChanged: _setAspectRatioValue,
+                  onSourceChanged: (_) {},
+                  onCoreChanged: _switchCore,
+                  onLineChanged: _switchLine,
+                  onAudioTrackChanged: _switchAudioTrackByName,
+                  onSubtitleChanged: _switchSubtitleTrackByName,
+                  onEpisodeChanged: _switchEpisode,
+                  onLock: () => _playerService.toggleLock(),
+                  onRotate: _toggleRotation,
+                  onDanmakuChanged: (value) {},
+                  onDanmakuDeduplicationChanged: (value) {},
+                  onAutoSkipChanged: _setAutoSkip,
+                  onSearchDanmaku: _showDanmakuSearch,
+                  onSkipTimeRecorded: _recordSkipTime,
+                  onExternalSubtitleRequested: _pickExternalSubtitle,
                 ),
+              ),
               // 网盘转码源（夸克等）清晰度切换：仅源直链播放且有多档时显示。
               if (_activeSourcePlay != null &&
                   _playerService.showControls &&
@@ -3687,6 +3741,188 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     );
   }
 
+  // ==================== 新播放器控制层适配辅助 ====================
+
+  String _episodeLabel(MediaItem? item) {
+    if (item == null) return '';
+    if (item.seasonId != null && item.indexNumber != null) {
+      return '第 ${item.indexNumber} 集';
+    }
+    return item.name ?? '';
+  }
+
+  String _metaLabel() {
+    final core = _currentCore;
+    return 'EXO · MP4 · 33Mbps · 60fps · $core';
+  }
+
+  String get _logoText => 'VIP';
+
+  ImageProvider<Object>? get _logoImage => null;
+
+  String _mediaInfoTitle() {
+    return ref.read(currentPlayingItemProvider)?.name ?? widget.itemId;
+  }
+
+  String _mediaEncoder() => 'H264';
+
+  String _mediaResolution() => '—';
+
+  String _mediaFrameRate() => '—';
+
+  String _mediaBitrate() => '—';
+
+  int _currentEpisodeNumber() {
+    final item = ref.read(currentPlayingItemProvider);
+    return item?.indexNumber ?? 1;
+  }
+
+  int _episodeCount() {
+    final sourcePlay = _activeSourcePlay;
+    if (sourcePlay != null && sourcePlay.playlist.isNotEmpty) {
+      return sourcePlay.playlist.length;
+    }
+    return 1;
+  }
+
+  String _aggregateSourceName() {
+    final sourcePlay = _activeSourcePlay;
+    if (sourcePlay != null && sourcePlay.entry.name.isNotEmpty) {
+      return sourcePlay.entry.name;
+    }
+    return '飞牛NAS';
+  }
+
+  String _aspectRatioValue() {
+    final value = ref.read(aspectRatioProvider);
+    // 将项目中文比例值映射为 PlayerOverlay 的英文枚举值。
+    switch (value) {
+      case '裁切':
+        return 'crop';
+      case '填充':
+        return 'fill';
+      case '自动':
+      default:
+        return 'auto';
+    }
+  }
+
+  Future<void> _setAspectRatioValue(String value) async {
+    // 将 PlayerOverlay 英文枚举值映射回项目中文比例值。
+    String mapped;
+    switch (value) {
+      case 'crop':
+        mapped = '裁切';
+        break;
+      case 'fill':
+        mapped = '填充';
+        break;
+      case 'auto':
+      default:
+        mapped = '自动';
+        break;
+    }
+    ref.read(aspectRatioProvider.notifier).state = mapped;
+    await _playerService.setAspectRatio(mapped);
+  }
+
+  String _currentAudioTrackLabel() {
+    final track = _playerService.tracksInfo
+        .where((t) => t['type'] == 'audio')
+        .where((t) => t['isSelected'] == true)
+        .firstOrNull;
+    return track?['label']?.toString() ??
+        track?['title']?.toString() ??
+        '国语';
+  }
+
+  String _currentSubtitleTrackLabel() {
+    final track = _playerService.tracksInfo
+        .where((t) => t['type'] == 'text' || t['type'] == 'bitmap')
+        .where((t) => t['isSelected'] == true)
+        .firstOrNull;
+    return track?['label']?.toString() ??
+        track?['title']?.toString() ??
+        '中文字幕';
+  }
+
+  Duration _durationFromProgress(double progress) {
+    final durationMs = _playerService.duration.inMilliseconds;
+    return Duration(
+      milliseconds: (durationMs * progress.clamp(0.0, 1.0)).round(),
+    );
+  }
+
+  Future<void> _switchLine(String lineName) async {
+    final server = ref.read(currentServerProvider);
+    if (server == null || server.lines.isEmpty) return;
+    final index = server.lines.indexWhere((l) => l.name == lineName);
+    if (index < 0) return;
+    ref.read(serverListProvider.notifier).setActiveLine(server.id, index);
+    AppToast.show(context, '已切换线路: $lineName',
+        position: AppToastPosition.topCenter);
+    if (mounted) {
+      context.replace('/player/${widget.itemId}');
+    }
+  }
+
+  Future<void> _switchEpisode(int episode) async {
+    final currentItem = ref.read(currentPlayingItemProvider);
+    if (currentItem?.seriesId == null) {
+      AppToast.show(context, '当前资源没有可用选集',
+          position: AppToastPosition.topCenter);
+      return;
+    }
+    final episodes = await ref
+        .read(apiClientProvider)
+        .media
+        .getEpisodes(currentItem!.seriesId!,
+            seasonId: currentItem.seasonId);
+    if (episodes.isEmpty) return;
+    final target = episodes.firstWhere(
+      (e) => e.indexNumber == episode,
+      orElse: () {
+        final safeIndex = (episode - 1)
+            .clamp(0, episodes.length - 1)
+            .toInt();
+        return episodes[safeIndex];
+      },
+    );
+    if (mounted && target.id != currentItem.id) {
+      context.replace('/player/${target.id}');
+    }
+  }
+
+  void _setAutoSkip(bool value) {
+    ref.read(skipAutoModeProvider.notifier).state = value;
+    AppToast.show(context, value ? '自动跳过已开启' : '自动跳过已关闭',
+        position: AppToastPosition.topCenter);
+  }
+
+  void _recordSkipTime(PopupSkipRecord record) {
+    final seconds = _parseTimeToSeconds(record.time);
+    if (record.type == '片头') {
+      ref.read(skipOpeningStartProvider.notifier).state = seconds;
+    } else {
+      ref.read(skipEndingStartProvider.notifier).state = seconds;
+    }
+    AppToast.show(context, '已记录${record.type}时间: ${record.time}',
+        position: AppToastPosition.topCenter);
+  }
+
+  int _parseTimeToSeconds(String time) {
+    final parts = time.split(':');
+    if (parts.length == 2) {
+      return int.tryParse(parts[0])! * 60 + int.tryParse(parts[1])!;
+    }
+    if (parts.length == 3) {
+      return int.tryParse(parts[0])! * 3600 +
+          int.tryParse(parts[1])! * 60 +
+          int.tryParse(parts[2])!;
+    }
+    return int.tryParse(time) ?? 0;
+  }
+
   void _showCoreCapsule() {
     final currentCore = normalizePlayerCore(
         _sourceCoreOverride ?? ref.read(playerCoreProvider));
@@ -4021,6 +4257,48 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     final trackId = audioTracks[audioPosition]['id']?.toString() ?? '';
     if (trackId.isNotEmpty) {
       await _playerService.selectAudioTrack(trackId);
+    }
+  }
+
+  /// 新播放器控制层：按显示名称切换音轨（名称来自 PopupMenuOverlay 音频菜单）。
+  Future<void> _switchAudioTrackByName(String trackName) async {
+    final tracks = _playerService.tracksInfo
+        .where((t) => t['type'] == 'audio')
+        .toList();
+    for (final track in tracks) {
+      final label = track['label']?.toString() ??
+          track['title']?.toString() ??
+          '';
+      if (label == trackName) {
+        final trackId = track['id']?.toString() ?? '';
+        if (trackId.isNotEmpty) {
+          await _playerService.selectAudioTrack(trackId);
+        }
+        return;
+      }
+    }
+  }
+
+  /// 新播放器控制层：按显示名称切换字幕（名称来自 PopupMenuOverlay 字幕菜单）。
+  Future<void> _switchSubtitleTrackByName(String trackName) async {
+    if (trackName == '关闭字幕') {
+      await _playerService.deselectSubtitleTrack();
+      return;
+    }
+    final tracks = _playerService.tracksInfo
+        .where((t) => t['type'] == 'text' || t['type'] == 'bitmap')
+        .toList();
+    for (final track in tracks) {
+      final label = track['label']?.toString() ??
+          track['title']?.toString() ??
+          '';
+      if (label == trackName) {
+        final trackId = track['id']?.toString() ?? '';
+        if (trackId.isNotEmpty) {
+          await _playerService.selectSubtitleTrack(trackId);
+        }
+        return;
+      }
     }
   }
 

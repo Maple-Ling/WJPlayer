@@ -176,8 +176,28 @@ class MainActivity : FlutterActivity() {
                         result.success(doubleArrayOf(rxSpeed, txSpeed))
                     }
                 }
+                "getNetworkType" -> {
+                    result.success(currentNetworkType())
+                }
                 else -> result.notImplemented()
             }
+        }
+    }
+
+    private fun currentNetworkType(): String {
+        return try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val network = cm.activeNetwork ?: return "none"
+            val caps = cm.getNetworkCapabilities(network) ?: return "unknown"
+            when {
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "mobile"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "vpn"
+                else -> "unknown"
+            }
+        } catch (_: Exception) {
+            "unknown"
         }
     }
 

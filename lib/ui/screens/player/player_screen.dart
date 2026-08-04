@@ -49,6 +49,9 @@ import '../../../core/sources/source_playback.dart';
 import '../../../core/sources/source_registry.dart';
 import '../../widgets/common/source_quality_button.dart';
 import '../../widgets/common/app_toast.dart';
+import '../../widgets/player/player_controls.dart';
+import '../../widgets/player/player_overlay.dart';
+import '../../widgets/player/popup_menu_overlay.dart';
 
 part 'player_screen_state.dart';
 part 'player_screen_panels.dart';

@@ -11,12 +11,14 @@ class SystemInfoService {
   int _battery = 100;
   double _rxSpeed = 0;
   double _txSpeed = 0;
+  String _networkType = 'unknown';
   Timer? _timer;
   final List<void Function()> _listeners = [];
 
   int get battery => _battery;
   double get rxSpeed => _rxSpeed;
   double get txSpeed => _txSpeed;
+  String get networkType => _networkType;
 
   /// 订阅变化，返回取消订阅函数。
   void Function() addListener(void Function() cb) {
@@ -53,6 +55,10 @@ class SystemInfoService {
         _rxSpeed = (speeds[0] as num?)?.toDouble() ?? 0;
         _txSpeed = (speeds[1] as num?)?.toDouble() ?? 0;
       }
+    } catch (_) {}
+    try {
+      final network = await _channel.invokeMethod<String>('getNetworkType');
+      if (network != null) _networkType = network;
     } catch (_) {}
     _notify();
   }
