@@ -52,6 +52,7 @@ class CapsuleMenuItem {
     this.subLabel,
     this.trailingLabel,
     this.selected = false,
+    this.value = false,
     this.onTap,
     this.onChanged,
     this.sliderValue = 0,
@@ -611,7 +612,10 @@ CapsuleMenuItem capsuleSlider({
 }
 
 /// 纯信息行（对应 HTML .pill 仅展示）。
-CapsuleMenuItem capsuleInfo(String label, String subLabel) {
+CapsuleMenuItem capsuleInfo({
+  required String label,
+  required String subLabel,
+}) {
   return CapsuleMenuItem(
     label: label,
     subLabel: subLabel,

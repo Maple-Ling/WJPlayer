@@ -4005,6 +4005,56 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     );
   }
 
+  /// 切换音频轨（胶囊菜单用；逻辑与右侧面板一致）。
+  Future<void> _switchAudioTrack(
+      List<MediaStream> audios, int selectedStreamIndex) async {
+    final tracks = _playerService.tracksInfo;
+    final audioTracks = tracks.where((t) => t['type'] == 'audio').toList();
+    final audioPosition =
+        audios.indexWhere((stream) => stream.index == selectedStreamIndex);
+    if (audioPosition < 0 || audioPosition >= audioTracks.length) {
+      return;
+    }
+    final trackId = audioTracks[audioPosition]['id']?.toString() ?? '';
+    if (trackId.isNotEmpty) {
+      await _playerService.selectAudioTrack(trackId);
+    }
+  }
+
+  /// 导入外挂字幕（胶囊菜单用；逻辑与右侧面板一致）。
+  Future<void> _pickExternalSubtitle() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['srt', 'ass', 'ssa', 'vtt', 'sup', 'pgs'],
+      );
+      if (result != null && result.files.single.path != null) {
+        final filePath = result.files.single.path!;
+        final logger = AppLogger();
+        logger.i('Player', '导入外部字幕: $filePath');
+
+        var pathToLoad = filePath;
+        final lowerExt = filePath.split('.').last.toLowerCase();
+        if (_playerService.coreType == PlayerCoreType.exoPlayer &&
+            (lowerExt == 'ass' || lowerExt == 'ssa') &&
+            !ref.read(exoLibassProvider)) {
+          pathToLoad = await SubtitleProcessor.convertAssToSrt(filePath);
+          logger.i('Player', '导入字幕: EXO内核已将 ASS/SSA 转为 SRT: $pathToLoad');
+        }
+        await _playerService.loadLibassSubtitle(pathToLoad);
+        if (mounted) {
+          AppToast.show(context, '已导入并加载字幕: ${result.files.single.name}',
+              position: AppToastPosition.topCenter);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        AppToast.show(context, '导入失败: $e',
+            kind: AppToastKind.error, position: AppToastPosition.topCenter);
+      }
+    }
+  }
+
   void _showSkipDialog() {
     _showRightPanel(
       title: '跳过片头',
