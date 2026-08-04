@@ -8,7 +8,6 @@ const Color playerUiPink = Color(0xFFE94560);
 /// 顶栏操作类型。
 enum PlayerTopAction {
   danmaku,
-  danmakuSettings,
   speed,
   skipOpeningEnding,
   aspectRatio,
@@ -80,28 +79,21 @@ class PlayerShadowIcon extends StatelessWidget {
 class TopBar extends StatelessWidget {
   const TopBar({
     super.key,
+    required this.logoText,
     this.logo,
     this.logoImage,
-    this.logoText = 'VIP',
     this.logoWidth = 150,
     this.logoHeight = 38,
     this.serverIcon,
-    this.serverName = 'NAS-飞牛',
-    this.lineName = '默认线路',
-    this.timeText,
-    this.batteryLevel = 100,
+    required this.serverName,
+    required this.lineName,
+    required this.timeText,
+    required this.batteryLevel,
     this.batteryCharging = false,
-    this.networkIcon = Icons.wifi_rounded,
-    this.networkLabel = '网络状态',
-    this.topActions = const [
-      PlayerTopAction.danmaku,
-      PlayerTopAction.danmakuSettings,
-      PlayerTopAction.speed,
-      PlayerTopAction.skipOpeningEnding,
-      PlayerTopAction.aspectRatio,
-      PlayerTopAction.mediaInfo,
-    ],
-    this.selectedActions = const <PlayerTopAction>{},
+    required this.networkIcon,
+    required this.networkLabel,
+    required this.topActions,
+    required this.selectedActions,
     this.onBack,
     this.onAction,
   });
@@ -116,7 +108,7 @@ class TopBar extends StatelessWidget {
   final String serverName;
   final String lineName;
 
-  final String? timeText;
+  final String timeText;
   final int batteryLevel;
   final bool batteryCharging;
   final IconData networkIcon;
@@ -149,7 +141,12 @@ class TopBar extends StatelessWidget {
             colors: [Color(0xA6000000), Colors.transparent],
           ),
         ),
-        padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+        padding: EdgeInsets.fromLTRB(
+          MediaQuery.sizeOf(context).width * 0.08,
+          8,
+          MediaQuery.sizeOf(context).width * 0.08,
+          12,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -178,7 +175,7 @@ class TopBar extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
-            timeText ?? '--:--',
+            timeText,
             style: const TextStyle(
               color: Colors.white70,
               fontSize: 10.5,
@@ -440,8 +437,6 @@ class _TopActionButton extends StatelessWidget {
     switch (action) {
       case PlayerTopAction.danmaku:
         return '弹幕';
-      case PlayerTopAction.danmakuSettings:
-        return '弹幕设置';
       case PlayerTopAction.speed:
         return '倍速';
       case PlayerTopAction.skipOpeningEnding:
@@ -457,8 +452,6 @@ class _TopActionButton extends StatelessWidget {
     switch (action) {
       case PlayerTopAction.danmaku:
         return Icons.chat_bubble_outline;
-      case PlayerTopAction.danmakuSettings:
-        return Icons.tune;
       case PlayerTopAction.speed:
         return Icons.speed;
       case PlayerTopAction.skipOpeningEnding:
@@ -531,22 +524,15 @@ enum PlayerBottomAction {
 class BottomBar extends StatelessWidget {
   const BottomBar({
     super.key,
-    this.title = '示例剧集标题',
-    this.episode = '第3集',
-    this.meta = 'EXO · MP4 · 33Mbps · 60fps',
-    this.position = Duration.zero,
-    this.duration = const Duration(minutes: 45, seconds: 10),
-    this.bufferedProgress = 0,
-    this.isPlaying = false,
-    this.bottomActions = const [
-      PlayerBottomAction.aggregate,
-      PlayerBottomAction.core,
-      PlayerBottomAction.line,
-      PlayerBottomAction.audio,
-      PlayerBottomAction.subtitle,
-      PlayerBottomAction.episodes,
-    ],
-    this.selectedActions = const <PlayerBottomAction>{},
+    required this.title,
+    required this.episode,
+    required this.meta,
+    required this.position,
+    required this.duration,
+    required this.bufferedProgress,
+    required this.isPlaying,
+    required this.bottomActions,
+    required this.selectedActions,
     this.onProgressChanged,
     this.onProgressChangeEnd,
     this.onPrevious,
@@ -592,7 +578,12 @@ class BottomBar extends StatelessWidget {
             colors: [Color(0xBF000000), Colors.transparent],
           ),
         ),
-        padding: const EdgeInsets.fromLTRB(14, 8, 14, 14),
+        padding: EdgeInsets.fromLTRB(
+          MediaQuery.sizeOf(context).width * 0.08,
+          8,
+          MediaQuery.sizeOf(context).width * 0.08,
+          14,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

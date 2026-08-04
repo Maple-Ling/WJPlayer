@@ -21,47 +21,49 @@ class PlayerOverlay extends StatefulWidget {
     required this.isPlaying,
     required this.position,
     required this.duration,
-    this.bufferedProgress = 0,
-    this.title = '示例剧集标题',
-    this.episode = '第3集',
-    this.meta = 'EXO · MP4 · 33Mbps · 60fps',
-    this.serverName = 'NAS-飞牛',
-    this.serverLine = '默认线路',
-    this.logoText = 'VIP',
+    required this.bufferedProgress,
+    required this.title,
+    required this.episode,
+    required this.meta,
+    required this.serverName,
+    required this.serverLine,
+    required this.logoText,
     this.logo,
     this.logoImage,
     this.serverIcon,
-    this.mediaInfoTitle = '示例资源',
-    this.encoder = 'H264',
-    this.resolution = '1920×1080',
-    this.frameRate = '60fps',
-    this.bitrate = '33 Mbps',
-    this.initialDanmakuEnabled = true,
-    this.initialDanmakuDeduplication = true,
-    this.initialAutoSkip = true,
-    this.initialDanmakuOpacity = 0.8,
-    this.initialDanmakuFontSize = 0.5,
-    this.initialDanmakuSpeed = 0.6,
-    this.initialDanmakuDensity = 0.7,
-    this.initialDanmakuArea = 1.0,
-    this.initialDanmakuDelay = 0,
-    this.initialSpeed = 1.0,
-    this.initialAspectRatio = 'auto',
-    this.initialSource = '飞牛NAS',
-    this.initialCore = 'ExoPlayer',
-    this.initialLine = '默认线路',
-    this.initialAudioTrack = '',
-    this.initialSubtitleTrack = '',
-    this.initialEpisode = 1,
-    this.episodeCount = 1,
+    required this.mediaInfoTitle,
+    required this.encoder,
+    required this.resolution,
+    required this.frameRate,
+    required this.bitrate,
+    required this.initialDanmakuEnabled,
+    required this.initialDanmakuDeduplication,
+    required this.initialAutoSkip,
+    required this.initialDanmakuOpacity,
+    required this.initialDanmakuFontSize,
+    required this.initialDanmakuSpeed,
+    required this.initialDanmakuDensity,
+    required this.initialDanmakuArea,
+    required this.initialDanmakuDelay,
+    required this.initialSpeed,
+    required this.initialAspectRatio,
+    required this.initialSource,
+    required this.initialCore,
+    required this.initialLine,
+    required this.initialAudioTrack,
+    required this.initialSubtitleTrack,
+    required this.initialEpisode,
+    required this.episodeCount,
     this.initialIntroTime,
     this.initialOutroTime,
-    this.sources = const <PopupAggregateSource>[],
-    this.cores = const <String>['ExoPlayer'],
-    this.lines = const <PopupLineOption>[],
-    this.audioTracks = const <String>[],
-    this.subtitleTracks = const <String>[],
+    required this.sources,
+    required this.cores,
+    required this.lines,
+    required this.audioTracks,
+    required this.subtitleTracks,
+    required this.episodes,
     this.onUiVisibilityChanged,
+    this.onMenuVisibilityChanged,
     this.onBack,
     this.onPrevious,
     this.onNext,
@@ -88,6 +90,8 @@ class PlayerOverlay extends StatefulWidget {
     this.onDanmakuDelayChanged,
     this.onSearchDanmaku,
     this.onSkipTimeRecorded,
+    this.onClearIntro,
+    this.onClearOutro,
     this.onExternalSubtitleRequested,
   });
 
@@ -139,8 +143,10 @@ class PlayerOverlay extends StatefulWidget {
   final List<PopupLineOption> lines;
   final List<String> audioTracks;
   final List<String> subtitleTracks;
+  final List<PopupEpisodeOption> episodes;
 
   final ValueChanged<bool>? onUiVisibilityChanged;
+  final ValueChanged<bool>? onMenuVisibilityChanged;
   final VoidCallback? onBack;
   final VoidCallback? onPrevious;
   final VoidCallback? onNext;
@@ -168,6 +174,8 @@ class PlayerOverlay extends StatefulWidget {
   final ValueChanged<double>? onDanmakuDelayChanged;
   final VoidCallback? onSearchDanmaku;
   final ValueChanged<PopupSkipRecord>? onSkipTimeRecorded;
+  final VoidCallback? onClearIntro;
+  final VoidCallback? onClearOutro;
   final VoidCallback? onExternalSubtitleRequested;
 
   @override
@@ -175,7 +183,7 @@ class PlayerOverlay extends StatefulWidget {
 }
 
 class _PlayerOverlayState extends State<PlayerOverlay> {
-  bool isUiVisible = true;
+  late bool isUiVisible;
   PopupMenuId? activeMenu;
   PopupMenuId? _anchorMenu;
 
@@ -251,18 +259,37 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
     super.didUpdateWidget(oldWidget);
 
     if (widget.visible != oldWidget.visible &&
-        widget.visible != isUiVisible) {
+        widget.visible != isUiVisible &&
+        activeMenu == null) {
       isUiVisible = widget.visible;
       if (!isUiVisible) {
-        activeMenu = null;
         _anchorMenu = null;
       }
     }
 
-    if (widget.episodeCount != oldWidget.episodeCount) {
-      _selectedEpisode = _selectedEpisode
+    if (widget.episodeCount != oldWidget.episodeCount ||
+        widget.initialEpisode != oldWidget.initialEpisode) {
+      _selectedEpisode = widget.initialEpisode
           .clamp(1, math.max(1, widget.episodeCount))
           .toInt();
+    }
+    if (widget.initialCore != oldWidget.initialCore) {
+      _selectedCore = widget.initialCore;
+    }
+    if (widget.initialLine != oldWidget.initialLine) {
+      _selectedLine = widget.initialLine;
+    }
+    if (widget.initialAudioTrack != oldWidget.initialAudioTrack) {
+      _selectedAudioTrack = widget.initialAudioTrack;
+    }
+    if (widget.initialSubtitleTrack != oldWidget.initialSubtitleTrack) {
+      _selectedSubtitleTrack = widget.initialSubtitleTrack;
+    }
+    if (widget.initialAspectRatio != oldWidget.initialAspectRatio) {
+      _aspectRatio = widget.initialAspectRatio;
+    }
+    if (widget.initialSpeed != oldWidget.initialSpeed) {
+      _speed = widget.initialSpeed;
     }
   }
 
@@ -295,6 +322,8 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
       _anchorMenu = anchorMenu ?? menu;
     });
     widget.onUiVisibilityChanged?.call(true);
+    // 打开二级菜单时通知外部暂停自动隐藏计时器。
+    widget.onMenuVisibilityChanged?.call(true);
   }
 
   void _closeMenu() {
@@ -303,6 +332,8 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
       activeMenu = null;
       _anchorMenu = null;
     });
+    // 二级菜单全部关闭后恢复自动隐藏计时器。
+    widget.onMenuVisibilityChanged?.call(false);
   }
 
   void _handleBack() {
@@ -431,11 +462,6 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
     switch (activeMenu) {
       case PopupMenuId.danmaku:
         return {PlayerTopAction.danmaku};
-      case PopupMenuId.danmakuSettings:
-        return {
-          PlayerTopAction.danmaku,
-          PlayerTopAction.danmakuSettings,
-        };
       case PopupMenuId.speed:
         return {PlayerTopAction.speed};
       case PopupMenuId.skip:
@@ -501,7 +527,6 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
 
     const topActions = <PopupMenuId>[
       PopupMenuId.danmaku,
-      PopupMenuId.danmakuSettings,
       PopupMenuId.speed,
       PopupMenuId.skip,
       PopupMenuId.aspect,
@@ -629,18 +654,19 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                           batteryLevel: info.battery,
                           networkIcon: _networkIcon,
                           networkLabel: _networkLabel,
+                          topActions: const [
+                            PlayerTopAction.danmaku,
+                            PlayerTopAction.speed,
+                            PlayerTopAction.skipOpeningEnding,
+                            PlayerTopAction.aspectRatio,
+                            PlayerTopAction.mediaInfo,
+                          ],
                           selectedActions: _selectedTopActions,
                           onBack: _handleBack,
                           onAction: (action) {
                             switch (action) {
                               case PlayerTopAction.danmaku:
                                 _openMenu(PopupMenuId.danmaku);
-                                break;
-                              case PlayerTopAction.danmakuSettings:
-                                _openMenu(
-                                  PopupMenuId.danmakuSettings,
-                                  anchorMenu: PopupMenuId.danmaku,
-                                );
                                 break;
                               case PlayerTopAction.speed:
                                 _openMenu(PopupMenuId.speed);
@@ -670,6 +696,14 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                           duration: widget.duration,
                           bufferedProgress: widget.bufferedProgress,
                           isPlaying: widget.isPlaying,
+                          bottomActions: const [
+                            PlayerBottomAction.aggregate,
+                            PlayerBottomAction.core,
+                            PlayerBottomAction.line,
+                            PlayerBottomAction.audio,
+                            PlayerBottomAction.subtitle,
+                            PlayerBottomAction.episodes,
+                          ],
                           selectedActions: _selectedBottomActions,
                           onProgressChanged: widget.onSeek,
                           onProgressChangeEnd: widget.onSeek,
@@ -702,7 +736,7 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                       ),
                       Positioned.fill(
                         child: SideButtons(
-                          horizontalPadding: width * 0.03,
+                          horizontalPadding: width * 0.08,
                           onLock: widget.onLock,
                           onRotate: widget.onRotate,
                         ),
@@ -743,7 +777,7 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                     selectedAudioTrack: _selectedAudioTrack,
                     selectedSubtitleTrack: _selectedSubtitleTrack,
                     selectedEpisode: _selectedEpisode,
-                    episodeCount: widget.episodeCount,
+                    episodes: widget.episodes,
                     introTime: _introTime,
                     outroTime: _outroTime,
                     currentPositionLabel: _formatDuration(widget.position),
@@ -779,6 +813,8 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                     onSubtitleChanged: _setSubtitleTrack,
                     onEpisodeChanged: _setEpisode,
                     onSkipTimeRecorded: _recordSkipTime,
+                    onClearIntro: () => widget.onClearIntro?.call(),
+                    onClearOutro: () => widget.onClearOutro?.call(),
                     onExternalSubtitleRequested: () {
                       widget.onExternalSubtitleRequested?.call();
                     },

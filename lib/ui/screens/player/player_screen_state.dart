@@ -24,6 +24,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   String _anime4kMode = 'off';
   // 本次播放是否已上报「看过」到同步服务，避免 onStop 多次触发导致重复写入。
   bool _didScrobble = false;
+  List<PopupEpisodeOption> _overlayEpisodes = const <PopupEpisodeOption>[];
+  String? _overlayEpisodeLoadKey;
 
   /// 内封字幕流式翻译器（无法整轨下载时边播边译，叠加层按双语排版显示）。
   StreamingSubtitleTranslator? _streamTranslator;
@@ -106,8 +108,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       return Rect.zero;
     }
     final mode = ref.read(aspectRatioProvider);
-    // 任何模式都保持视频自身比例；“拉伸”仅保留为历史值，避免默认变形。
-    final safeMode = mode == '拉伸' || mode == '全屏' ? '自适应' : mode;
+    if (mode == '拉伸') {
+      return Offset.zero & containerSize;
+    }
+    final safeMode = mode == '全屏' ? '铺满' : mode;
     final ratio = _resolveDisplayAspectRatio();
     if (ratio == null || ratio <= 0) {
       return Offset.zero & containerSize;
@@ -1783,11 +1787,18 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   Widget build(BuildContext context) {
     final item = ref.watch(currentPlayingItemProvider);
     final server = ref.watch(currentServerProvider);
-    final lineName = (server != null &&
-            server.lines.isNotEmpty &&
-            server.activeLineIndex < server.lines.length)
-        ? server.lines[server.activeLineIndex].name
-        : '默认线路';
+    final mediaInfo = item != null && !item.id.startsWith('src:')
+        ? ref.watch(playbackInfoProvider(item.id)).valueOrNull
+        : null;
+    final mediaSource = _currentMediaSource(item, mediaInfo);
+    final aggregateVersions = item != null &&
+            !item.id.startsWith('src:')
+        ? ref.watch(episodeAggregationProvider(item.id)).valueOrNull ??
+            const <AggregatedVersion>[]
+        : const <AggregatedVersion>[];
+    _scheduleOverlayEpisodes(item);
+    final overlayEpisodes = _overlayEpisodesFor(item);
+    final lineName = _currentLineName(server);
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -1808,27 +1819,54 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   bufferedProgress: _playerService.bufferedProgress,
                   title: item?.name ?? '',
                   episode: _episodeLabel(item),
-                  meta: _metaLabel(),
+                  meta: _metaLabel(item, mediaSource),
                   serverName: server?.name ?? '',
                   serverLine: lineName,
-                  logoText: _logoText,
-                  logoImage: _logoImage,
-                  mediaInfoTitle: _mediaInfoTitle(),
-                  encoder: _mediaEncoder(),
-                  resolution: _mediaResolution(),
-                  frameRate: _mediaFrameRate(),
-                  bitrate: _mediaBitrate(),
-                  initialEpisode: _currentEpisodeNumber(),
-                  episodeCount: _episodeCount(),
-                  initialSource: _aggregateSourceName(),
+                  logoText: _logoText(item),
+                  logoImage: _logoImage(item),
+                  mediaInfoTitle: item?.name ?? '',
+                  encoder: _mediaEncoder(mediaSource),
+                  resolution: _mediaResolution(mediaSource),
+                  frameRate: _mediaFrameRate(mediaSource),
+                  bitrate: _mediaBitrate(mediaSource),
+                  initialDanmakuEnabled: ref.watch(danmakuEnabledProvider),
+                  initialDanmakuDeduplication: ref.watch(danmakuDedupProvider),
+                  initialAutoSkip: ref.watch(autoSkipSegmentsProvider),
+                  initialDanmakuOpacity: ref.watch(danmakuOpacityProvider),
+                  initialDanmakuFontSize: ref.watch(danmakuFontSizeProvider),
+                  initialDanmakuSpeed: ref.watch(danmakuSpeedProvider),
+                  initialDanmakuDensity: ref.watch(danmakuDensityProvider),
+                  initialDanmakuArea: ref.watch(danmakuDisplayAreaProvider),
+                  initialDanmakuDelay: ref.watch(danmakuDelayProvider),
+                  initialSpeed: _playerService.speed,
+                  initialEpisode: _currentEpisodeNumber(item),
+                  episodeCount: overlayEpisodes.length,
+                  initialSource: _aggregateSourceKey(item, mediaSource),
                   initialCore: _currentCore,
                   initialAspectRatio: _aspectRatioValue(),
+                  initialLine: lineName,
                   initialAudioTrack: _currentAudioTrackLabel(),
                   initialSubtitleTrack: _currentSubtitleTrackLabel(),
+                  initialIntroTime: _formatSkipTime(ref.watch(skipOpeningEndProvider)),
+                  initialOutroTime: _formatSkipTime(ref.watch(skipEndingStartProvider)),
+                  sources: _overlayAggregateSources(
+                    item,
+                    mediaInfo,
+                    mediaSource,
+                    aggregateVersions,
+                  ),
+                  cores: _supportedPlayerCores(),
+                  lines: _lineOptions(server),
+                  audioTracks: _audioTrackLabels(),
+                  subtitleTracks: _subtitleTrackLabels(),
+                  episodes: overlayEpisodes,
                   onUiVisibilityChanged: (visible) {
                     if (visible != _playerService.showControls) {
                       _playerService.toggleControls();
                     }
+                  },
+                  onMenuVisibilityChanged: (menuOpen) {
+                    _playerService.setControlsAutoHidePaused(menuOpen);
                   },
                   onBack: () => Navigator.maybePop(context),
                   onPrevious: _playPrevious,
@@ -1839,19 +1877,36 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   onPlaybackRateChanged: (speed) =>
                       _playerService.setSpeed(speed),
                   onAspectRatioChanged: _setAspectRatioValue,
-                  onSourceChanged: (_) {},
+                  onSourceChanged: (sourceId) =>
+                      _switchOverlaySource(sourceId, item, aggregateVersions),
                   onCoreChanged: _switchCore,
                   onLineChanged: _switchLine,
                   onAudioTrackChanged: _switchAudioTrackByName,
                   onSubtitleChanged: _switchSubtitleTrackByName,
                   onEpisodeChanged: _switchEpisode,
+                  onDanmakuChanged: (value) =>
+                      ref.read(danmakuEnabledProvider.notifier).state = value,
+                  onDanmakuDeduplicationChanged: (value) =>
+                      ref.read(danmakuDedupProvider.notifier).state = value,
+                  onDanmakuOpacityChanged: (value) =>
+                      ref.read(danmakuOpacityProvider.notifier).state = value,
+                  onDanmakuFontSizeChanged: (value) =>
+                      ref.read(danmakuFontSizeProvider.notifier).state = value,
+                  onDanmakuSpeedChanged: (value) =>
+                      ref.read(danmakuSpeedProvider.notifier).state = value,
+                  onDanmakuDensityChanged: (value) =>
+                      ref.read(danmakuDensityProvider.notifier).state = value,
+                  onDanmakuAreaChanged: (value) =>
+                      ref.read(danmakuDisplayAreaProvider.notifier).state = value,
+                  onDanmakuDelayChanged: (value) =>
+                      ref.read(danmakuDelayProvider.notifier).state = value,
                   onLock: () => _playerService.toggleLock(),
                   onRotate: _toggleRotation,
-                  onDanmakuChanged: (value) {},
-                  onDanmakuDeduplicationChanged: (value) {},
                   onAutoSkipChanged: _setAutoSkip,
                   onSearchDanmaku: _showDanmakuSearch,
                   onSkipTimeRecorded: _recordSkipTime,
+                  onClearIntro: _clearOpeningSkip,
+                  onClearOutro: _clearEndingSkip,
                   onExternalSubtitleRequested: _pickExternalSubtitle,
                 ),
               ),
@@ -2076,7 +2131,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           fit: StackFit.expand,
           children: [
             if (isMpv)
-              Positioned.fill(child: videoWidget)
+              Positioned.fromRect(rect: contentRect, child: videoWidget)
             else
               Positioned.fromRect(rect: contentRect, child: videoWidget),
             if (danmakuEnabled && danmakuItems.isNotEmpty)
@@ -3751,99 +3806,322 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     return item.name ?? '';
   }
 
-  String _metaLabel() {
-    final core = _currentCore;
-    return 'EXO · MP4 · 33Mbps · 60fps · $core';
+  String _episodeLabel(MediaItem? item) {
+    if (item == null) return '';
+    final number = item.indexNumber;
+    if (number != null) return '第 $number 集';
+    return item.name;
   }
 
-  String get _logoText => 'VIP';
-
-  ImageProvider<Object>? get _logoImage => null;
-
-  String _mediaInfoTitle() {
-    return ref.read(currentPlayingItemProvider)?.name ?? widget.itemId;
-  }
-
-  String _mediaEncoder() => 'H264';
-
-  String _mediaResolution() => '—';
-
-  String _mediaFrameRate() => '—';
-
-  String _mediaBitrate() => '—';
-
-  int _currentEpisodeNumber() {
-    final item = ref.read(currentPlayingItemProvider);
-    return item?.indexNumber ?? 1;
-  }
-
-  int _episodeCount() {
-    final sourcePlay = _activeSourcePlay;
-    if (sourcePlay != null && sourcePlay.playlist.isNotEmpty) {
-      return sourcePlay.playlist.length;
+  String _metaLabel(MediaItem? item, MediaSource? source) {
+    final parts = <String>[];
+    final core = _currentCore == 'exoPlayer' ? 'exo' : 'mpv';
+    parts.add(core);
+    final container = (source?.container ??
+            _pathExtension(source?.path ??
+                _activeSourcePlay?.entry.id ??
+                item?.path))
+        ?.trim();
+    if (container != null && container.isNotEmpty) {
+      parts.add(container.toLowerCase());
     }
-    return 1;
+    final video = source?.primaryVideoStream;
+    final bitrate = video?.bitRate;
+    if (bitrate != null && bitrate > 0) {
+      parts.add('${(bitrate / 1000000).toStringAsFixed(1)}Mbps');
+    }
+    final fps = video?.realFrameRate ?? video?.averageFrameRate;
+    if (fps != null && fps > 0) {
+      parts.add('${fps.toStringAsFixed(fps == fps.roundToDouble() ? 0 : 1)}fps');
+    }
+    return parts.join(' · ');
   }
 
-  String _aggregateSourceName() {
-    final sourcePlay = _activeSourcePlay;
-    if (sourcePlay != null && sourcePlay.entry.name.isNotEmpty) {
-      return sourcePlay.entry.name;
+  String _logoText(MediaItem? item) =>
+      item?.seriesName?.trim().isNotEmpty == true
+          ? item!.seriesName!.trim()
+          : item?.name ?? '';
+
+  ImageProvider<Object>? _logoImage(MediaItem? item) {
+    final itemId = item?.logoItemId;
+    final tag = item?.logoImageTag;
+    if (itemId == null || itemId.isEmpty || tag == null || tag.isEmpty) {
+      return null;
     }
-    return '飞牛NAS';
+    final url = ref.read(apiClientProvider).image.getLogoImageUrl(
+          itemId,
+          tag: tag,
+          maxWidth: 360,
+        );
+    return url == null || url.isEmpty ? null : NetworkImage(url);
   }
 
-  String _aspectRatioValue() {
-    final value = ref.read(aspectRatioProvider);
-    // 将项目中文比例值映射为 PlayerOverlay 的英文枚举值。
-    switch (value) {
-      case '裁切':
-        return 'crop';
-      case '填充':
-        return 'fill';
-      case '自动':
-      default:
-        return 'auto';
+  String _mediaEncoder(MediaSource? source) =>
+      source?.primaryVideoStream?.videoCodec ??
+      source?.primaryVideoStream?.codec ??
+      '';
+
+  String _mediaResolution(MediaSource? source) =>
+      source?.primaryVideoStream?.resolution ?? '';
+
+  String _mediaFrameRate(MediaSource? source) {
+    final fps = source?.primaryVideoStream?.realFrameRate ??
+        source?.primaryVideoStream?.averageFrameRate;
+    if (fps == null || fps <= 0) return '';
+    return '${fps.toStringAsFixed(fps == fps.roundToDouble() ? 0 : 1)} fps';
+  }
+
+  String _mediaBitrate(MediaSource? source) {
+    final value = source?.primaryVideoStream?.bitRate;
+    if (value == null || value <= 0) return '';
+    return '${(value / 1000000).toStringAsFixed(1)} Mbps';
+  }
+
+  int _currentEpisodeNumber(MediaItem? item) {
+    final source = _activeSourcePlay;
+    if (source != null && source.playlist.isNotEmpty) {
+      final index = source.playlistIndex;
+      if (index >= 0) return index + 1;
+    }
+    return item?.indexNumber ?? 0;
+  }
+
+  String? _pathExtension(String? path) {
+    if (path == null) return null;
+    final clean = path.split('?').first;
+    final slash = clean.lastIndexOf('/');
+    final dot = clean.lastIndexOf('.');
+    if (dot <= slash || dot == clean.length - 1) return null;
+    return clean.substring(dot + 1);
+  }
+
+  MediaSource? _currentMediaSource(
+      MediaItem? item, PlaybackInfo? playbackInfo) {
+    final sources = playbackInfo?.mediaSources ?? item?.mediaSources;
+    if (sources == null || sources.isEmpty) return null;
+    final selectedId = ref.read(selectedMediaSourceProvider) ??
+        widget.mediaSourceId;
+    if (selectedId != null) {
+      for (final source in sources) {
+        if (source.id == selectedId) return source;
+      }
+    }
+    return sources.first;
+  }
+
+  String _currentLineName(ServerConfig? server) {
+    if (server == null || server.lines.isEmpty) return '';
+    final index = server.activeLineIndex.clamp(0, server.lines.length - 1);
+    return server.lines[index].name;
+  }
+
+  List<String> _supportedPlayerCores() {
+    if (Platform.isAndroid) {
+      return const ['exoPlayer', 'nativeMpv', 'mpv'];
+    }
+    return const ['mpv', 'exoPlayer'];
+  }
+
+  List<PopupLineOption> _lineOptions(ServerConfig? server) {
+    if (server == null) return const <PopupLineOption>[];
+    return [
+      for (final line in server.lines)
+        PopupLineOption(label: line.name, sub: line.remark ?? ''),
+    ];
+  }
+
+  String _trackLabel(Map<String, dynamic> track) {
+    final display = track['label']?.toString().trim();
+    if (display != null && display.isNotEmpty) return display;
+    final title = track['title']?.toString().trim();
+    final language = track['language']?.toString().trim();
+    final codec = track['codec']?.toString().trim();
+    final parts = <String>[];
+    if (title != null && title.isNotEmpty) parts.add(title);
+    if (language != null && language.isNotEmpty && !parts.contains(language)) {
+      parts.add(language);
+    }
+    if (codec != null && codec.isNotEmpty && !parts.contains(codec)) {
+      parts.add(codec);
+    }
+    final id = track['id']?.toString().trim();
+    if (parts.isEmpty && id != null && id.isNotEmpty) return id;
+    return parts.join(' · ');
+  }
+
+  List<String> _audioTrackLabels() => [
+        for (final track in _playerService.audioTracks)
+          _trackLabel(track),
+      ].where((label) => label.isNotEmpty).toList();
+
+  List<String> _subtitleTrackLabels() => [
+        for (final track in _playerService.subtitleTracks)
+          _trackLabel(track),
+      ].where((label) => label.isNotEmpty).toList();
+
+  void _scheduleOverlayEpisodes(MediaItem? item) {
+    final source = _activeSourcePlay;
+    if (source != null && source.playlist.isNotEmpty) {
+      return;
+    }
+    final seriesId = item?.seriesId;
+    if (seriesId == null || seriesId.isEmpty) return;
+    final key = '$seriesId:${item?.seasonId ?? ''}';
+    if (_overlayEpisodeLoadKey == key) return;
+    _overlayEpisodeLoadKey = key;
+    unawaited(() async {
+      try {
+        final result = await ref.read(apiClientProvider).media.getEpisodes(
+              seriesId,
+              seasonId: item?.seasonId,
+            );
+        if (!mounted || _overlayEpisodeLoadKey != key) return;
+        setState(() {
+          _overlayEpisodes = [
+            for (final episode in result)
+              PopupEpisodeOption(
+                index: episode.indexNumber ?? 0,
+                name: episode.name,
+                path: episode.id,
+                selected: episode.id == item?.id,
+              ),
+          ].where((episode) => episode.index > 0).toList();
+        });
+      } catch (_) {
+        if (mounted && _overlayEpisodeLoadKey == key) {
+          setState(() => _overlayEpisodes = const <PopupEpisodeOption>[]);
+        }
+      }
+    }());
+  }
+
+  List<PopupEpisodeOption> _overlayEpisodesFor(MediaItem? item) {
+    final source = _activeSourcePlay;
+    if (source != null && source.playlist.isNotEmpty) {
+      return [
+        for (var i = 0; i < source.playlist.length; i++)
+          PopupEpisodeOption(
+            index: i + 1,
+            name: source.playlist[i].name,
+            path: source.playlist[i].id,
+            selected: source.playlist[i].id == source.entry.id,
+          ),
+      ];
+    }
+    return _overlayEpisodes;
+  }
+
+  String _aggregateSourceKey(MediaItem? item, MediaSource? source) {
+    final serverId = ref.read(currentServerProvider)?.id ?? '';
+    final sourceId = source?.id ?? '';
+    if (sourceId.isEmpty) return '';
+    return '$serverId:${item?.id ?? widget.itemId}:$sourceId';
+  }
+
+  List<PopupAggregateSource> _overlayAggregateSources(
+    MediaItem? item,
+    PlaybackInfo? playbackInfo,
+    MediaSource? currentSource,
+    List<AggregatedVersion> versions,
+  ) {
+    final result = <PopupAggregateSource>[];
+    final server = ref.read(currentServerProvider);
+    final currentSources = playbackInfo?.mediaSources ??
+        item?.mediaSources ??
+        const <MediaSource>[];
+    for (final source in currentSources) {
+      final key = '${server?.id ?? ''}:${item?.id ?? widget.itemId}:${source.id}';
+      result.add(
+        PopupAggregateSource(
+          id: key,
+          name: source.name ?? server?.name ?? '',
+          resolution: source.qualityLabel,
+          metadata: _sourceMetadata(source),
+        ),
+      );
+    }
+    for (final version in versions) {
+      final key = '${version.server.id}:${version.item.id}:${version.source.id}';
+      result.add(
+        PopupAggregateSource(
+          id: key,
+          name: version.server.name,
+          resolution: version.source.qualityLabel,
+          metadata: _sourceMetadata(version.source),
+        ),
+      );
+    }
+    return result;
+  }
+
+  String _sourceMetadata(MediaSource source) {
+    final video = source.primaryVideoStream;
+    final parts = <String>[];
+    if (source.protocol != null && source.protocol!.isNotEmpty) {
+      parts.add(source.protocol!);
+    }
+    if (video?.bitRate != null && video!.bitRate! > 0) {
+      parts.add('${(video.bitRate! / 1000000).toStringAsFixed(1)}Mbps');
+    }
+    final fps = video?.realFrameRate ?? video?.averageFrameRate;
+    if (fps != null && fps > 0) {
+      parts.add('${fps.toStringAsFixed(fps == fps.roundToDouble() ? 0 : 1)}fps');
+    }
+    return parts.join(' · ');
+  }
+
+  Future<void> _switchOverlaySource(
+    String sourceKey,
+    MediaItem? item,
+    List<AggregatedVersion> versions,
+  ) async {
+    for (final version in versions) {
+      final key = '${version.server.id}:${version.item.id}:${version.source.id}';
+      if (key == sourceKey) {
+        playAggregatedVersion(ref, context, version);
+        return;
+      }
+    }
+    final parts = sourceKey.split(':');
+    if (parts.length < 3 || item == null) return;
+    final sourceId = parts.sublist(2).join(':');
+    if (sourceId.isEmpty) return;
+    ref.read(selectedMediaSourceProvider.notifier).state = sourceId;
+    if (mounted) {
+      context.replace('/player/${item.id}?mediaSourceId=${Uri.encodeQueryComponent(sourceId)}');
     }
   }
+
+  String _sourceMetadataForCurrent(MediaSource? source) =>
+      source == null ? '' : _sourceMetadata(source);
+
+  String _aspectRatioValue() => ref.read(aspectRatioProvider);
 
   Future<void> _setAspectRatioValue(String value) async {
-    // 将 PlayerOverlay 英文枚举值映射回项目中文比例值。
-    String mapped;
-    switch (value) {
-      case 'crop':
-        mapped = '裁切';
-        break;
-      case 'fill':
-        mapped = '填充';
-        break;
-      case 'auto':
-      default:
-        mapped = '自动';
-        break;
-    }
-    ref.read(aspectRatioProvider.notifier).state = mapped;
-    await _playerService.setAspectRatio(mapped);
+    ref.read(aspectRatioProvider.notifier).state = value;
+    await _playerService.setAspectRatio(value);
+    if (mounted) setState(() {});
   }
 
   String _currentAudioTrackLabel() {
-    final track = _playerService.tracksInfo
-        .where((t) => t['type'] == 'audio')
-        .where((t) => t['isSelected'] == true)
-        .firstOrNull;
-    return track?['label']?.toString() ??
-        track?['title']?.toString() ??
-        '国语';
+    for (final track in _playerService.tracksInfo) {
+      if (track['type']?.toString().toLowerCase() == 'audio' &&
+          (track['isSelected'] == true || track['selected'] == true)) {
+        return _trackLabel(track);
+      }
+    }
+    return '';
   }
 
   String _currentSubtitleTrackLabel() {
-    final track = _playerService.tracksInfo
-        .where((t) => t['type'] == 'text' || t['type'] == 'bitmap')
-        .where((t) => t['isSelected'] == true)
-        .firstOrNull;
-    return track?['label']?.toString() ??
-        track?['title']?.toString() ??
-        '中文字幕';
+    for (final track in _playerService.tracksInfo) {
+      final type = track['type']?.toString().toLowerCase();
+      if ((type == 'text' || type == 'bitmap') &&
+          (track['isSelected'] == true || track['selected'] == true)) {
+        return _trackLabel(track);
+      }
+    }
+    return '';
   }
 
   Duration _durationFromProgress(double progress) {
@@ -3867,6 +4145,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   Future<void> _switchEpisode(int episode) async {
+    final source = _activeSourcePlay;
+    if (source != null && source.playlist.isNotEmpty) {
+      final index = episode - 1;
+      if (index >= 0 && index < source.playlist.length) {
+        await _switchSourceEpisode(source.playlist[index]);
+      }
+      return;
+    }
     final currentItem = ref.read(currentPlayingItemProvider);
     if (currentItem?.seriesId == null) {
       AppToast.show(context, '当前资源没有可用选集',
@@ -3895,6 +4181,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   void _setAutoSkip(bool value) {
     ref.read(skipAutoModeProvider.notifier).state = value;
+    ref.read(autoSkipSegmentsProvider.notifier).state = value;
     AppToast.show(context, value ? '自动跳过已开启' : '自动跳过已关闭',
         position: AppToastPosition.topCenter);
   }
@@ -3902,11 +4189,36 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   void _recordSkipTime(PopupSkipRecord record) {
     final seconds = _parseTimeToSeconds(record.time);
     if (record.type == '片头') {
-      ref.read(skipOpeningStartProvider.notifier).state = seconds;
+      ref.read(skipOpeningStartProvider.notifier).state = 5;
+      ref.read(skipOpeningEndProvider.notifier).state = seconds;
     } else {
+      final duration = _playerService.duration.inSeconds;
       ref.read(skipEndingStartProvider.notifier).state = seconds;
+      ref.read(skipEndingEndProvider.notifier).state =
+          duration > seconds ? duration - 3 : duration;
     }
     AppToast.show(context, '已记录${record.type}时间: ${record.time}',
+        position: AppToastPosition.topCenter);
+  }
+
+  String? _formatSkipTime(int seconds) {
+    if (seconds <= 0) return null;
+    final minutes = seconds ~/ 60;
+    final remain = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${remain.toString().padLeft(2, '0')}';
+  }
+
+  void _clearOpeningSkip() {
+    ref.read(skipOpeningStartProvider.notifier).state = 0;
+    ref.read(skipOpeningEndProvider.notifier).state = 0;
+    AppToast.show(context, '已清除片头跳过时间',
+        position: AppToastPosition.topCenter);
+  }
+
+  void _clearEndingSkip() {
+    ref.read(skipEndingStartProvider.notifier).state = 0;
+    ref.read(skipEndingEndProvider.notifier).state = 0;
+    AppToast.show(context, '已清除片尾跳过时间',
         position: AppToastPosition.topCenter);
   }
 
@@ -4266,10 +4578,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         .where((t) => t['type'] == 'audio')
         .toList();
     for (final track in tracks) {
-      final label = track['label']?.toString() ??
-          track['title']?.toString() ??
-          '';
-      if (label == trackName) {
+      if (_trackLabel(track) == trackName) {
         final trackId = track['id']?.toString() ?? '';
         if (trackId.isNotEmpty) {
           await _playerService.selectAudioTrack(trackId);
@@ -4289,10 +4598,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         .where((t) => t['type'] == 'text' || t['type'] == 'bitmap')
         .toList();
     for (final track in tracks) {
-      final label = track['label']?.toString() ??
-          track['title']?.toString() ??
-          '';
-      if (label == trackName) {
+      if (_trackLabel(track) == trackName) {
         final trackId = track['id']?.toString() ?? '';
         if (trackId.isNotEmpty) {
           await _playerService.selectSubtitleTrack(trackId);
@@ -4456,11 +4762,24 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   void _showDanmakuSearch() {
     final item = ref.read(currentPlayingItemProvider);
-    _showRightPanel(
-      title: '搜索弹幕',
-      children: [
-        DanmakuSearchContent(item: item),
-      ],
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (dialogContext) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 24,
+            vertical: 28,
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520, maxHeight: 620),
+            child: PopupMenuShell(
+              child: DanmakuSearchContent(item: item),
+            ),
+          ),
+        );
+      },
     );
   }
 

@@ -15,6 +15,8 @@ import '../../../core/providers/app_providers.dart';
 import '../../../core/services/cache_service.dart';
 import '../../../core/services/system_info_service.dart';
 import '../../../core/providers/media_providers.dart';
+import '../../../core/providers/episode_aggregation_provider.dart';
+import '../../../core/providers/server_providers.dart';
 import '../../../core/services/watch_history/watch_history_models.dart';
 import '../../../core/providers/sync_providers.dart';
 import '../../../core/providers/download_providers.dart';

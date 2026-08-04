@@ -105,6 +105,7 @@ class VideoPlayerService extends ChangeNotifier {
 
   Timer? _progressTimer;
   Timer? _hideControlsTimer;
+  bool _autoHidePaused = false;
   Timer? _pendingPlaybackTimer;
   bool? _pendingPlayingState;
 
@@ -230,6 +231,19 @@ class VideoPlayerService extends ChangeNotifier {
 
   /// 获取当前可用轨道列表
   List<Map<String, dynamic>> get tracksInfo => _adapter?.getTracksInfo() ?? [];
+
+  /// 当前服务可用的音频轨道，随底层轨道事件动态刷新。
+  List<Map<String, dynamic>> get audioTracks => tracksInfo
+      .where((track) => track['type']?.toString().toLowerCase() == 'audio')
+      .toList(growable: false);
+
+  /// 当前服务可用的字幕轨道，随底层轨道事件动态刷新。
+  List<Map<String, dynamic>> get subtitleTracks => tracksInfo
+      .where((track) {
+        final type = track['type']?.toString().toLowerCase();
+        return type == 'text' || type == 'bitmap';
+      })
+      .toList(growable: false);
 
   VideoPlayerService() {
     // 首次构造时从磁盘水合原生渲染开关（幂等，只跑一次）。播放页 initState 建实例，
@@ -1484,9 +1498,25 @@ class VideoPlayerService extends ChangeNotifier {
     _progressTimer = null;
   }
 
+  /// 二级菜单打开期间保持控制层，禁止自动隐藏。
+  void setControlsAutoHidePaused(bool paused) {
+    _autoHidePaused = paused;
+    if (paused) {
+      _cancelHideControlsTimer();
+      if (!_showControls) {
+        _showControls = true;
+        notifyListeners();
+      }
+    } else if (_showControls) {
+      _startHideControlsTimer();
+    }
+  }
+
   void _startHideControlsTimer() {
+    if (_autoHidePaused) return;
     _cancelHideControlsTimer();
-    _hideControlsTimer = Timer(const Duration(seconds: 3), () {
+    _hideControlsTimer = Timer(const Duration(seconds: 10), () {
+      if (_autoHidePaused) return;
       if (isPlaying && !_isDragging) {
         _showControls = false;
         notifyListeners();

@@ -25,14 +25,30 @@ enum PopupMenuId {
 
 class PopupAggregateSource {
   const PopupAggregateSource({
+    required this.id,
     required this.name,
     required this.resolution,
     required this.metadata,
   });
 
+  final String id;
   final String name;
   final String resolution;
   final String metadata;
+}
+
+class PopupEpisodeOption {
+  const PopupEpisodeOption({
+    required this.index,
+    required this.name,
+    required this.path,
+    this.selected = false,
+  });
+
+  final int index;
+  final String name;
+  final String path;
+  final bool selected;
 }
 
 class PopupLineOption {
@@ -220,6 +236,7 @@ class PopupMenuPill extends StatelessWidget {
     this.sub,
     this.trailing,
     this.onTap,
+    this.onLongPress,
   });
 
   final String label;
@@ -228,6 +245,7 @@ class PopupMenuPill extends StatelessWidget {
   final String? sub;
   final Widget? trailing;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -254,6 +272,7 @@ class PopupMenuPill extends StatelessWidget {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Container(
         margin: const EdgeInsets.only(bottom: 4),
         padding: const EdgeInsets.symmetric(
@@ -546,8 +565,8 @@ class PopupAggregateSearchMenu extends StatelessWidget {
             for (var i = 0; i < sources.length; i++) ...[
               AggregateSearchCard(
                 source: sources[i],
-                selected: sources[i].name == selectedSource,
-                onTap: () => onSourceSelected(sources[i].name),
+                selected: sources[i].id == selectedSource,
+                onTap: () => onSourceSelected(sources[i].id),
               ),
               if (i < sources.length - 1) const SizedBox(width: 10),
             ],
@@ -690,7 +709,7 @@ class PopupSpeedMenu extends StatelessWidget {
   final double selectedSpeed;
   final ValueChanged<double> onSpeedSelected;
 
-  static const values = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+  static const values = <double>[0.5, 1.0, 1.5, 2.0, 2.5, 3.0];
 
   String _label(double speed) => speed == 1.0 ? '正常 (1.0x)' : '${speed}x';
 
@@ -721,6 +740,8 @@ class PopupSkipMenu extends StatelessWidget {
     required this.autoSkip,
     required this.onRecordIntro,
     required this.onRecordOutro,
+    required this.onClearIntro,
+    required this.onClearOutro,
     required this.onAutoSkipChanged,
   });
 
@@ -729,6 +750,8 @@ class PopupSkipMenu extends StatelessWidget {
   final bool autoSkip;
   final VoidCallback onRecordIntro;
   final VoidCallback onRecordOutro;
+  final VoidCallback onClearIntro;
+  final VoidCallback onClearOutro;
   final ValueChanged<bool> onAutoSkipChanged;
 
   @override
@@ -742,11 +765,13 @@ class PopupSkipMenu extends StatelessWidget {
           label: '跳过片头',
           sub: introTime == null ? '点击记录当前' : '已记录 $introTime',
           onTap: onRecordIntro,
+          onLongPress: onClearIntro,
         ),
         PopupMenuPill(
           label: '跳过片尾',
           sub: outroTime == null ? '点击记录当前' : '已记录 $outroTime',
           onTap: onRecordOutro,
+          onLongPress: onClearOutro,
         ),
         PopupMenuSwitchPill(
           label: '自动跳过',
@@ -769,10 +794,13 @@ class PopupAspectRatioMenu extends StatelessWidget {
   final ValueChanged<String> onAspectSelected;
 
   static const values = <MapEntry<String, String>>[
-    MapEntry('auto', '自适应'),
-    MapEntry('original', '原始'),
-    MapEntry('crop', '裁切'),
-    MapEntry('fill', '填充'),
+    MapEntry('自动', '自适应'),
+    MapEntry('原始', '原始'),
+    MapEntry('16:9', '16:9'),
+    MapEntry('4:3', '4:3'),
+    MapEntry('21:9', '21:9'),
+    MapEntry('铺满', '裁切铺满'),
+    MapEntry('拉伸', '拉伸填充'),
   ];
 
   @override
@@ -839,6 +867,19 @@ class PopupCoreMenu extends StatelessWidget {
   final String selectedCore;
   final ValueChanged<String> onCoreSelected;
 
+  String _label(String core) {
+    switch (core) {
+      case 'exoPlayer':
+        return 'ExoPlayer';
+      case 'nativeMpv':
+        return 'MPV 原生';
+      case 'mpv':
+        return 'MPV';
+      default:
+        return core;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -848,7 +889,7 @@ class PopupCoreMenu extends StatelessWidget {
         const PopupMenuTitle(title: '播放器内核'),
         for (final core in cores)
           PopupMenuPill(
-            label: core,
+            label: _label(core),
             selected: core == selectedCore,
             showCheck: true,
             onTap: () => onCoreSelected(core),
@@ -940,56 +981,62 @@ class PopupTrackMenu extends StatelessWidget {
 class PopupEpisodesMenu extends StatelessWidget {
   const PopupEpisodesMenu({
     super.key,
-    required this.episodeCount,
+    required this.episodes,
     required this.selectedEpisode,
     required this.onEpisodeSelected,
   });
 
-  final int episodeCount;
+  final List<PopupEpisodeOption> episodes;
   final int selectedEpisode;
   final ValueChanged<int> onEpisodeSelected;
 
   @override
   Widget build(BuildContext context) {
-    final count = math.max(1, episodeCount);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const PopupMenuTitle(title: '选集'),
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [
-            for (var i = 1; i <= count; i++)
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => onEpisodeSelected(i),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 13,
-                    vertical: 7,
-                  ),
-                  decoration: BoxDecoration(
-                    color: selectedEpisode == i
-                        ? popupMenuSelectedBlue
-                        : Colors.white.withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    'EP$i',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: selectedEpisode == i
-                          ? FontWeight.w600
-                          : FontWeight.normal,
+        if (episodes.isEmpty)
+          const PopupMenuPill(label: '暂无可用选集'),
+        if (episodes.isNotEmpty)
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final episode in episodes)
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => onEpisodeSelected(episode.index),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 7,
+                    ),
+                    decoration: BoxDecoration(
+                      color: episode.selected ||
+                              selectedEpisode == episode.index
+                          ? popupMenuSelectedBlue
+                          : Colors.white.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      'EP${episode.index} ${episode.name}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: episode.selected ||
+                                selectedEpisode == episode.index
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                      ),
                     ),
                   ),
                 ),
-              ),
-          ],
-        ),
+            ],
+          ),
       ],
     );
   }
@@ -1021,7 +1068,7 @@ class PopupMenuOverlay extends StatelessWidget {
     required this.selectedAudioTrack,
     required this.selectedSubtitleTrack,
     required this.selectedEpisode,
-    required this.episodeCount,
+    required this.episodes,
     required this.introTime,
     required this.outroTime,
     required this.currentPositionLabel,
@@ -1054,6 +1101,8 @@ class PopupMenuOverlay extends StatelessWidget {
     required this.onSubtitleChanged,
     required this.onEpisodeChanged,
     required this.onSkipTimeRecorded,
+    required this.onClearIntro,
+    required this.onClearOutro,
     required this.onExternalSubtitleRequested,
   });
 
@@ -1080,7 +1129,7 @@ class PopupMenuOverlay extends StatelessWidget {
   final String selectedAudioTrack;
   final String selectedSubtitleTrack;
   final int selectedEpisode;
-  final int episodeCount;
+  final List<PopupEpisodeOption> episodes;
   final String? introTime;
   final String? outroTime;
   final String currentPositionLabel;
@@ -1116,6 +1165,8 @@ class PopupMenuOverlay extends StatelessWidget {
   final ValueChanged<String> onSubtitleChanged;
   final ValueChanged<int> onEpisodeChanged;
   final ValueChanged<PopupSkipRecord> onSkipTimeRecorded;
+  final VoidCallback onClearIntro;
+  final VoidCallback onClearOutro;
   final VoidCallback onExternalSubtitleRequested;
 
   Widget _menu() {
@@ -1166,6 +1217,8 @@ class PopupMenuOverlay extends StatelessWidget {
               time: currentPositionLabel,
             ),
           ),
+          onClearIntro: onClearIntro,
+          onClearOutro: onClearOutro,
           onAutoSkipChanged: onAutoSkipChanged,
         );
       case PopupMenuId.aspect:
@@ -1217,7 +1270,7 @@ class PopupMenuOverlay extends StatelessWidget {
         );
       case PopupMenuId.episodes:
         return PopupEpisodesMenu(
-          episodeCount: episodeCount,
+          episodes: episodes,
           selectedEpisode: selectedEpisode,
           onEpisodeSelected: onEpisodeChanged,
         );
