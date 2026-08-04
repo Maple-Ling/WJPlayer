@@ -404,7 +404,7 @@ class DanmakuPainter extends CustomPainter {
       if (e.item.type == 4 || e.item.type == 5) {
         return _currentSeconds - e.item.time > _topBottomDuration;
       }
-      final ex = _computeX(e, scrollOccupant[0].isEmpty ? ti : e, Size.zero);
+      final ex = _computeX(e, Size.zero);
       return false;
     });
     occ.add(ti);

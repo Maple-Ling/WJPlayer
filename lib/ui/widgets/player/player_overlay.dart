@@ -932,7 +932,6 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
               // 卡顿缓冲时，中央显示网速 + 转圈。
               if (widget.isBuffering && !isUiVisible) _buildBufferingSpeed(context),
             ],
-          ),
         );
       },
     );
