@@ -2092,6 +2092,8 @@ class MpvPlayerAdapter implements PlayerAdapter {
         value = '-1';
         panscan = 1.0;
         break;
+    }
+
     final np = _nativePlayer;
     if (np != null) {
       await np.setProperty('keepaspect', keepAspect ? 'yes' : 'no');

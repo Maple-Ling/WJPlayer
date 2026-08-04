@@ -928,9 +928,9 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                 ),
               if (_toastMessage != null) _buildToast(size),
               // 手势拖动进度时，即使主控制栏已隐藏也单独渲染一条极简进度条。
-              if (isScrubbingPosition) _buildScrubbingProgress(context, size),
+              if (widget.isScrubbingPosition) _buildScrubbingProgress(context, size),
               // 卡顿缓冲时，中央显示网速 + 转圈。
-              if (isBuffering && !isUiVisible) _buildBufferingSpeed(context),
+              if (widget.isBuffering && !isUiVisible) _buildBufferingSpeed(context),
             ],
           ),
         );

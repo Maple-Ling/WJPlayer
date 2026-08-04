@@ -1825,7 +1825,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   duration: _playerService.duration,
                   bufferedProgress: _playerService.bufferedProgress,
                   isScrubbingPosition: _playerService.isScrubbingPosition,
-                  dragPreviewProgress: _playerService.dragPreviewProgress !=
+                  dragPreviewProgress: _playerService.dragPreviewPosition !=
                           Duration.zero
                       ? (_playerService.dragPreviewPosition.inMilliseconds /
                               _playerService.duration.inMilliseconds)

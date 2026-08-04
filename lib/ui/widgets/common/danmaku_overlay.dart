@@ -147,10 +147,6 @@ class DanmakuLayoutCache {
   int? _laneTrackCount;
   double? _laneSpeed;
 
-  /// 每条轨道的所有占用者（index → [(startTime, endTime, width, speed), ...]）。
-  /// 用于精确检测同轨弹幕碰撞，防止重叠。
-  final Map<int, List<_LaneSlot>> laneSlots = {};
-
   void ensure(List<DanmakuItem> items, double fontSize, double width,
       bool stroke, String? fontFamily) {
     if (identical(_items, items) &&
@@ -169,7 +165,6 @@ class DanmakuLayoutCache {
     _strokeParas = List<ui.Paragraph?>.filled(items.length, null);
     _widths = List<double>.filled(items.length, 0);
     laneOf.clear();
-    laneSlots.clear();
   }
 
   /// 轨道数或速度变了 → 清空重排。
@@ -178,7 +173,6 @@ class DanmakuLayoutCache {
       _laneTrackCount = trackCount;
       _laneSpeed = speed;
       laneOf.clear();
-      laneSlots.clear();
     }
   }
 
