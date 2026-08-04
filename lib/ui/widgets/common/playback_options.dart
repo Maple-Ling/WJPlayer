@@ -237,7 +237,8 @@ class _PlaybackOptionsState extends ConsumerState<PlaybackOptions> {
           ref.read(audioTrackProvider.notifier).state = null;
           ref.read(subtitleTrackProvider.notifier).state = null;
           ref.read(secondarySubtitleTrackProvider.notifier).state = null;
-          ref.invalidate(playbackInfoProvider(itemId));
+          // 线路切换不重建 PlaybackInfo — 卡片立即显示新线路，
+          // 实际播放链接由播放页读 currentServerProvider 时生效。
           setState(() => _expanded = null);
         },
       );
