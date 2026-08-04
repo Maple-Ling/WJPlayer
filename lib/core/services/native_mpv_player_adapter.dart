@@ -718,21 +718,6 @@ class NativeMpvPlayerAdapter implements PlayerAdapter {
     if (!enabled) _lastSubText = '';
   }
 
-  /// 设置待加载字幕（subtitle tracks 尚未就绪时的临时标记）。
-  /// 仅 MPV 内核支持；当前实现为 no-op（NativeMpvPlayerAdapter 无预加载字幕机制）。
-  void setPendingSubtitle(String codec, {String? title}) {
-    _logger.fine('NativeMpv', 'setPendingSubtitle codec=$codec title=$title (no-op)');
-  }
-
-  /// 是否使用软件纹理渲染（Android 原生 mpv 均为硬件合成，故恒为 false）。
-  bool get isSoftwareTexture => false;
-
-  /// 开启/关闭零拷贝硬解。Android 原生 mpv 使用原生 mediacodec + 硬件合成，
-  /// 不需要 libmpv 侧的 zero-copy 模式，故此处为 no-op。
-  void applyZeroCopyHwdec(bool enabled, {bool zeroCopyHwdec = false}) {
-    _logger.fine('NativeMpv', 'applyZeroCopyHwdec enabled=$enabled (no-op on Android)');
-  }
-
   // ---- Video rendering ----
 
   /// Build the video widget.

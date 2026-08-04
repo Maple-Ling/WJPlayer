@@ -1214,11 +1214,7 @@ class VideoPlayerService extends ChangeNotifier {
   /// 时定死、无法运行时切换。桌面三端已恒硬件纹理 → 恒可即时应用，超分/六档随手切。
   /// （保留此判定：若 macOS 因黑屏回退软件纹理，isSoftwareTexture 会重新为真，
   /// 届时桌面 UI 自动退回「下次播放生效」分支。）
-  bool get superResolutionCanApplyLive {
-    final a = _adapter;
-    if (a is NativeMpvPlayerAdapter) return !a.isSoftwareTexture;
-    return true; // 原生 mpv 恒硬件表面；其余内核不支持超分菜单也走不到这里
-  }
+  bool get superResolutionCanApplyLive => true;
 
   String get superResolutionLevel => _superResolutionLevel;
 
@@ -1226,10 +1222,9 @@ class VideoPlayerService extends ChangeNotifier {
 
   /// 切换 Windows 硬解零拷贝(d3d11va)↔拷回(auto-copy)。会话级、不落盘。
   /// 记住状态，跨适配器重建（换硬解/换线路）自动重放；当前播放中即时切换。
+  /// Android 原生 MPV 使用 mediacodec 硬解，不需要 zero-copy 模式，故无操作。
   Future<void> setZeroCopyHwdec(bool enable) async {
     _zeroCopyHwdec = enable;
-    final a = _adapter;
-    if (a is NativeMpvPlayerAdapter) a.applyZeroCopyHwdec(enable);
     notifyListeners();
   }
 
