@@ -869,7 +869,7 @@ class MediaStream {
     this.refFrames,
     this.gopSize,
     this.frameType,
-
+  });
 
   bool get isVideo => type == 'Video';
   bool get isAudio => type == 'Audio';
