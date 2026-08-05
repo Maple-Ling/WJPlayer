@@ -20,15 +20,17 @@ class ExternalMediaService {
   final Dio _imdb = buildSourceDio(baseUrl: 'https://v3-cinemeta.strem.io');
 
   Future<Dio> _client() async {
-    if (_dio != null) return _dio!;
-    _key = await TmdbCrypto.decrypt(_encryptedKey);
-    if (_key.isEmpty) throw StateError('TMDB API 未配置');
-    final bearer = _key.contains('.');
-    return _dio = buildSourceDio(baseUrl: _base, headers: {
+    if (_dioCache != null) return _dioCache!;
+    final key = await TmdbCrypto.decrypt(_encryptedKey);
+    if (key.isEmpty) throw StateError('TMDB API 未配置');
+    final bearer = key.contains('.');
+    return _dioCache = buildSourceDio(baseUrl: _base, headers: {
       'Accept': 'application/json',
-      if (bearer) 'Authorization': 'Bearer $_key',
+      if (bearer) 'Authorization': 'Bearer $key',
     });
   }
+
+  Dio? _dioCache;
 
   Map<String, dynamic> _query([Map<String, dynamic>? extra]) => {
         'language': 'zh-CN',

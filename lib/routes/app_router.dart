@@ -605,7 +605,7 @@ class _FloatingTabBar extends ConsumerWidget {
           _switchBySwipe(details.primaryVelocity ?? 0),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
       decoration: BoxDecoration(
         color: navBg,
         borderRadius: BorderRadius.circular(42),
@@ -648,8 +648,8 @@ class _FloatingTabBar extends ConsumerWidget {
           ],
         ),
       ),
-    );
-    );
+    ),
+  );
   }
 }
 
