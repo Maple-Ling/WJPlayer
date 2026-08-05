@@ -1196,12 +1196,8 @@ class _UnifiedMediaDetailScreenState
         },
       );
 
-  Widget _sectionTitleWithTrailing(String title, Widget trailing) => Row(
-        children: [
-          Expanded(child: _sectionTitle(title)),
-          trailing,
-        ],
-      );
+  Widget _sectionTitleWithTrailing(String title, Widget trailing) =>
+      _sectionTitle(title, trailing: trailing);
 
   void _openCrossServerMatch(ServerMatchInfo match) {
     final server = ref
@@ -1789,13 +1785,10 @@ class _UnifiedMediaDetailScreenState
         ]),
       );
 
-  Widget _sectionTitle(String title) => Text(
-        title,
-        style: Theme.of(context)
-            .textTheme
-            .titleLarge
-            ?.copyWith(fontWeight: FontWeight.w800),
-      );
+  Widget _sectionTitle(String title, {Widget? trailing}) => Row(children: [
+        Text(title, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900)),
+        if (trailing != null) trailing,
+      ]);
 
   String _trackLabel(Map<String, dynamic> track, int index, String fallback) {
     final title = track['title']?.toString().trim() ?? '';
