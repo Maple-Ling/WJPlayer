@@ -1,6 +1,7 @@
 package com.mapleling.wjplayer
 
 import android.content.Context
+import android.graphics.SurfaceTexture
 import android.os.Handler
 import android.os.Looper
 import android.view.Surface
@@ -409,12 +410,11 @@ class MpvPlayerPlugin(
             surfaceTextureEntry = textureRegistry.createSurfaceTexture()
             val surfaceTexture = surfaceTextureEntry.surfaceTexture()
 
-            // Set initial surface size using screen dimensions (landscape orientation)
-            // IMPORTANT: Must be set BEFORE creating Surface to avoid SurfaceSyncer errors
-            val dm = context.resources.displayMetrics
-            val screenW = if (dm.widthPixels > dm.heightPixels) dm.widthPixels else dm.heightPixels
-            val screenH = if (dm.widthPixels > dm.heightPixels) dm.heightPixels else dm.widthPixels
-            surfaceTexture.setDefaultBufferSize(screenW, screenH)
+            // Match media_kit's Android gpu path: start with the SurfaceTexture's
+            // minimal buffer and wait for mpv's display dimensions (dw/dh).
+            // The output size is not the device screen size; it is the size mpv
+            // will use after applying the stream's SAR/DAR/rotation.
+            surfaceTexture.setDefaultBufferSize(1, 1)
 
             val surface = Surface(surfaceTexture)
 
@@ -445,12 +445,10 @@ class MpvPlayerPlugin(
             // Initialize mpv (registers JavaVM, starts event thread)
             MPVLib.init()
 
-            MPVLib.attachSurface(surface)
-
-            // Notify mpv of initial render target dimensions
-            MPVLib.setPropertyString("android-surface-size", "${screenW}x${screenH}")
-
-            // Enable video output
+            // Do not attach the 1x1 Surface yet. The media_kit Android gpu
+            // path waits for the first display-size callback, resizes the
+            // SurfaceTexture, sets android-surface-size, and only then binds
+            // the Surface as mpv's wid target.
             MPVLib.setPropertyBoolean("force-window", true)
 
             // Set up EventChannel
@@ -466,7 +464,8 @@ class MpvPlayerPlugin(
                 surface = surface,
                 mpvTexture = mpvTexture,
                 eventChannel = eventChannel,
-                mainHandler = mainHandler
+                mainHandler = mainHandler,
+                useGpuNext = useGpuNext
             )
 
             // Register observer（含日志订阅：把 mpv 原生 warn/error/fatal 落到 App 日志）
@@ -488,8 +487,13 @@ class MpvPlayerPlugin(
             // 推一次（且可能在 Dart 订阅前丢失）。字幕轨常在 FILE_LOADED 后才完全就绪，
             // NONE 观察保证 Dart 侧 _tracks 最终一定拿到完整内封字幕/音轨列表。
             MPVLib.observeProperty("track-list", MPVLib.MpvFormat.NONE)
+            // video-params/w/h are storage pixels. The current bundled libmpv
+            // exposes display-space dimensions under video-out-params/dw/dh;
+            // these are the dimensions media_kit uses for Android gpu output.
             MPVLib.observeProperty("video-params/w", MPVLib.MpvFormat.INT64)
             MPVLib.observeProperty("video-params/h", MPVLib.MpvFormat.INT64)
+            MPVLib.observeProperty("video-out-params/dw", MPVLib.MpvFormat.INT64)
+            MPVLib.observeProperty("video-out-params/dh", MPVLib.MpvFormat.INT64)
             MPVLib.observeProperty("hwdec-current", MPVLib.MpvFormat.STRING)
             // 诊断：观察当前应显示的字幕文本，上升沿写日志（见 eventProperty String 分支）。
             MPVLib.observeProperty("sub-text", MPVLib.MpvFormat.STRING)
@@ -596,22 +600,24 @@ class MpvPlayerPlugin(
             }
         }
 
-        // Video output - try gpu-next for better HDR/DV support, fallback to gpu if unavailable
+        // Video output - initialize with vo=null. The Android gpu output is
+        // enabled only after the first valid display-size callback, matching
+        // media_kit's wid/vo lifecycle and avoiding a 1x1 or screen-sized EGL
+        // viewport being created before video parameters are known.
         var actuallyUsingGpuNext = false
         if (useGpuNext) {
             try {
-                MPVLib.setOptionString("vo", "gpu-next")
+                MPVLib.setOptionString("vo", "null")
                 actuallyUsingGpuNext = true
-                android.util.Log.i(TAG, "Configured mpv for gpu-next rendering")
+                android.util.Log.i(TAG, "Configured mpv for deferred gpu-next rendering")
             } catch (e: Exception) {
-                // gpu-next not available (requires Vulkan/libplacebo), fallback to gpu
-                android.util.Log.w(TAG, "gpu-next not available, falling back to gpu: ${e.message}")
-                MPVLib.setOptionString("vo", "gpu")
-                android.util.Log.i(TAG, "Configured mpv for gpu rendering (fallback)")
+                android.util.Log.w(TAG, "gpu-next deferred setup failed, using gpu: ${e.message}")
+                MPVLib.setOptionString("vo", "null")
+                android.util.Log.i(TAG, "Configured mpv for deferred gpu rendering")
             }
         } else {
-            MPVLib.setOptionString("vo", "gpu")
-            android.util.Log.i(TAG, "Configured mpv for gpu rendering")
+            MPVLib.setOptionString("vo", "null")
+            android.util.Log.i(TAG, "Configured mpv for deferred gpu rendering")
         }
 
         // Common GPU settings
@@ -811,11 +817,17 @@ class MpvPlayerPlugin(
         private val surface: Surface,
         private val mpvTexture: MpvTexture?,  // Nullable when using SurfaceView
         private val eventChannel: EventChannel,
-        private val mainHandler: Handler
+        private val mainHandler: Handler,
+        private val useGpuNext: Boolean
     ) : MPVLib.EventObserver, MPVLib.LogObserver {
 
         private var eventSink: EventChannel.EventSink? = null
         private var currentTracks: List<Map<String, Any>> = emptyList()
+        // Last display-space dimensions applied to the Android GPU surface.
+        private val surfaceLock = Any()
+        private var appliedSurfaceWidth = 0
+        private var appliedSurfaceHeight = 0
+        private var surfaceAttached = false
         // 诊断（字幕不显示定位）：sub-text 上升沿计数，捕捉"mpv 认为此刻该显示的字幕文本"，
         // 上限几条防刷屏。非空却看不见=渲染层(libass/OSD)问题；始终为空=解码/时间轴问题。
         private var lastSubText: String = ""
@@ -1022,7 +1034,10 @@ class MpvPlayerPlugin(
             // Detach surface from mpv (stops video rendering)
             try {
                 MPVLib.setPropertyBoolean("force-window", false)
-                MPVLib.detachSurface()
+                if (surfaceAttached) {
+                    MPVLib.detachSurface()
+                    surfaceAttached = false
+                }
             } catch (e: Exception) {
                 android.util.Log.w(TAG, "detachSurface failed", e)
             }
@@ -1058,8 +1073,9 @@ class MpvPlayerPlugin(
 
         override fun eventProperty(property: String, value: Long) {
             when (property) {
-                "video-params/w", "video-params/h" -> {
-                    emitVideoSize()
+                "video-params/w", "video-params/h",
+                "video-out-params/dw", "video-out-params/dh" -> {
+                    reconfigureVideoSurface()
                 }
             }
         }
@@ -1188,6 +1204,7 @@ class MpvPlayerPlugin(
                     val currentSid = MPVLib.getPropertyInt("sid")
                     val subVisibility = MPVLib.getPropertyBoolean("sub-visibility")
                     val audioChannels = MPVLib.getPropertyString("audio-channels")
+                    reconfigureVideoSurface()
                     android.util.Log.i(TAG, "FILE_LOADED diagnostics:")
                     android.util.Log.i(TAG, "  audio-codec: $audioCodec")
                     android.util.Log.i(TAG, "  audio-codec-name: $audioCodecName")
@@ -1241,7 +1258,7 @@ class MpvPlayerPlugin(
                     emitEvent("completed", true)
                 }
                 MPVLib.MpvEvent.VIDEO_RECONFIG -> {
-                    emitVideoSize()
+                    reconfigureVideoSurface()
                 }
             }
         }
@@ -1303,14 +1320,66 @@ class MpvPlayerPlugin(
             }
         }
 
-        private fun emitVideoSize() {
-            val w = MPVLib.getPropertyInt("video-params/w") ?: return
-            val h = MPVLib.getPropertyInt("video-params/h") ?: return
-            if (w > 0 && h > 0) {
-                // Don't update SurfaceTexture buffer — let mpv handle aspect ratio
-                // and letterboxing internally at the surface's native dimensions
-                emitEvent("videoSize", mapOf("width" to w, "height" to h))
+        /**
+         * Mirrors media_kit's Android gpu path.
+         *
+         * w/h are storage pixels. dw/dh are display pixels after SAR/DAR and
+         * rotation. For gpu, SurfaceTexture and android-surface-size must use
+         * dw/dh, then the Flutter Texture must be laid out with the same ratio.
+         */
+        private fun useGpuNextOutput(): Boolean = useGpuNext
+
+        private fun reconfigureVideoSurface() {
+            val storageW = MPVLib.getPropertyInt("video-params/w") ?: 0
+            val storageH = MPVLib.getPropertyInt("video-params/h") ?: 0
+            val targetW = MPVLib.getPropertyInt("video-out-params/dw") ?: 0
+            val targetH = MPVLib.getPropertyInt("video-out-params/dh") ?: 0
+            // Older bundled libmpv builds may not expose output dimensions
+            // while vo=null. Storage dimensions are square-pixel fallback;
+            // a later video-out-params event will replace them when available.
+            val displayW = if (targetW > 0) targetW else storageW
+            val displayH = if (targetH > 0) targetH else storageH
+            if (storageW <= 0 || storageH <= 0 || displayW <= 0 || displayH <= 0) return
+
+            synchronized(surfaceLock) {
+                if (displayW != appliedSurfaceWidth || displayH != appliedSurfaceHeight) {
+                    try {
+                        // ORDER IS IMPORTANT: resize producer, put mpv in null
+                        // mode, update surface size, attach wid, then recreate vo.
+                        surfaceTextureFromSurface()?.setDefaultBufferSize(displayW, displayH)
+                        MPVLib.setPropertyString("vo", "null")
+                        MPVLib.setPropertyString("android-surface-size", "${displayW}x${displayH}")
+                        if (!surfaceAttached) {
+                            MPVLib.attachSurface(surface)
+                            surfaceAttached = true
+                        }
+                        MPVLib.setPropertyString(
+                            "vo",
+                            if (useGpuNextOutput()) "gpu-next" else "gpu"
+                        )
+                        appliedSurfaceWidth = displayW
+                        appliedSurfaceHeight = displayH
+                        android.util.Log.i(
+                            TAG,
+                            "MPV display surface resized: storage=${storageW}x${storageH}, display=${displayW}x${displayH}"
+                        )
+                    } catch (e: Throwable) {
+                        android.util.Log.w(TAG, "Failed to resize MPV display surface", e)
+                    }
+                }
             }
+
+            emitVideoSize(displayW, displayH)
+        }
+
+        private fun surfaceTextureFromSurface(): SurfaceTexture? {
+            // Surface was created from the TextureRegistry SurfaceTexture. Keep
+            // this lookup local to avoid retaining another texture lifecycle ref.
+            return mpvTexture?.surfaceTextureEntry?.surfaceTexture()
+        }
+
+        private fun emitVideoSize(width: Int, height: Int) {
+            emitEvent("videoSize", mapOf("width" to width, "height" to height))
         }
 
         private fun emitEvent(type: String, value: Any?) {
