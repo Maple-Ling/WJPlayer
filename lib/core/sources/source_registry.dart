@@ -1,10 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'anirss_backend.dart';
 import 'feiniu_backend.dart';
 import 'media_source_backend.dart';
-import 'openlist_backend.dart';
-import 'quark_backend.dart';
 
 /// 一种源支持的登录方式。
 enum SourceLoginMethod { password, qrcode, cookie }
@@ -53,33 +50,6 @@ const List<SourceTypeDescriptor> kSourceTypes = [
     keywords: ['emby', 'jellyfin', 'media server', '媒体服务器'],
   ),
   SourceTypeDescriptor(
-    kind: SourceKind.openlist,
-    name: 'OpenList',
-    subtitle: '文件列表网关（AList 后继），账密登录在线播放',
-    icon: Icons.folder_shared_rounded,
-    accent: Color(0xFF2F6FED),
-    loginMethods: [SourceLoginMethod.password],
-    keywords: ['openlist', 'alist', 'oplist', '列表', '网盘聚合'],
-  ),
-  SourceTypeDescriptor(
-    kind: SourceKind.quark,
-    name: '夸克网盘',
-    subtitle: '扫码或粘贴 Cookie 登录，在线播放网盘视频',
-    icon: Icons.cloud_rounded,
-    accent: Color(0xFF3A6CF6),
-    loginMethods: [SourceLoginMethod.qrcode, SourceLoginMethod.cookie],
-    keywords: ['quark', '夸克', 'kuake', '网盘', 'pan'],
-  ),
-  SourceTypeDescriptor(
-    kind: SourceKind.anirss,
-    name: 'Ani-rss',
-    subtitle: '自动追番，账密登录浏览并在线播放剧集',
-    icon: Icons.rss_feed_rounded,
-    accent: Color(0xFFE9543B),
-    loginMethods: [SourceLoginMethod.password],
-    keywords: ['anirss', 'ani-rss', '追番', '番剧', 'rss'],
-  ),
-  SourceTypeDescriptor(
     kind: SourceKind.feiniu,
     name: '飞牛影视',
     subtitle: 'fnOS 影视媒体库，账密登录浏览并在线播放',
@@ -103,12 +73,6 @@ final Map<SourceKind, MediaSourceBackend> _backends = {};
 MediaSourceBackend mediaSourceBackendFor(SourceKind kind) {
   return _backends.putIfAbsent(kind, () {
     switch (kind) {
-      case SourceKind.openlist:
-        return OpenListBackend();
-      case SourceKind.anirss:
-        return AniRssBackend();
-      case SourceKind.quark:
-        return QuarkBackend();
       case SourceKind.feiniu:
         return FeiniuBackend();
       case SourceKind.emby:

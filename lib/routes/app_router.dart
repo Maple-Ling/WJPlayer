@@ -24,12 +24,7 @@ import '../ui/screens/server/edit_server_screen.dart';
 import '../ui/screens/server/icon_select_screen.dart';
 import '../ui/screens/server/server_list_screen.dart';
 import '../ui/screens/settings/settings_screen.dart';
-import '../core/sources/anirss/anirss_nav_args.dart';
-import '../ui/screens/anirss/anirss_detail_screen.dart';
-import '../ui/screens/anirss/anirss_shell_screen.dart';
 import '../ui/screens/source/unified_media_screens.dart';
-import '../ui/screens/source/source_browse_screen.dart';
-import '../ui/screens/source/source_login_screen.dart';
 import '../ui/screens/source/source_picker_screen.dart';
 import '../core/sources/source_playback.dart';
 import '../core/sources/source_kind.dart';
@@ -135,16 +130,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                       direction: _PageTransitionDirection.forward,
                     ),
                   ),
-                  GoRoute(
-                    path: 'source/:kind',
-                    pageBuilder: (context, state) => _buildHorizontalPage(
-                      child: SourceLoginScreen(
-                        kind: sourceKindFromName(state.pathParameters['kind']),
-                      ),
-                      state: state,
-                      direction: _PageTransitionDirection.forward,
-                    ),
-                  ),
                 ],
               ),
               GoRoute(
@@ -236,23 +221,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(path: '/favorites', builder: (_, __) => const FavoritesScreen()),
-      GoRoute(
-        path: '/browse',
-        builder: (context, state) => Consumer(
-          builder: (context, ref, _) {
-            final server = ref.watch(currentServerProvider);
-            if (server?.sourceKind == SourceKind.anirss) {
-              return const AniRssShellScreen();
-            }
-            return const SourceBrowseScreen();
-          },
-        ),
-      ),
-      GoRoute(
-        path: '/anirss-detail',
-        builder: (context, state) =>
-            AniRssDetailScreen(args: state.extra as AniRssDetailArgs),
-      ),
       GoRoute(
         path: '/source-player',
         builder: (context, state) {

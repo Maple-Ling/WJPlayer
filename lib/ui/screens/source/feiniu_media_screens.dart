@@ -378,9 +378,7 @@ class _FeiniuServerSwitcher extends ConsumerWidget {
         if (server.authToken != null || server.isFileBrowse) {
           ref.read(authStateProvider.notifier).state = AuthState.authenticated;
         }
-        context.go(server.isFileBrowse && server.sourceKind != SourceKind.feiniu
-            ? '/browse'
-            : '/home');
+        context.go('/home');
       },
       itemBuilder: (context) => [
         for (final server in servers)

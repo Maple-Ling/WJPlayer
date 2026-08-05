@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/api/emby_api.dart';
 import '../../../core/providers/app_providers.dart';
-import '../../../core/sources/anirss_backend.dart';
 import '../../../core/sources/feiniu_backend.dart';
 import '../../../core/sources/openlist_backend.dart';
 import '../../../core/sources/source_http.dart';
@@ -11,7 +10,6 @@ import '../../../core/sources/source_kind.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../widgets/common/media_widgets.dart';
-import '../source/quark_qr_login_view.dart';
 
 /// 服务器列表页面
 class ServerListScreen extends ConsumerStatefulWidget {
@@ -212,9 +210,7 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
     if (server.authToken != null || server.isFileBrowse) {
       ref.read(authStateProvider.notifier).state = AuthState.authenticated;
     }
-    final destination = server.sourceKind == SourceKind.feiniu
-        ? '/home'
-        : (server.isFileBrowse ? '/browse' : '/home');
+    final destination = '/home'; // 仅剩 emby/feiniu，统一进影视首页。
     // push 而非 go：保留分支栈，从服务器首页返回时回到服务器管理页（而非跳转影视页）。
     context.push(destination);
   }
@@ -334,14 +330,9 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
     );
   }
 
-  /// 按源类型分流「重新登录」：夸克=扫码/Cookie，OpenList/Ani-rss=账密，Emby=账密。
-  /// 修复此前所有源都弹 Emby 账密框的问题（扫码登录的夸克不该让用户输密码）。
+  /// 按源类型分流「重新登录」：飞牛=账密，Emby=账密。
   void _relogin(BuildContext context, WidgetRef ref, ServerConfig server) {
     switch (server.sourceKind) {
-      case SourceKind.quark:
-        _showQuarkRelogin(context, ref, server);
-      case SourceKind.openlist:
-      case SourceKind.anirss:
       case SourceKind.feiniu:
         _showSourceCredRelogin(context, ref, server);
       case SourceKind.emby:
@@ -349,41 +340,7 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
     }
   }
 
-  /// 夸克重新登录：复用扫码视图，凭据写回同一 server（不新建、不要求密码）。
-  void _showQuarkRelogin(
-      BuildContext context, WidgetRef ref, ServerConfig server) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('重新扫码登录夸克'),
-        content: SizedBox(
-          width: 300,
-          child: QuarkQrLoginView(
-            currentName: () => server.name,
-            existingServerId: server.id,
-            onSuccess: (_) {
-              // 凭据已写回 SourceCredentialStore[server.id]，服务器记录无需改动。
-              ref.read(currentServerProvider.notifier).state = server;
-              ref.read(authStateProvider.notifier).state =
-                  AuthState.authenticated;
-              if (ctx.mounted) Navigator.pop(ctx);
-              if (context.mounted) {
-                AppToast.show(context, '夸克已重新登录');
-              }
-            },
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// OpenList / Ani-rss 重新登录：账密对自身后端鉴权，更新同一 server 的 token。
+  /// 飞牛重新登录：账密对自身后端鉴权，更新同一 server 的 token。
   void _showSourceCredRelogin(
       BuildContext context, WidgetRef ref, ServerConfig server) {
     final urlCtrl = TextEditingController(text: server.baseUrl);
@@ -393,9 +350,8 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
     String? error;
     final kind = server.sourceKind;
     final label = switch (kind) {
-      SourceKind.openlist => 'OpenList',
       SourceKind.feiniu => '飞牛影视',
-      _ => 'Ani-rss',
+      SourceKind.emby => 'Emby',
     };
 
     showDialog(
@@ -448,11 +404,10 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
                         final user = userCtrl.text.trim();
                         final pass = passCtrl.text;
                         final token = switch (kind) {
-                          SourceKind.openlist =>
-                            await OpenListBackend.login(base, user, pass),
                           SourceKind.feiniu =>
                             await FeiniuBackend.login(base, user, pass),
-                          _ => await AniRssBackend.login(base, user, pass),
+                          SourceKind.emby =>
+                            await FeiniuBackend.login(base, user, pass),
                         };
                         final updated = server.copyWith(
                           baseUrl: base,

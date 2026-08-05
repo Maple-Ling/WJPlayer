@@ -439,11 +439,7 @@ class _ServerSelectorOverlayState extends State<_ServerSelectorOverlay>
                                     ref.invalidate(resumeItemsProvider);
                                     ref.invalidate(
                                         randomRecommendationsProvider);
-                                    final destination = server.isFileBrowse &&
-                                            server.sourceKind !=
-                                                SourceKind.feiniu
-                                        ? '/browse'
-                                        : '/home';
+                                    final destination = '/home';
                                     GoRouter.of(context).go(destination);
                                     _dismiss();
                                   },
