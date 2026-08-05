@@ -12,6 +12,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../../core/api/api_interfaces.dart';
 import '../../../core/network/prefetch_proxy/prefetch_proxy.dart';
 import '../../../core/providers/app_providers.dart';
+import '../../../core/providers/unified_resource_provider.dart';
 import '../../../core/services/cache_service.dart';
 import '../../../core/services/system_info_service.dart';
 import '../../../core/providers/media_providers.dart';

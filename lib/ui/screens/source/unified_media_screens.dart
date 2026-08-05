@@ -10,9 +10,11 @@ import '../../../core/providers/app_providers.dart';
 import '../../../core/providers/external_media_providers.dart';
 import '../../../core/providers/media_providers.dart';
 import '../../../core/providers/playback_providers.dart';
+import '../../../core/providers/unified_resource_provider.dart';
 import '../../../core/providers/server_card_stats_provider.dart';
 import '../../../core/providers/server_providers.dart';
 import '../../../core/providers/watch_history_providers.dart';
+import '../../../core/providers/unified_resource_provider.dart';
 import '../../../core/services/watch_history/watch_history_models.dart';
 import '../../../core/sources/media_source_backend.dart';
 import '../../../core/sources/source_playback.dart';
@@ -740,12 +742,14 @@ class _UnifiedMediaDetailScreenState
       final mediaSourceQuery = _resource == null
           ? ''
           : '&mediaSourceId=${Uri.encodeQueryComponent(_resource!.id)}';
+      ref.read(unifiedResourceProvider.notifier).state = _resource;
       await context.push(
         '/player/${entry.id}?core=${Uri.encodeQueryComponent(_core)}$mediaSourceQuery',
       );
     } else {
       final source = entry.sourceEntry;
       if (source == null) return;
+      ref.read(unifiedResourceProvider.notifier).state = _resource;
       await context.push(
         '/source-player',
         extra: SourcePlayback(

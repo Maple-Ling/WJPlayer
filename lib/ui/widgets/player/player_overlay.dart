@@ -63,8 +63,6 @@ class PlayerOverlay extends StatefulWidget {
     required this.sources,
     required this.cores,
     required this.lines,
-    required this.audioTracks,
-    required this.subtitleTracks,
     required this.episodes,
     this.onUiVisibilityChanged,
     this.onMenuVisibilityChanged,
@@ -149,8 +147,6 @@ class PlayerOverlay extends StatefulWidget {
   final List<PopupAggregateSource> sources;
   final List<String> cores;
   final List<PopupLineOption> lines;
-  final List<String> audioTracks;
-  final List<String> subtitleTracks;
   final List<PopupEpisodeOption> episodes;
 
   final ValueChanged<bool>? onUiVisibilityChanged;
@@ -895,8 +891,6 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                     sources: widget.sources,
                     cores: widget.cores,
                     lines: widget.lines,
-                    audioTracks: widget.audioTracks,
-                    subtitleTracks: widget.subtitleTracks,
                     onDanmakuChanged: _setDanmaku,
                     onDanmakuDeduplicationChanged:
                         _setDanmakuDeduplication,

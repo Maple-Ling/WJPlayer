@@ -2,7 +2,10 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/providers/unified_resource_provider.dart';
+import '../../../core/sources/unified_media_adapter.dart';
 import '../common/playback_resource_card.dart';
 
 const Color popupMenuBlue = Color(0xFF4A7BD0);
@@ -748,33 +751,159 @@ class PopupMediaInfoMenu extends StatelessWidget {
   const PopupMediaInfoMenu({
     super.key,
     required this.title,
-    required this.encoder,
-    required this.resolution,
-    required this.frameRate,
-    required this.bitrate,
+    this.encoder,
+    this.resolution,
+    this.frameRate,
+    this.bitrate,
+    this.unifiedResource,
+    this.selectedAudioTrack,
+    this.selectedSubtitleTrack,
   });
 
   final String title;
-  final String encoder;
-  final String resolution;
-  final String frameRate;
-  final String bitrate;
+  final String? encoder;
+  final String? resolution;
+  final String? frameRate;
+  final String? bitrate;
+  final UnifiedMediaResource? unifiedResource;
+  final String? selectedAudioTrack;
+  final String? selectedSubtitleTrack;
 
   @override
   Widget build(BuildContext context) {
+    final Widget? audioPill =
+        (unifiedResource != null || selectedAudioTrack != null)
+            ? _audioPill()
+            : null;
+    final Widget? subtitlePill =
+        (unifiedResource != null || selectedSubtitleTrack != null)
+            ? _subtitlePill()
+            : null;
+
+    final enc = unifiedResource != null
+        ? (_videoDisplay(unifiedResource!.video)
+            .replaceAll(' (HDR10+)', '').replaceAll(' (HDR10)', ''))
+        : encoder ?? '未知';
+    final res = unifiedResource != null
+        ? _resolution(unifiedResource!.video)
+        : resolution ?? '未知';
+    final fps = unifiedResource != null
+        ? _frameRate(unifiedResource!.video)
+        : frameRate ?? '未知';
+    final br = unifiedResource != null
+        ? _bitrate(unifiedResource!.video)
+        : bitrate ?? '未知';
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const PopupMenuTitle(title: '媒体信息'),
         PopupMenuPill(label: '标题', sub: title),
-        PopupMenuPill(label: '编码器', sub: encoder),
-        PopupMenuPill(label: '分辨率', sub: resolution),
-        PopupMenuPill(label: '帧率', sub: frameRate),
-        PopupMenuPill(label: '码率', sub: bitrate),
+        PopupMenuPill(label: '编码器', sub: enc),
+        PopupMenuPill(label: '分辨率', sub: res),
+        PopupMenuPill(label: '帧率', sub: fps),
+        PopupMenuPill(label: '码率', sub: br),
+        if (audioPill != null) ...[
+          const PopupMenuDivider(),
+          audioPill,
+        ],
+        if (subtitlePill != null) ...[
+          const PopupMenuDivider(),
+          subtitlePill,
+        ],
       ],
     );
   }
+
+  Widget _audioPill() {
+    final unified = unifiedResource;
+    final label = unified != null
+        ? unified.audios.isNotEmpty
+            ? _trackLabel(unified.audios.first, unified.isFeiniu)
+            : '无音轨'
+        : (selectedAudioTrack ?? '无音轨');
+    return PopupMenuPill(label: '当前音频', sub: label);
+  }
+
+  Widget _subtitlePill() {
+    final unified = unifiedResource;
+    final label = unified != null
+        ? unified.subtitles.isNotEmpty
+            ? _trackLabel(unified.subtitles.first, unified.isFeiniu)
+            : '无字幕'
+        : (selectedSubtitleTrack ?? '无字幕');
+    return PopupMenuPill(label: '当前字幕', sub: label);
+  }
+
+  // ── 格式化辅助方法（与统一媒体详情页共享同一逻辑）─────────
+
+  String _videoDisplay(Map<String, dynamic> video) {
+    final codec = (video['codec'] as String?)?.toUpperCase() ?? '未知编码';
+    final colorDepth = video['colorDepth'] as int?;
+    final colorDepthLabel = colorDepth != null && colorDepth > 8 ? ' ($colorDepth-bit)' : '';
+    final hdr = video['isHDR'] == true ? ' HDR' : '';
+    final hdrType = video['hdrType'] as String?;
+    final hdrTypeLabel = hdrType != null ? ' ($hdrType)' : '';
+    return '$codec$hdr$hdrTypeLabel$colorDepthLabel';
+  }
+
+  String _resolution(Map<String, dynamic> video) {
+    final w = video['width'] as int?;
+    final h = video['height'] as int?;
+    return (w != null && h != null) ? '${w}×$h' : '未知';
+  }
+
+  String _frameRate(Map<String, dynamic> video) {
+    final fps = video['realFrameRate'] as double? ?? video['nominalFrameRate'] as double?;
+    if (fps == null) return '未知';
+    final rounded = fps.round();
+    return (rounded == fps) ? '$rounded fps' : '$fps fps';
+  }
+
+  String _bitrate(Map<String, dynamic> video) {
+    final bps = video['bitrate'] as int?;
+    if (bps == null || bps <= 0) return '未知';
+    return '$bps bps';
+  }
+
+  String _trackLabel(Map<String, dynamic> track, bool isFeiniu) {
+    if (isFeiniu) {
+      final name = track['displayName'] as String? ??
+          track['title'] as String? ??
+          track['language'] as String?;
+      if (name == null || name.isEmpty) {
+        final index = (track['index'] as int? ?? 0) + 1;
+        return 'Track $index';
+      }
+      final codec = track['codec'] as String?;
+      final codecLabel = codec != null ? ' ($codec)' : '';
+      final channels = track['channels'] as int?;
+      final channelLabel = channels != null ? ', $channelsCH' : '';
+      return '$name$codecLabel$channelLabel';
+    } else {
+      final index = (track['index'] as int? ?? 0) + 1;
+      final displayName = track['displayName'] as String? ??
+          track['language'] as String?;
+      final codec = track['codec'] as String?;
+      final channels = track['channels'] as int?;
+      final bitrate = track['bitrate'] as int?;
+      final parts = <String>[
+        'Track $index',
+        if (displayName != null) displayName,
+      ];
+      final info = <String>[
+        if (codec != null) codec,
+        if (channels != null) '${channels}ch',
+        if (bitrate != null && bitrate > 0) '${_formatBitrateKbps(bitrate)}kbps',
+      ];
+      if (info.isNotEmpty) parts.add(info.join(', '));
+      return parts.join(' · ');
+    }
+  }
+
+  int _formatBitrateKbps(int? bitrateBps) =>
+      (bitrateBps ?? 0) ~/ 1000;
 }
 
 class PopupCoreMenu extends StatelessWidget {
@@ -862,6 +991,7 @@ class PopupTrackMenu extends StatelessWidget {
     required this.onTrackSelected,
     this.externalSubtitle = false,
     this.onExternalSubtitle,
+    this.unifiedResource,
   });
 
   final String title;
@@ -870,20 +1000,25 @@ class PopupTrackMenu extends StatelessWidget {
   final ValueChanged<String> onTrackSelected;
   final bool externalSubtitle;
   final VoidCallback? onExternalSubtitle;
+  final UnifiedMediaResource? unifiedResource;
 
   @override
   Widget build(BuildContext context) {
+    // 优先使用 unifiedResource 的轨道列表，回退到 tracks 参数
+    final effectiveTracks = _buildTrackList();
+    final empty = effectiveTracks.isEmpty && tracks.isEmpty;
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         PopupMenuTitle(title: title),
-        for (final track in tracks)
+        for (final track in effectiveTracks)
           PopupMenuPill(
-            label: track,
-            selected: track == selectedTrack,
+            label: track.label,
+            selected: track.label == selectedTrack,
             showCheck: true,
-            onTap: () => onTrackSelected(track),
+            onTap: () => onTrackSelected(track.label),
           ),
         if (externalSubtitle)
           PopupMenuPill(
@@ -894,10 +1029,65 @@ class PopupTrackMenu extends StatelessWidget {
             ),
             onTap: onExternalSubtitle,
           ),
-        if (tracks.isEmpty) const PopupMenuPill(label: '暂无可用轨道'),
+        if (empty) const PopupMenuPill(label: '暂无可用轨道'),
       ],
     );
   }
+
+  List<PopupTrackOption> _buildTrackList() {
+    final unified = unifiedResource;
+    if (unified != null) {
+      final isAudio = title == '音频轨道';
+      final trackList = isAudio ? unified.audios : unified.subtitles;
+      if (trackList.isNotEmpty) {
+        return trackList.map((t) => PopupTrackOption(
+          label: _trackLabel(t, unified.isFeiniu),
+        )).toList();
+      }
+    }
+    // 回退到原始 tracks 列表
+    return tracks.map((t) => PopupTrackOption(label: t)).toList();
+  }
+
+  String _trackLabel(Map<String, dynamic> track, bool isFeiniu) {
+    if (isFeiniu) {
+      final name = track['displayName'] as String? ??
+          track['title'] as String? ??
+          track['language'] as String?;
+      if (name == null || name.isEmpty) {
+        final index = (track['index'] as int? ?? 0) + 1;
+        return 'Track $index';
+      }
+      final codec = track['codec'] as String?;
+      final codecLabel = codec != null ? ' ($codec)' : '';
+      final channels = track['channels'] as int?;
+      final channelLabel = channels != null ? ', $channelsCH' : '';
+      return '$name$codecLabel$channelLabel';
+    } else {
+      final index = (track['index'] as int? ?? 0) + 1;
+      final displayName = track['displayName'] as String? ??
+          track['language'] as String?;
+      final codec = track['codec'] as String?;
+      final channels = track['channels'] as int?;
+      final bitrate = track['bitrate'] as int?;
+      final parts = <String>[
+        'Track $index',
+        if (displayName != null) displayName,
+      ];
+      final info = <String>[
+        if (codec != null) codec,
+        if (channels != null) '${channels}ch',
+        if (bitrate != null && bitrate > 0) '${bitrate ~/ 1000}kbps',
+      ];
+      if (info.isNotEmpty) parts.add(info.join(', '));
+      return parts.join(' · ');
+    }
+  }
+}
+
+class PopupTrackOption {
+  const PopupTrackOption({required this.label});
+  final String label;
 }
 
 class PopupEpisodesMenu extends StatelessWidget {
@@ -965,7 +1155,7 @@ class PopupEpisodesMenu extends StatelessWidget {
 }
 
 /// 可定位的播放器菜单覆盖层。聚合卡片以进度条为锚点居中，其余菜单以按钮为锚点。
-class PopupMenuOverlay extends StatelessWidget {
+class PopupMenuOverlay extends ConsumerWidget {
   const PopupMenuOverlay({
     super.key,
     required this.activeMenu,
@@ -1002,8 +1192,6 @@ class PopupMenuOverlay extends StatelessWidget {
     required this.sources,
     required this.cores,
     required this.lines,
-    required this.audioTracks,
-    required this.subtitleTracks,
     required this.onDanmakuChanged,
     required this.onDanmakuDeduplicationChanged,
     required this.onAutoSkipChanged,
@@ -1065,8 +1253,6 @@ class PopupMenuOverlay extends StatelessWidget {
   final List<PopupAggregateSource> sources;
   final List<String> cores;
   final List<PopupLineOption> lines;
-  final List<String> audioTracks;
-  final List<String> subtitleTracks;
 
   final ValueChanged<bool> onDanmakuChanged;
   final ValueChanged<bool> onDanmakuDeduplicationChanged;
@@ -1091,7 +1277,7 @@ class PopupMenuOverlay extends StatelessWidget {
   final VoidCallback onClearOutro;
   final VoidCallback onExternalSubtitleRequested;
 
-  Widget _menu() {
+  Widget _menu({UnifiedMediaResource? unifiedResource}) {
     switch (activeMenu!) {
       case PopupMenuId.danmaku:
         return PopupDanmakuMenu(
@@ -1155,6 +1341,9 @@ class PopupMenuOverlay extends StatelessWidget {
           resolution: resolution,
           frameRate: frameRate,
           bitrate: bitrate,
+          unifiedResource: unifiedResource,
+          selectedAudioTrack: selectedAudioTrack,
+          selectedSubtitleTrack: selectedSubtitleTrack,
         );
       case PopupMenuId.aggregate:
         return PopupAggregateSearchMenu(
@@ -1177,18 +1366,20 @@ class PopupMenuOverlay extends StatelessWidget {
       case PopupMenuId.audio:
         return PopupTrackMenu(
           title: '音频轨道',
-          tracks: audioTracks,
+          tracks: const [],
           selectedTrack: selectedAudioTrack,
           onTrackSelected: onAudioTrackChanged,
+          unifiedResource: unifiedResource,
         );
       case PopupMenuId.subtitle:
         return PopupTrackMenu(
           title: '字幕轨道',
-          tracks: subtitleTracks,
+          tracks: const [],
           selectedTrack: selectedSubtitleTrack,
           onTrackSelected: onSubtitleChanged,
           externalSubtitle: true,
           onExternalSubtitle: onExternalSubtitleRequested,
+          unifiedResource: unifiedResource,
         );
       case PopupMenuId.episodes:
         return PopupEpisodesMenu(
@@ -1201,6 +1392,7 @@ class PopupMenuOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final unifiedResource = ref.read(unifiedResourceProvider);
     final menu = activeMenu;
     if (menu == null) return const SizedBox.shrink();
 
@@ -1220,7 +1412,7 @@ class PopupMenuOverlay extends StatelessWidget {
             anchorRect: anchorRect,
             progressRect: progressRect,
           ),
-          child: PopupMenuShell(child: _menu()),
+          child: PopupMenuShell(child: _menu(unifiedResource: unifiedResource)),
         ),
       ],
     );

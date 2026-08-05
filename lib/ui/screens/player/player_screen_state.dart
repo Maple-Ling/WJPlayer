@@ -3772,20 +3772,81 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   void _showInfoCapsule() {
-    _showCapsuleMenu(
-      title: '媒体信息',
-      items: [
-        capsuleInfo(
-          label: '标题',
-          subLabel: ref.read(currentPlayingItemProvider)?.name ??
-              widget.itemId,
-        ),
-        capsuleInfo(label: '编码器', subLabel: 'H264'),
-        capsuleInfo(label: '分辨率', subLabel: '—'),
-        capsuleInfo(label: '帧率', subLabel: '—'),
-        capsuleInfo(label: '码率', subLabel: '—'),
-      ],
-    );
+    final resource = ref.read(unifiedResourceProvider);
+    final video = resource?.video ?? {};
+    final audioTracks = resource?.audios ?? [];
+    final subtitleTracks = resource?.subtitles ?? [];
+    final isFeiniu = resource?.isFeiniu ?? false;
+
+    String _trackLabel(Map<String, dynamic> t) {
+      if (isFeiniu) {
+        final name = t['displayName'] as String? ??
+            t['title'] as String? ??
+            t['language'] as String?;
+        if (name == null || name.isEmpty) return '无音轨';
+        final codec = t['codec'] as String?;
+        final codecLabel = codec != null ? ' ($codec)' : '';
+        final channels = t['channels'] as int?;
+        final channelLabel = channels != null ? ', $channelsCH' : '';
+        return '$name$codecLabel$channelLabel';
+      }
+      final index = (t['index'] as int? ?? 0) + 1;
+      final displayName = t['displayName'] as String? ?? t['language'] as String?;
+      final codec = t['codec'] as String?;
+      final channels = t['channels'] as int?;
+      final bitrate = t['bitrate'] as int?;
+      final parts = <String>['Track $index'];
+      if (displayName != null) parts.add(displayName);
+      final info = <String>[
+        if (codec != null) codec,
+        if (channels != null) '${channels}ch',
+        if (bitrate != null && bitrate > 0) '${bitrate ~/ 1000}kbps',
+      ];
+      if (info.isNotEmpty) parts.add(info.join(', '));
+      return parts.join(' · ');
+    }
+
+    final encoder = resource != null
+        ? video['codec']?.toString().toUpperCase() ?? '未知'
+        : '未知';
+    final resolution = resource != null
+        ? '${video['width']}×${video['height']}'
+        : '未知';
+    final frameRate = resource != null
+        ? ((video['realFrameRate'] ?? video['nominalFrameRate'])
+                ?.toStringAsFixed(0) ??
+            '未知') +
+            ' fps'
+        : '未知';
+    final bitrate = resource != null
+        ? '${video['bitrate'] ?? '未知'} bps'
+        : '未知';
+
+    final items = <Widget>[
+      capsuleInfo(
+        label: '标题',
+        subLabel: ref.read(currentPlayingItemProvider)?.name ?? widget.itemId,
+      ),
+      capsuleInfo(label: '编码器', subLabel: encoder),
+      capsuleInfo(label: '分辨率', subLabel: resolution),
+      capsuleInfo(label: '帧率', subLabel: frameRate),
+      capsuleInfo(label: '码率', subLabel: bitrate),
+    ];
+
+    if (audioTracks.isNotEmpty) {
+      items.add(capsuleInfo(
+        label: '音频',
+        subLabel: _trackLabel(audioTracks.first),
+      ));
+    }
+    if (subtitleTracks.isNotEmpty) {
+      items.add(capsuleInfo(
+        label: '字幕',
+        subLabel: _trackLabel(subtitleTracks.first),
+      ));
+    }
+
+    _showCapsuleMenu(title: '媒体信息', items: items);
   }
 
   // ==================== 新播放器控制层适配辅助 ====================
