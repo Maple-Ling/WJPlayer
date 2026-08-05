@@ -461,6 +461,16 @@ class _MainShellState extends ConsumerState<MainShell> {
     final tabHeight = showFloatingTabBar
         ? 64.0 + bottomPadding + statusGap
         : 0.0;
+    final shellBody = isKeyboardVisible
+        ? widget.navigationShell
+        : MediaQuery(
+            data: mediaQuery.copyWith(
+              padding: mediaQuery.padding.copyWith(
+                bottom: mediaQuery.padding.bottom + tabHeight,
+              ),
+            ),
+            child: widget.navigationShell,
+          );
 
     return PopScope(
       // canPop:false → 拦截 go_router 冒泡到根导航器的返回（分支根/退出），交由 _handleShellPop。
@@ -473,30 +483,28 @@ class _MainShellState extends ConsumerState<MainShell> {
         onNotification: _onScrollNotification,
         child: Scaffold(
           resizeToAvoidBottomInset: true, // 显式设置以确保键盘正确处理
-          body: isKeyboardVisible
-              ? widget.navigationShell // 键盘显示时不修改 MediaQuery，让系统自动处理
-              : MediaQuery(
-                  data: mediaQuery.copyWith(
-                    padding: mediaQuery.padding.copyWith(
-                      bottom: mediaQuery.padding.bottom + tabHeight,
+          body: Stack(
+            fit: StackFit.expand,
+            children: [
+              shellBody,
+              if (showFloatingTabBar)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: ValueListenableBuilder<double>(
+                    valueListenable: _tabOpacity,
+                    builder: (context, value, _) => Opacity(
+                      opacity: _isServerListPage ? 1.0 : value,
+                      child: _FloatingTabBar(
+                        navigationShell: widget.navigationShell,
+                      ),
                     ),
                   ),
-                  child: widget.navigationShell,
                 ),
+            ],
+          ),
           bottomNavigationBar: const SizedBox.shrink(),
-          floatingActionButtonLocation:
-              FloatingActionButtonLocation.centerDocked,
-          floatingActionButton: showFloatingTabBar
-              ? ValueListenableBuilder<double>(
-                  valueListenable: _tabOpacity,
-                  builder: (context, value, _) => Opacity(
-                    opacity: _isServerListPage ? 1.0 : value,
-                    child: _FloatingTabBar(
-                      navigationShell: widget.navigationShell,
-                    ),
-                  ),
-                )
-              : null,
         ),
       ),
     );
