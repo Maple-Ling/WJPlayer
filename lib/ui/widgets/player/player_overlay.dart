@@ -55,6 +55,8 @@ class PlayerOverlay extends StatefulWidget {
     required this.initialAspectRatio,
     required this.initialSource,
     required this.initialCore,
+    required this.initialAnime4kEnabled,
+    required this.initialHardwareDecoding,
     required this.initialLine,
     required this.initialAudioTrack,
     required this.initialSubtitleTrack,
@@ -83,6 +85,8 @@ class PlayerOverlay extends StatefulWidget {
     this.onEpisodeChanged,
     this.onLock,
     this.onRotate,
+    this.onAnime4k,
+    this.onHardwareDecoding,
     this.onDanmakuChanged,
     this.onDanmakuDeduplicationChanged,
     this.onAutoSkipChanged,
@@ -140,6 +144,8 @@ class PlayerOverlay extends StatefulWidget {
   final String initialAspectRatio;
   final String initialSource;
   final String initialCore;
+  final bool initialAnime4kEnabled;
+  final bool initialHardwareDecoding;
   final String initialLine;
   final String initialAudioTrack;
   final String initialSubtitleTrack;
@@ -170,6 +176,8 @@ class PlayerOverlay extends StatefulWidget {
   final ValueChanged<int>? onEpisodeChanged;
   final VoidCallback? onLock;
   final VoidCallback? onRotate;
+  final VoidCallback? onAnime4k;
+  final VoidCallback? onHardwareDecoding;
 
   final ValueChanged<bool>? onDanmakuChanged;
   final ValueChanged<bool>? onDanmakuDeduplicationChanged;
@@ -517,19 +525,34 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
     }
   }
 
+  List<PlayerTopAction> get _topActions {
+    final actions = <PlayerTopAction>[
+      if (widget.initialCore == 'mpv' || widget.initialCore == 'nativeMpv')
+        PlayerTopAction.anime4k,
+      PlayerTopAction.hardwareDecoding,
+      PlayerTopAction.danmaku,
+      PlayerTopAction.speed,
+      PlayerTopAction.skipOpeningEnding,
+      PlayerTopAction.aspectRatio,
+      PlayerTopAction.mediaInfo,
+    ];
+    return actions;
+  }
+
   Rect? _anchorRect(BuildContext context, Size size) {
     final mediaPadding = MediaQuery.of(context).padding;
     final menu = _anchorMenu ?? activeMenu;
     if (menu == null) return null;
 
-    const topActions = <PopupMenuId>[
-      PopupMenuId.danmaku,
-      PopupMenuId.speed,
-      PopupMenuId.skip,
-      PopupMenuId.aspect,
-      PopupMenuId.info,
-    ];
-    final topIndex = topActions.indexOf(menu);
+    final topActions = _topActions;
+    final topIndex = switch (menu) {
+      PopupMenuId.danmaku => topActions.indexOf(PlayerTopAction.danmaku),
+      PopupMenuId.speed => topActions.indexOf(PlayerTopAction.speed),
+      PopupMenuId.skip => topActions.indexOf(PlayerTopAction.skipOpeningEnding),
+      PopupMenuId.aspect => topActions.indexOf(PlayerTopAction.aspectRatio),
+      PopupMenuId.info => topActions.indexOf(PlayerTopAction.mediaInfo),
+      _ => -1,
+    };
     if (topIndex >= 0) {
       final rightIndex = topActions.length - topIndex - 1;
       final center = Offset(
@@ -763,17 +786,19 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                           networkIcon: _networkIcon,
                           networkLabel: _networkLabel,
                           networkSpeed: _formatSpeed(info.rxSpeed),
-                          topActions: const [
-                            PlayerTopAction.danmaku,
-                            PlayerTopAction.speed,
-                            PlayerTopAction.skipOpeningEnding,
-                            PlayerTopAction.aspectRatio,
-                            PlayerTopAction.mediaInfo,
-                          ],
+                          topActions: _topActions,
                           selectedActions: _selectedTopActions,
+                          anime4kEnabled: widget.initialAnime4kEnabled,
+                          hardwareDecoding: widget.initialHardwareDecoding,
                           onBack: _handleBack,
                           onAction: (action) {
                             switch (action) {
+                              case PlayerTopAction.anime4k:
+                                widget.onAnime4k?.call();
+                                break;
+                              case PlayerTopAction.hardwareDecoding:
+                                widget.onHardwareDecoding?.call();
+                                break;
                               case PlayerTopAction.danmaku:
                                 _openMenu(PopupMenuId.danmaku);
                                 break;

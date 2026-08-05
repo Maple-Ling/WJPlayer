@@ -8,6 +8,8 @@ const Color playerUiPink = Color(0xFFE94560);
 
 /// 顶栏操作类型。
 enum PlayerTopAction {
+  anime4k,
+  hardwareDecoding,
   danmaku,
   speed,
   skipOpeningEnding,
@@ -96,6 +98,8 @@ class TopBar extends StatelessWidget {
     this.networkSpeed = '',
     required this.topActions,
     required this.selectedActions,
+    required this.anime4kEnabled,
+    required this.hardwareDecoding,
     this.onBack,
     this.onAction,
   });
@@ -119,6 +123,8 @@ class TopBar extends StatelessWidget {
 
   final List<PlayerTopAction> topActions;
   final Set<PlayerTopAction> selectedActions;
+  final bool anime4kEnabled;
+  final bool hardwareDecoding;
   final VoidCallback? onBack;
   final ValueChanged<PlayerTopAction>? onAction;
 
@@ -262,7 +268,10 @@ class TopBar extends StatelessWidget {
                   for (final action in topActions)
                     _TopActionButton(
                       action: action,
-                      selected: selectedActions.contains(action),
+                      selected: selectedActions.contains(action) ||
+                          (action == PlayerTopAction.anime4k && anime4kEnabled) ||
+                          (action == PlayerTopAction.hardwareDecoding &&
+                              hardwareDecoding),
                       onTap: () => onAction?.call(action),
                     ),
                 ],
@@ -452,6 +461,10 @@ class _TopActionButton extends StatelessWidget {
 
   String get label {
     switch (action) {
+      case PlayerTopAction.anime4k:
+        return 'Anime4K 超分';
+      case PlayerTopAction.hardwareDecoding:
+        return '硬解/软解';
       case PlayerTopAction.danmaku:
         return '弹幕';
       case PlayerTopAction.speed:
@@ -467,6 +480,10 @@ class _TopActionButton extends StatelessWidget {
 
   IconData get icon {
     switch (action) {
+      case PlayerTopAction.anime4k:
+        return Icons.auto_awesome_rounded;
+      case PlayerTopAction.hardwareDecoding:
+        return Icons.settings_overscan_rounded;
       case PlayerTopAction.danmaku:
         return Icons.chat_bubble_outline;
       case PlayerTopAction.speed:

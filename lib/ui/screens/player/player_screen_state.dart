@@ -7,6 +7,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   bool _isLongPressing = false;
   bool _isSliderDragging = false;
   double? _sliderDragValue;
+  bool _decoderSwitchInFlight = false;
   Timer? _longPressTimer;
   Timer? _gestureHintTimer;
   Timer? _statusTimer;
@@ -1872,6 +1873,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   episodeCount: overlayEpisodes.length,
                   initialSource: _aggregateSourceKey(item, mediaSource),
                   initialCore: _currentCore,
+                  initialAnime4kEnabled: _anime4kMode != 'off',
+                  initialHardwareDecoding: ref.watch(hardwareDecodingProvider),
                   initialAspectRatio: _aspectRatioValue(),
                   initialLine: lineName,
                   initialAudioTrack: _currentAudioTrackLabel(),
@@ -1929,6 +1932,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                       ref.read(danmakuDelayProvider.notifier).state = value,
                   onLock: () => _playerService.toggleLock(),
                   onRotate: _toggleRotation,
+                  onAnime4k: _showAnime4kPanel,
+                  onHardwareDecoding: _toggleHardwareDecoding,
                   onAutoSkipChanged: _setAutoSkip,
                   onSearchDanmaku: _showDanmakuSearch,
                   onSkipTimeRecorded: _recordSkipTime,
