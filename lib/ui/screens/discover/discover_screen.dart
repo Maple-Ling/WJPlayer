@@ -18,7 +18,7 @@ class DiscoverScreen extends ConsumerWidget {
       appBar: AppBar(
         automaticallyImplyLeading: false,
         centerTitle: true,
-        title: _SourceSelector(
+        title: _SourceCapsuleSelector(
           source: source,
           onChanged: (value) {
             ref.read(reviewSourceProvider.notifier).state = value;
@@ -46,53 +46,136 @@ class DiscoverScreen extends ConsumerWidget {
   }
 }
 
-class _SourceSelector extends StatelessWidget {
-  const _SourceSelector({required this.source, required this.onChanged});
+/// 影视来源胶囊选择器：水平居中，宽度贴合文字，绿色·指示加粗；
+/// 点开在当前胶囊原位正下方展开垂直列表（当前项置顶），选完即收起。
+class _SourceCapsuleSelector extends StatefulWidget {
+  const _SourceCapsuleSelector({required this.source, required this.onChanged});
   final ReviewSource source;
   final ValueChanged<ReviewSource> onChanged;
 
   @override
+  State<_SourceCapsuleSelector> createState() => _SourceCapsuleSelectorState();
+}
+
+class _SourceCapsuleSelectorState extends State<_SourceCapsuleSelector> {
+  bool _open = false;
+  final GlobalKey _anchorKey = GlobalKey();
+
+  @override
+  void didUpdateWidget(covariant _SourceCapsuleSelector oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 外部切换来源（如其他入口）时收起菜单，避免指示与展开态不一致。
+    if (oldWidget.source != widget.source && _open) {
+      _open = false;
+    }
+  }
+
+  void _toggle() => setState(() => _open = !_open);
+
+  void _select(ReviewSource value) {
+    if (value != widget.source) widget.onChanged(value);
+    setState(() => _open = false);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return MenuAnchor(
-      builder: (context, controller, _) => InkWell(
-        borderRadius: BorderRadius.circular(22),
-        onTap: controller.isOpen ? controller.close : controller.open,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _CapsulePill(
+          key: _anchorKey,
+          source: widget.source,
+          selected: true,
+          open: _open,
+          onTap: _toggle,
+        ),
+        // 原位正下方展开，不覆盖顶部；当前项（豆瓣）就在胶囊这一格。
+        Offstage(
+          offstage: !_open,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final value in ReviewSource.values)
+                if (value != widget.source)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: _CapsulePill(
+                      source: value,
+                      selected: false,
+                      open: false,
+                      onTap: () => _select(value),
+                    ),
+                  ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CapsulePill extends StatelessWidget {
+  const _CapsulePill({
+    super.key,
+    required this.source,
+    required this.selected,
+    required this.open,
+    required this.onTap,
+  });
+
+  final ReviewSource source;
+  final bool selected;
+  final bool open;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          // 左右只比文字多出一点，整体居中
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(999),
+          ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(source.label,
-                  style: const TextStyle(fontWeight: FontWeight.w700)),
-              const SizedBox(width: 4),
-              const Icon(Icons.keyboard_arrow_down_rounded, size: 20),
+              // 绿色·指示，加粗
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF34C759),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                source.label,
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                  color: onSurface,
+                ),
+              ),
+              const SizedBox(width: 2),
+              Icon(
+                open
+                    ? Icons.keyboard_arrow_up_rounded
+                    : Icons.keyboard_arrow_down_rounded,
+                size: 18,
+                color: onSurface,
+              ),
             ],
           ),
         ),
       ),
-      menuChildren: [
-        for (final value in ReviewSource.values)
-          MenuItemButton(
-            onPressed: () => onChanged(value),
-            child: SizedBox(
-              width: 120,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (value == source) ...[
-                    const Text('·',
-                        style: TextStyle(
-                            color: Color(0xFF34C759),
-                            fontWeight: FontWeight.w900,
-                            fontSize: 20)),
-                    const SizedBox(width: 6),
-                  ],
-                  Text(value.label),
-                ],
-              ),
-            ),
-          ),
-      ],
     );
   }
 }
@@ -359,16 +442,55 @@ class _DiscoverCategoryScreenState extends ConsumerState<DiscoverCategoryScreen>
 
   void _sort(String key) {
     setState(() {
-      if (_sortBy == key) { _descending = !_descending; } else { _sortBy = key; _descending = key != 'title'; }
+      if (_sortBy == key) {
+        _descending = !_descending;
+      } else {
+        _sortBy = key;
+        _descending = key != 'title';
+      }
     });
-    ref.read(discoverCategoryProvider(widget.category).notifier).sort(DiscoverSortPref(sortBy: _sortBy, descending: _descending));
+    ref.read(discoverCategoryProvider(widget.category).notifier)
+        .sort(DiscoverSortPref(sortBy: _sortBy, descending: _descending));
   }
 
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(discoverCategoryProvider(widget.category));
     return Scaffold(
-      appBar: AppBar(title: Text(widget.category.label), actions: [PopupMenuButton<String>(icon: const Icon(Icons.sort_rounded), onSelected: _sort, itemBuilder: (_) => [for (final option in kDiscoverSortOptions) PopupMenuItem(value: option.key, child: Text(option.label))])]),
+      appBar: AppBar(
+        title: Text(widget.category.label),
+        // 排序：与正序/倒序无关的独立排序切换（评分/标题/首映时间/入库时间）
+        actions: [
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.sort_rounded),
+            tooltip: '排序',
+            onSelected: (key) => setState(() {
+              _sortBy = key;
+              _descending = _sortBy == 'create_time';
+            }),
+            itemBuilder: (_) => [
+              for (final option in kDiscoverSortOptions)
+                PopupMenuItem(
+                  value: option.key,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(option.label),
+                      if (option.key == _sortBy)
+                        const Icon(Icons.check_rounded,
+                            size: 18, color: Color(0xFF34C759)),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+          IconButton(
+            icon: const Icon(Icons.swap_vert_rounded),
+            tooltip: '正序/倒序',
+            onPressed: () => setState(() => _descending = !_descending),
+          ),
+        ],
+      ),
       body: RefreshIndicator(
         onRefresh: () => ref.read(discoverCategoryProvider(widget.category).notifier).reload(),
         child: async.when(

@@ -27,10 +27,10 @@ class ExternalSeason {
 }
 
 class ExternalPerson {
-  const ExternalPerson({required this.id, required this.name, this.originalName, this.character, this.profileUrl});
-  final int id; final String name; final String? originalName; final String? character; final String? profileUrl;
-  Map<String,dynamic> toJson()=>{'id':id,'name':name,'originalName':originalName,'character':character,'profileUrl':profileUrl};
-  factory ExternalPerson.fromJson(Map<String,dynamic> j)=>ExternalPerson(id:(j['id'] as num?)?.toInt()??0,name:'${j['name']??''}',originalName:j['originalName']?.toString(),character:j['character']?.toString(),profileUrl:j['profileUrl']?.toString());
+  const ExternalPerson({required this.id, required this.name, required this.source, this.originalName, this.character, this.profileUrl});
+  final String id; final String name; final ReviewSource source; final String? originalName; final String? character; final String? profileUrl;
+  Map<String,dynamic> toJson()=>{'id':id,'name':name,'source':source.name,'originalName':originalName,'character':character,'profileUrl':profileUrl};
+  factory ExternalPerson.fromJson(Map<String,dynamic> j)=>ExternalPerson(id:'${j['id']??''}',name:'${j['name']??''}',source:reviewSourceFromWire(j['source']?.toString()),originalName:j['originalName']?.toString(),character:j['character']?.toString(),profileUrl:j['profileUrl']?.toString());
 }
 
 class ExternalCompany {

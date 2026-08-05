@@ -303,6 +303,10 @@ class AppTheme {
         type: BottomNavigationBarType.fixed,
         elevation: 0,
       ),
+      // 底部系统导航栏随亮色主题：浅色背景 + 深色图标
+      systemNavigationBarColor: AppColors.lightNavBackground,
+      systemNavigationBarIconBrightness: Brightness.dark,
+      systemNavigationBarDividerColor: Colors.transparent,
       dividerTheme: const DividerThemeData(
         color: AppColors.lightDivider,
         thickness: 1,
@@ -365,6 +369,10 @@ class AppTheme {
         type: BottomNavigationBarType.fixed,
         elevation: 0,
       ),
+      // 底部系统导航栏随暗色主题：深色背景 + 浅色图标
+      systemNavigationBarColor: AppColors.darkNavBackground,
+      systemNavigationBarIconBrightness: Brightness.light,
+      systemNavigationBarDividerColor: Colors.transparent,
       dividerTheme: const DividerThemeData(
         color: AppColors.darkDivider,
         thickness: 1,

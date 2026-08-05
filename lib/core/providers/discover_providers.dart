@@ -28,9 +28,11 @@ final discoverCategoryProvider = StateNotifierProvider.autoDispose.family<
     DiscoverCategoryNotifier,
     AsyncValue<List<DiscoverEntry>>,
     DiscoverCategory>((ref, category) {
+  // 与影视来源绑定：切换豆瓣/TMDB/IMDb 时，已打开的分类页也会按新来源重建数据。
+  final source = ref.watch(reviewSourceProvider);
   return DiscoverCategoryNotifier(
     service: ref.read(discoverServiceProvider),
-    source: ref.read(reviewSourceProvider),
+    source: source,
     category: category,
   );
 });
@@ -77,19 +79,25 @@ class DiscoverCategoryNotifier
   void sort(DiscoverSortPref pref) {
     final sorted = List<DiscoverEntry>.from(_items);
     if (pref.sortBy == 'create_time') {
-      if (pref.descending) sorted
-        ..clear()
-        ..addAll(List<DiscoverEntry>.from(_items.reversed));
+      if (pref.descending) {
+        sorted
+          ..clear()
+          ..addAll(List<DiscoverEntry>.from(_items.reversed));
+      }
       state = AsyncValue.data(sorted);
       return;
     }
     int compare(DiscoverEntry a, DiscoverEntry b) => switch (pref.sortBy) {
-      'rating' => (a.rating ?? -1).compareTo(b.rating ?? -1),
-      'year' => (a.year ?? '').compareTo(b.year ?? ''),
-      'title' => a.title.compareTo(b.title),
-      'create_time' => 0,
-      _ => 0,
-    };
+          // 评分：同源已有评分，只做本列表降序/升序；无评分沉底
+          'rating' => (b.rating ?? -1).compareTo(a.rating ?? -1),
+          // 标题：仅当正向时为 A-Z 字母序；倒置时为 Z-A
+          'title' => a.title.compareTo(b.title),
+          // 出品年份=首映时间；优先用年份，空年份沉底
+          'year' => (a.year ?? '').compareTo(b.year ?? ''),
+          // 已处理，兜底
+          'create_time' => 0,
+          _ => 0,
+        };
     sorted.sort((a, b) {
       final value = compare(a, b);
       return pref.descending ? -value : value;
@@ -107,7 +115,7 @@ class DiscoverSortPref {
 const kDiscoverSortOptions = <({String label, String key})>[
   (label: '入库时间', key: 'create_time'),
   (label: '标题排序', key: 'title'),
-  (label: '出品年份', key: 'year'),
+  (label: '首映时间', key: 'year'),
   (label: '评分', key: 'rating'),
 ];
 

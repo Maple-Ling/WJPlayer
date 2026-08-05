@@ -344,7 +344,7 @@ class _AnimatedBranchContainer extends StatefulWidget {
 class _AnimatedBranchContainerState extends State<_AnimatedBranchContainer>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  // 切换方向：true=向右（索引增大），false=向左。决定滑入动画的起始偏移。
+  // 切换方向：true=向右（索引增大），false=向左。决定淡入方向（轻微位移）。
   bool _moveRight = true;
 
   @override
@@ -378,9 +378,8 @@ class _AnimatedBranchContainerState extends State<_AnimatedBranchContainer>
 
   @override
   Widget build(BuildContext context) {
-    final double beginX = _moveRight ? 0.04 : -0.04;
-    // 用 flutter_animate 驱动切换动效：外部 controller + autoPlay:false，
-    // 仅重放“滑入 + 淡入”，IndexedStack 不被重建，各分支导航状态得以保留。
+    // 丝滑切换：轻微淡入淡出 + 极小位移（4px），避免横移导致的“跳针感”。
+    final double beginX = _moveRight ? 0.004 : -0.004;
     return Animate(
       controller: _controller,
       autoPlay: false,
@@ -392,7 +391,7 @@ class _AnimatedBranchContainerState extends State<_AnimatedBranchContainer>
           curve: AppMotion.standard,
         ),
         const FadeEffect(
-          begin: 0.92,
+          begin: 0.90,
           end: 1.0,
           duration: AppMotion.medium,
           curve: AppMotion.standard,
@@ -548,25 +547,6 @@ class _FloatingTabBar extends ConsumerWidget {
   const _FloatingTabBar({required this.navigationShell});
   final StatefulNavigationShell navigationShell;
 
-  static const _branchOrder = <int>[0, 1, 2, 3, 4];
-
-  void _switchBySwipe(double velocity) {
-    if (velocity.abs() < 260) return;
-    final current = navigationShell.currentIndex;
-    final currentPosition = _branchOrder.indexOf(current);
-    if (currentPosition < 0) return;
-    final delta = velocity < 0 ? 1 : -1;
-    final nextPosition = (currentPosition + delta).clamp(
-      0,
-      _branchOrder.length - 1,
-    );
-    if (nextPosition == currentPosition) return;
-    navigationShell.goBranch(
-      _branchOrder[nextPosition],
-      initialLocation: false,
-    );
-  }
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -574,13 +554,21 @@ class _FloatingTabBar extends ConsumerWidget {
     final selectedBg = isDark ? AppColors.darkNavSelected : AppColors.lightNavSelected;
     final textColor = isDark ? Colors.white : const Color(0xFF1C1C1E);
     final mutedColor = isDark ? const Color(0xFFB8B8BA) : const Color(0xFF6F6F72);
+    final shadow = BoxShadow(
+      color: Colors.black.withValues(alpha: 0.12),
+      blurRadius: 16,
+      offset: const Offset(0, 6),
+    );
 
-    Widget item(int index, IconData icon, String label) {
+    // 胶囊内的四个 tab：空间等分（固定等宽）。
+    Widget capsuleItem(int index, IconData icon, String label) {
       final selected = navigationShell.currentIndex == index;
       return GestureDetector(
         onTap: () => navigationShell.goBranch(index),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          width: 66,
+          height: 44,
+          alignment: Alignment.center,
           decoration: BoxDecoration(
             color: selected ? selectedBg : Colors.transparent,
             borderRadius: BorderRadius.circular(30),
@@ -590,8 +578,15 @@ class _FloatingTabBar extends ConsumerWidget {
             children: [
               Icon(icon, size: 22, color: selected ? textColor : mutedColor),
               if (selected) ...[
-                const SizedBox(width: 8),
-                Text(label, style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.w600)),
+                const SizedBox(width: 7),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ],
             ],
           ),
@@ -599,57 +594,58 @@ class _FloatingTabBar extends ConsumerWidget {
       );
     }
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onHorizontalDragEnd: (details) =>
-          _switchBySwipe(details.primaryVelocity ?? 0),
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
-      decoration: BoxDecoration(
-        color: navBg,
-        borderRadius: BorderRadius.circular(42),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 20, offset: const Offset(0, 8), spreadRadius: 2),
-          BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4, offset: const Offset(0, 2)),
-        ],
-      ),
+    // 圆形的搜索按钮：固定在胶囊右侧。
+    Widget searchButton() {
+      final selected = navigationShell.currentIndex == 3;
+      return GestureDetector(
+        onTap: () => navigationShell.goBranch(3),
+        child: Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            color: selected ? selectedBg : navBg,
+            shape: BoxShape.circle,
+            boxShadow: [shadow],
+          ),
+          child: Icon(Icons.search_rounded, size: 22, color: textColor),
+        ),
+      );
+    }
+
+    return Container(
+      alignment: Alignment.center,
+      margin: const EdgeInsets.symmetric(vertical: 8),
       child: SafeArea(
         top: false,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // 左：影视 / 记录 / 服务器 / 设置，组合成一个胶囊，空间等分
             Container(
               padding: const EdgeInsets.all(3),
-              decoration: BoxDecoration(color: navBg, borderRadius: BorderRadius.circular(36)),
+              decoration: BoxDecoration(
+                color: navBg,
+                borderRadius: BorderRadius.circular(36),
+                boxShadow: [shadow],
+              ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  item(0, Icons.movie_filter_rounded, '影视'),
-                  item(1, Icons.history_rounded, '记录'),
-                  item(2, Icons.dns_rounded, '服务器'),
-                  item(4, Icons.settings_rounded, '设置'),
+                  capsuleItem(0, Icons.movie_filter_rounded, '影视'),
+                  capsuleItem(1, Icons.history_rounded, '记录'),
+                  capsuleItem(2, Icons.dns_rounded, '服务器'),
+                  capsuleItem(4, Icons.settings_rounded, '设置'),
                 ],
               ),
             ),
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: () => navigationShell.goBranch(3),
-              child: Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: navigationShell.currentIndex == 3 ? selectedBg : navBg,
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(Icons.search_rounded, size: 22, color: textColor),
-              ),
-            ),
+            // 中：间隔一个图标的无连接空间
+            const SizedBox(width: 24),
+            // 右：圆形搜索
+            searchButton(),
           ],
         ),
       ),
-    ),
-  );
+    );
   }
 }
 

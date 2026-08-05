@@ -426,6 +426,7 @@ class _UnifiedMediaDetailScreenState
   int _resourceIndex = 0;
   int _audioIndex = 0;
   int _subtitleIndex = -1;
+  int _selectedCrossServerIndex = 0;
   String _core = 'nativeMpv';
   bool _loading = true;
   bool _loadingMedia = false;
@@ -629,9 +630,14 @@ class _UnifiedMediaDetailScreenState
       if (_lastWatchedEpIndex > 0 && _episodeController.hasClients) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted || !_episodeController.hasClients) return;
-          _episodeController.jumpTo(
-            (_lastWatchedEpIndex * 228.0)
-                .clamp(0.0, _episodeController.position.maxScrollExtent),
+          // 置左：最新播放集滚动到横向列表的最左端可见位置（卡片宽 220 + 间距 8）。
+          // 若该集已靠近末尾，则只滚到最大位置，避免越界。
+          final target = (_lastWatchedEpIndex * 228.0)
+              .clamp(0.0, _episodeController.position.maxScrollExtent);
+          _episodeController.animateTo(
+            target,
+            duration: const Duration(milliseconds: 320),
+            curve: Curves.easeOutCubic,
           );
         });
       }
@@ -762,6 +768,30 @@ class _UnifiedMediaDetailScreenState
     return int.tryParse(match?.group(1) ?? seasonId);
   }
 
+  /// 查询当前选中季中某集的续播进度（0~1）；无记录返回 null。用于选集卡片进度显示。
+  double? _episodeProgress(UnifiedMediaEntry episode) {
+    if (_scopeRecords.isEmpty) return null;
+    final wantedSeason = _seasonNumber(_selectedSeasonId);
+    final epNumber = episode.mediaItem?.indexNumber ?? episode.indexNumber;
+    if (epNumber == null) return null;
+    for (final record in _scopeRecords) {
+      if (wantedSeason != null &&
+          record.seasonNumber != null &&
+          record.seasonNumber != wantedSeason) {
+        continue;
+      }
+      if (record.episodeNumber != epNumber) continue;
+      final ticks = record.lastPositionTicks;
+      final runtime = record.runTimeTicks;
+      if (ticks == null || runtime == null || ticks <= 0 || runtime <= 0) {
+        return null;
+      }
+      if (ticks >= runtime) return null;
+      return (ticks / runtime).clamp(0.0, 1.0);
+    }
+    return null;
+  }
+
   ({int? season, int? episode}) _latestPlayedEpisode() {
     for (final record in _scopeRecords) {
       if (record.seasonNumber != null && record.episodeNumber != null) {
@@ -784,6 +814,17 @@ class _UnifiedMediaDetailScreenState
     return h > 0
         ? '续播 ${two(h)}:${two(m)}:${two(s)}'
         : '续播 ${two(m)}:${two(s)}';
+  }
+
+  /// 续播进度 0~1；无进度或已播完返回 null（用于播放按钮下方进度条）。
+  double? _resumeFraction() {
+    final ticks = _resumePositionTicks;
+    final runtime = _resumeRuntimeTicks;
+    if (ticks == null || runtime == null || ticks <= 0 || runtime <= 0) {
+      return null;
+    }
+    if (ticks >= runtime) return null;
+    return (ticks / runtime).clamp(0.0, 1.0);
   }
 
   Future<void> _play() async {
@@ -957,7 +998,7 @@ class _UnifiedMediaDetailScreenState
                 children: [
                   Center(
                     child: SizedBox(
-                      width: 185,
+                      width: 200,
                       height: 50,
                       child: FilledButton.icon(
                         style: FilledButton.styleFrom(
@@ -977,6 +1018,34 @@ class _UnifiedMediaDetailScreenState
                       ),
                     ),
                   ),
+                  // 续播进度条 + 进度显示
+                  if (_resumeFraction() != null) ...[
+                    const SizedBox(height: 12),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 48),
+                      child: Column(children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(3),
+                          child: LinearProgressIndicator(
+                            value: _resumeFraction(),
+                            minHeight: 5,
+                            backgroundColor: Colors.black.withValues(alpha: 0.12),
+                            valueColor: const AlwaysStoppedAnimation(
+                                Color(0xFF5B8DEF)),
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          _resumeLabel(),
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black.withValues(alpha: 0.55),
+                          ),
+                        ),
+                      ]),
+                    ),
+                  ],
                   const SizedBox(height: 8),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1243,6 +1312,21 @@ class _UnifiedMediaDetailScreenState
                                       borderRadius: BorderRadius.circular(18),
                                     ),
                                   ),
+                                // 选集续播进度条（叠加在图片底部）
+                                if (_episodeProgress(episode) != null)
+                                  Positioned(
+                                    left: 0,
+                                    right: 0,
+                                    bottom: 0,
+                                    child: LinearProgressIndicator(
+                                      value: _episodeProgress(episode),
+                                      minHeight: 3,
+                                      backgroundColor: Colors.black.withValues(alpha: 0.35),
+                                      valueColor:
+                                          const AlwaysStoppedAnimation(
+                                              Color(0xFF5B8DEF)),
+                                    ),
+                                  ),
                               ]),
                             ),
                           ),
@@ -1289,13 +1373,19 @@ class _UnifiedMediaDetailScreenState
                       child: PlaybackResourceCard(
                         serverName: match.serverName,
                         isBest: index == 0,
-                        isCurrent: match.sourceServerId == widget.server.id,
+                        // 单击选中：高亮当前点选的跨服务器资源；默认高亮命中排第一的
+                        isCurrent: index == _selectedCrossServerIndex,
                         resolution: source?.qualityLabel,
                         dynamicRange: source?.primaryVideoStream?.videoRangeLabel,
                         codec: source?.primaryVideoStream?.videoCodecLabel,
                         size: source?.size,
                         bitrate: source?.primaryVideoStream?.bitRate,
-                        onTap: () => _openCrossServerMatch(match),
+                        // 单击 = 选择该服务器资源
+                        onTap: () => setState(() {
+                          _selectedCrossServerIndex = index;
+                        }),
+                        // 双击 = 进入该服务器对应的媒体详情页
+                        onDoubleTap: () => _openServerDetail(match),
                       ),
                     );
                   },
@@ -1315,6 +1405,7 @@ class _UnifiedMediaDetailScreenState
         .where((item) => item.id == match.sourceServerId)
         .firstOrNull;
     if (server == null) return;
+    ref.read(currentServerProvider.notifier).state = server;
     if (match.sourceEntry != null) {
       context.push('/source-player',
           extra: SourcePlayback(server: server, entry: match.sourceEntry!));
@@ -1336,6 +1427,23 @@ class _UnifiedMediaDetailScreenState
     }
     ref.read(currentServerProvider.notifier).state = server;
     context.push('/player/${match.item.id}');
+  }
+
+  /// 双击跨服务器资源卡：进入该服务器对应的媒体详情页（复用 UnifiedMediaDetailScreen）。
+  void _openServerDetail(ServerMatchInfo match) {
+    final server = ref
+        .read(serverListProvider)
+        .where((item) => item.id == match.sourceServerId)
+        .firstOrNull;
+    if (server == null) return;
+    ref.read(currentServerProvider.notifier).state = server;
+    // Emby/飞牛的媒体详情统一入口：先切服务器再 push /detail/:id。
+    final itemId = match.item.id;
+    if (itemId.isNotEmpty) {
+      context.push('/detail/$itemId');
+    } else if (match.sourceEntry != null) {
+      context.push('/detail/${match.sourceEntry!.id}');
+    }
   }
 
   void _showAllCrossServerResources(String query) =>
@@ -1562,42 +1670,130 @@ class _UnifiedMediaDetailScreenState
         ),
       );
 
+  /// 播放选项胶囊：复刻影视详情页分段切换胶囊风格（浅色描边 + 图标 + 标签 + 值）。
+  Widget _CapsuleQuickOption({
+    required IconData icon,
+    required String label,
+    required String value,
+    required VoidCallback? onTap,
+    required ColorScheme scheme,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: scheme.outlineVariant.withValues(alpha: 0.5),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 14, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(width: 3),
+              Flexible(
+                child: Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: scheme.primary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildPlaybackOptions() {
     final resource = _resource;
     final audios = resource?.audios ?? const [];
     final subtitles = resource?.subtitles ?? const [];
-    final quick = <Widget>[
-      _quickOption(Icons.memory_rounded, '内核', _core == 'exoPlayer' ? 'ExoPlayer' : 'MPV', _showCorePicker),
-      _quickOption(Icons.route_rounded, '线路', _lineLabel(widget.server), widget.server.lines.isEmpty ? null : _showLinePicker),
-      _quickOption(Icons.audiotrack_rounded, '音频', audios.isEmpty ? '自动' : _trackLabel(audios[_audioIndex], _audioIndex, '音轨'), audios.isEmpty ? null : _showAudioPicker),
-      _quickOption(Icons.subtitles_rounded, '字幕', _subtitleIndex < 0 ? (subtitles.isEmpty ? '自动' : '关闭') : _trackLabel(subtitles[_subtitleIndex], _subtitleIndex, '字幕'), subtitles.isEmpty ? null : _showSubtitlePicker),
+    final scheme = Theme.of(context).colorScheme;
+    // 四个选项：内核 / 线路 / 音频 / 字幕，胶囊横向排列（复刻影视详情页胶囊风格）。
+    final options = <({
+      IconData icon,
+      String label,
+      String value,
+      VoidCallback? onTap,
+    })>[
+      (
+        icon: Icons.memory_rounded,
+        label: '内核',
+        value: _core == 'exoPlayer' ? 'ExoPlayer' : 'MPV',
+        onTap: _showCorePicker,
+      ),
+      (
+        icon: Icons.route_rounded,
+        label: '线路',
+        value: _lineLabel(widget.server),
+        onTap: widget.server.lines.isEmpty ? null : _showLinePicker,
+      ),
+      (
+        icon: Icons.audiotrack_rounded,
+        label: '音频',
+        value: audios.isEmpty
+            ? '自动'
+            : _trackLabel(audios[_audioIndex], _audioIndex, '音轨'),
+        onTap: audios.isEmpty ? null : _showAudioPicker,
+      ),
+      (
+        icon: Icons.subtitles_rounded,
+        label: '字幕',
+        value: _subtitleIndex < 0
+            ? (subtitles.isEmpty ? '自动' : '关闭')
+            : _trackLabel(subtitles[_subtitleIndex], _subtitleIndex, '字幕'),
+        onTap: subtitles.isEmpty ? null : _showSubtitlePicker,
+      ),
     ];
     return Column(children: [
       if (_resources.length > 1) ...[
-        _optionRow(icon: Icons.video_file_rounded, label: '版本', value: resource?.name ?? '默认资源', onTap: _showResourcePicker),
-        const SizedBox(height: 8),
-      ],
-      Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: quick),
-    ]);
-  }
-
-  Widget _quickOption(IconData icon, String label, String value, VoidCallback? onTap) {
-    return Expanded(
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, size: 22),
-            const SizedBox(height: 4),
-            Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 2),
-            Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 10, color: Theme.of(context).textTheme.bodySmall?.color)),
-          ]),
+        _optionRow(
+          icon: Icons.video_file_rounded,
+          label: '版本',
+          value: resource?.name ?? '默认资源',
+          onTap: _showResourcePicker,
         ),
+        const SizedBox(height: 10),
+      ],
+      Row(
+        children: [
+          for (var i = 0; i < options.length; i++) ...[
+            if (i > 0) const SizedBox(width: 6),
+            Expanded(
+              child: _CapsuleQuickOption(
+                icon: options[i].icon,
+                label: options[i].label,
+                value: options[i].value,
+                onTap: options[i].onTap,
+                scheme: scheme,
+              ),
+            ),
+          ],
+        ],
       ),
-    );
+    ]);
   }
 
   Widget _optionRow({

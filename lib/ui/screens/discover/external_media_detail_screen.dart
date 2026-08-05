@@ -107,7 +107,7 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
             flexibleSpace: FlexibleSpaceBar(
               collapseMode: CollapseMode.parallax,
               background: AdaptivePosterBlend(
-                imageUrl: detail.posterUrl ?? detail.backdropUrl,
+                imageUrl: detail.backdropUrl ?? detail.posterUrl,
                 onBackgroundChanged: (color) {
                   if (mounted && color != _backgroundColor) {
                     setState(() => _backgroundColor = color);
@@ -147,9 +147,7 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
               const SizedBox(height: 14),
               if ((detail.overview ?? '').isNotEmpty)
                 CollapsibleOverview(text: detail.overview!),
-              if (detail.mediaType == 'tv' &&
-                  widget.entry.source == ReviewSource.tmdb &&
-                  detail.tmdbId > 0) ...[
+              if (detail.seasons.isNotEmpty) ...[
                 const SizedBox(height: 18),
                 _seasonSelector(detail),
                 const SizedBox(height: 18),
@@ -179,6 +177,7 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
               if (detail.recommendations.isNotEmpty) ...[
                 const SizedBox(height: 20), _sectionTitle('相似推荐'), const SizedBox(height: 16), _recommendations(detail.recommendations),
               ],
+              const SizedBox(height: 20), _sectionTitle('媒体信息'), const SizedBox(height: 14), _mediaInfo(detail),
               const SizedBox(height: 20), _sectionTitle('链接'), const SizedBox(height: 14), _links(detail),
               if (detail.companies.isNotEmpty) ...[
                 const SizedBox(height: 20), _sectionTitle('工作室'), const SizedBox(height: 14), _companies(detail.companies),
@@ -213,11 +212,28 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
     )));
   }
 
-  Widget _seasonSelector(ExternalMediaDetail detail) => Row(children: [
-    Text('第 $_season 季', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900)),
-    PopupMenuButton<int>(icon: const Icon(Icons.unfold_more_rounded), onSelected: (value) => setState(() { _season = value; _episode = null; }), itemBuilder: (_) => [for (final season in detail.seasons.where((e) => e.number > 0)) PopupMenuItem(value: season.number, child: Text(season.name))]),
-  ]);
+  Widget _seasonSelector(ExternalMediaDetail detail) {
+    final seasons = detail.seasons.where((e) => e.number > 0).toList();
+    if (seasons.isEmpty) return const SizedBox.shrink();
+    return Row(children: [
+      const Icon(Icons.video_library_rounded, size: 16, color: Color(0xFF5B8DEF)),
+      const SizedBox(width: 6),
+      Text('第 $_season 季', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
+      const SizedBox(width: 6),
+      PopupMenuButton<int>(
+        icon: const Icon(Icons.unfold_more_rounded, size: 20),
+        tooltip: '切换分季',
+        onSelected: (value) => setState(() {
+          _season = value;
+          _episode = null;
+          _episodeRangeStart = 1;
+        }),
+        itemBuilder: (_) => [for (final season in seasons) PopupMenuItem(value: season.number, child: Text(season.name))],
+      ),
+    ]);
+  }
 
+  /// 1-10 / 11-20 / 21-30 分段切换胶囊，选中态带主色 + 阴影，未选中浅色描边。
   Widget _episodeRangeCapsules(ExternalSeason season) {
     final episodes = season.episodes;
     if (episodes.length <= 10) return const SizedBox.shrink();
@@ -225,12 +241,13 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
       for (var start = 1; start <= episodes.length; start += 10) start,
     ];
     final selectedStart = _episodeRangeStart.clamp(1, ranges.last);
+    final scheme = Theme.of(context).colorScheme;
     return SizedBox(
-      height: 34,
+      height: 40,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: ranges.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 6),
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (_, index) {
           final start = ranges[index];
           final end = (start + 9).clamp(start, episodes.length);
@@ -242,23 +259,50 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
               if (current < start || current > end) _episode = null;
             }),
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 160),
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
-                color: selected
-                    ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context).colorScheme.surfaceContainerHighest,
+                gradient: selected
+                    ? LinearGradient(
+                        colors: [scheme.primary, scheme.primary.withValues(alpha: 0.78)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      )
+                    : null,
+                color: selected ? null : scheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(999),
+                border: selected
+                    ? null
+                    : Border.all(color: scheme.outlineVariant.withValues(alpha: 0.5)),
+                boxShadow: selected
+                    ? [
+                        BoxShadow(
+                          color: scheme.primary.withValues(alpha: 0.32),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ]
+                    : null,
               ),
-              child: Text(
-                '$start-$end',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: selected
-                      ? Theme.of(context).colorScheme.onPrimary
-                      : Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (selected) ...[
+                    const Icon(Icons.check_rounded, size: 14, color: Colors.white),
+                    const SizedBox(width: 4),
+                  ],
+                  Text(
+                    '$start-$end',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+                      color: selected
+                          ? Colors.white
+                          : scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
               ),
             ),
           );
@@ -335,45 +379,82 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
           ),
   );
 
-  List<String> _resourceSpecs(MediaItem item) {
-    final sources = item.mediaSources;
-    if (sources == null || sources.isEmpty) return const [];
-    final source = sources.first;
-    final video = source.primaryVideoStream;
-    if (video == null) return const [];
-    final values = <String>[
-      if (video.resolution.isNotEmpty) video.resolution,
-      if (video.videoRangeLabel.isNotEmpty) video.videoRangeLabel,
-      if (video.videoCodecLabel.isNotEmpty) video.videoCodecLabel,
-      if (source.size != null && source.size! > 0) _formatSize(source.size!),
-      if (video.bitRate != null && video.bitRate! > 0) '${(video.bitRate! / 1000000).toStringAsFixed(1)} Mbps',
-    ];
-    return values;
-  }
-
-  String _formatSize(int bytes) {
-    if (bytes >= 1073741824) return '${(bytes / 1073741824).toStringAsFixed(2)} GB';
-    if (bytes >= 1048576) return '${(bytes / 1048576).toStringAsFixed(1)} MB';
-    return '${(bytes / 1024).toStringAsFixed(0)} KB';
-  }
-
   Widget _people(List<ExternalPerson> people) => SizedBox(height: 105, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: people.length, separatorBuilder: (_, __) => const SizedBox(width: 9), itemBuilder: (_, index) { final person = people[index]; return InkWell(onTap: () => _showPerson(person), child: SizedBox(width: 78, child: Column(children: [ClipOval(child: SizedBox(width: 58, height: 58, child: MediaImage(imageUrl: person.profileUrl, fit: BoxFit.cover))), const SizedBox(height: 8), Text(person.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)), Text(person.character ?? person.originalName ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.black54))]))); }));
 
   Widget _gallery(List<String> images) => SizedBox(height: 150, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: images.length, separatorBuilder: (_, __) => const SizedBox(width: 9), itemBuilder: (_, index) => InkWell(onTap: () => _showImage(images, index), child: AspectRatio(aspectRatio: 16 / 9, child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaImage(imageUrl: images[index], fit: BoxFit.cover))))));
 
   Widget _recommendations(List<DiscoverEntry> items) => SizedBox(height: 180, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: items.length, separatorBuilder: (_, __) => const SizedBox(width: 8), itemBuilder: (_, index) { final item = items[index]; return InkWell(onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ExternalMediaDetailScreen(entry: item))), child: SizedBox(width: 100, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaImage(imageUrl: item.posterUrl, fit: BoxFit.cover))), const SizedBox(height: 8), Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)), Text(item.year ?? '', style: const TextStyle(color: Colors.black54))]))); }));
 
-  Widget _links(ExternalMediaDetail detail) { final values = <(String,String)>[('TMDB','https://www.themoviedb.org/${detail.mediaType}/${detail.tmdbId}'), if (detail.imdbId != null) ('IMDb','https://www.imdb.com/title/${detail.imdbId}/'), if (detail.doubanId != null) ('豆瓣','https://movie.douban.com/subject/${detail.doubanId}/')]; return Wrap(spacing: 12, runSpacing: 10, children: [for (final value in values) ActionChip(avatar: const Icon(Icons.open_in_new_rounded, size: 17), label: Text(value.$1), onPressed: () => launchUrl(Uri.parse(value.$2), mode: LaunchMode.externalApplication))]); }
+  Widget _mediaInfo(ExternalMediaDetail detail) {
+    final values = <(String, String)>[
+      ('来源', widget.entry.source.label),
+      ('类型', detail.mediaType == 'tv' ? '剧集' : '电影'),
+      if (detail.originalTitle?.isNotEmpty == true)
+        ('原名', detail.originalTitle!),
+      if (detail.year?.isNotEmpty == true) ('年份', detail.year!),
+      if (detail.runtime != null && detail.runtime! > 0)
+        ('时长', '${detail.runtime} 分钟'),
+      if (detail.numberOfSeasons != null && detail.numberOfSeasons! > 0)
+        ('季数', '${detail.numberOfSeasons}'),
+      if (detail.status?.isNotEmpty == true) ('状态', detail.status!),
+    ];
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final value in values)
+          Chip(label: Text('${value.$1}  ${value.$2}')),
+      ],
+    );
+  }
+
+  Widget _links(ExternalMediaDetail detail) {
+    final query = Uri.encodeQueryComponent('${detail.title} ${detail.year ?? ''}'.trim());
+    final values = <(String, String)>[
+      (
+        'TMDB',
+        detail.tmdbId > 0
+            ? 'https://www.themoviedb.org/${detail.mediaType}/${detail.tmdbId}'
+            : 'https://www.themoviedb.org/search?query=$query',
+      ),
+      (
+        'IMDb',
+        detail.imdbId?.isNotEmpty == true
+            ? 'https://www.imdb.com/title/${detail.imdbId}/'
+            : 'https://www.imdb.com/find/?q=$query',
+      ),
+      (
+        '豆瓣',
+        detail.doubanId?.isNotEmpty == true
+            ? 'https://movie.douban.com/subject/${detail.doubanId}/'
+            : 'https://search.douban.com/movie/subject_search?search_text=$query',
+      ),
+    ];
+    return Wrap(spacing: 12, runSpacing: 10, children: [
+      for (final value in values)
+        ActionChip(
+          avatar: const Icon(Icons.open_in_new_rounded, size: 17),
+          label: Text(value.$1),
+          onPressed: () => launchUrl(
+            Uri.parse(value.$2),
+            mode: LaunchMode.externalApplication,
+          ),
+        ),
+    ]);
+  }
 
   Widget _companies(List<ExternalCompany> companies) => SizedBox(height: 54, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: companies.length, separatorBuilder: (_, __) => const SizedBox(width: 12), itemBuilder: (_, index) => ActionChip(avatar: companies[index].logoUrl == null ? null : SizedBox(width: 28, height: 20, child: MediaImage(imageUrl: companies[index].logoUrl, fit: BoxFit.contain)), label: Text(companies[index].name), onPressed: () {})));
 
   Widget _sectionTitle(String title, {Widget? trailing}) => Row(children: [Text(title, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900)), const Spacer(), if (trailing != null) trailing]);
 
   void _openMatch(ServerMatchInfo match, {required bool directPlay}) {
+    // 非飞牛服务器匹配：sourceServerId 可能只在 MediaItem 上。
+    final server = match.sourceServerId != null
+        ? ref.read(serverListProvider).where((s) => s.id == match.sourceServerId).firstOrNull
+        : match.item.sourceServerId != null
+            ? ref.read(serverListProvider).where((s) => s.id == match.item.sourceServerId).firstOrNull
+            : null;
     final source = match.sourceEntry;
-    final server = match.sourceServerId == null
-        ? null
-        : ref.read(serverListProvider).where((s) => s.id == match.sourceServerId).firstOrNull;
     if (!directPlay) {
       if (server != null) {
         ref.read(currentServerProvider.notifier).state = server;
