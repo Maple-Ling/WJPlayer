@@ -7,7 +7,6 @@ import '../../../core/providers/media_providers.dart';
 import '../../../core/providers/server_providers.dart';
 import '../../../core/sources/media_source_backend.dart';
 import '../../../core/theme/app_motion.dart';
-import '../source/feiniu_detail_screen.dart';
 import '../source/unified_media_screens.dart';
 import '../../../core/widgets/app_shimmer.dart';
 import '../../utils/media_helpers.dart';

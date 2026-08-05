@@ -625,9 +625,12 @@ final rankingCrossServerMatchProvider = StreamProvider.autoDispose
           orElse: () => playable.first,
         );
         final raw = best.raw ?? const <String, dynamic>{};
-        final type = '${raw['type'] ?? ''}'.toLowerCase() == 'tv'
-            ? 'Series'
-            : 'Movie';
+        final rawType = '${raw['type'] ?? ''}'.toLowerCase();
+        final type = rawType == 'episode'
+            ? 'Episode'
+            : rawType == 'tv' || rawType == 'series'
+                ? 'Series'
+                : 'Movie';
         final item = MediaItem(
           id: best.id,
           name: best.name,
@@ -654,7 +657,13 @@ final rankingCrossServerMatchProvider = StreamProvider.autoDispose
       if (client == null) return null;
       final items = await client.search.search(query, cancelToken: cancelToken);
       final topLevel = items
-          .where((item) => item.type == 'Movie' || item.type == 'Series')
+          .where((item) {
+            if (item.type == 'Movie' || item.type == 'Series') return true;
+            if (item.type != 'Episode') return false;
+            final hasEpisodeQuery = RegExp(r'\bS\d{1,2}E\d{1,3}\b', caseSensitive: false)
+                .hasMatch(query);
+            return hasEpisodeQuery;
+          })
           .toList();
       if (topLevel.isEmpty) return null;
       // 打来源标记：让封面/点击解析到正确的服务器。

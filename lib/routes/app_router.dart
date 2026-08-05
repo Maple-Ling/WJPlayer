@@ -548,6 +548,25 @@ class _FloatingTabBar extends ConsumerWidget {
   const _FloatingTabBar({required this.navigationShell});
   final StatefulNavigationShell navigationShell;
 
+  static const _branchOrder = <int>[0, 1, 2, 3, 4];
+
+  void _switchBySwipe(double velocity) {
+    if (velocity.abs() < 260) return;
+    final current = navigationShell.currentIndex;
+    final currentPosition = _branchOrder.indexOf(current);
+    if (currentPosition < 0) return;
+    final delta = velocity < 0 ? 1 : -1;
+    final nextPosition = (currentPosition + delta).clamp(
+      0,
+      _branchOrder.length - 1,
+    );
+    if (nextPosition == currentPosition) return;
+    navigationShell.goBranch(
+      _branchOrder[nextPosition],
+      initialLocation: false,
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -580,8 +599,12 @@ class _FloatingTabBar extends ConsumerWidget {
       );
     }
 
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragEnd: (details) =>
+          _switchBySwipe(details.primaryVelocity ?? 0),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
       decoration: BoxDecoration(
         color: navBg,

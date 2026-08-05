@@ -73,16 +73,123 @@ class ExternalMediaService {
     );
   }
 
-  Future<ExternalMediaDetail> detail(DiscoverEntry entry) async {
+  Future<ExternalMediaDetail> detail(
+    DiscoverEntry entry, {
+    ReviewSource? source,
+  }) async {
+    final selected = source ?? entry.source;
+    switch (selected) {
+      case ReviewSource.douban:
+        return _loadDoubanDetail(entry);
+      case ReviewSource.imdb:
+        return _loadImdbDetail(entry);
+      case ReviewSource.tmdb:
+        return _loadTmdbDetail(entry);
+    }
+  }
+
+  Future<ExternalMediaDetail> _loadTmdbDetail(DiscoverEntry entry) async {
     final resolved = await resolve(entry);
-    final key = 'external-detail:${resolved.type}:${resolved.id}';
-    final detail = await PersistentJsonCache.networkFirst(
+    final key = 'external-detail:tmdb:${resolved.type}:${resolved.id}';
+    return PersistentJsonCache.networkFirst(
       key: key,
       load: () => _loadDetail(resolved.id, resolved.type, entry),
       encode: (value) => value.toJson(),
-      decode: (value) => ExternalMediaDetail.fromJson((value as Map).cast<String, dynamic>()),
+      decode: (value) => ExternalMediaDetail.fromJson(
+          (value as Map).cast<String, dynamic>()),
     );
-    return detail;
+  }
+
+  Future<ExternalMediaDetail> _loadDoubanDetail(DiscoverEntry entry) async {
+    final id = entry.doubanId ?? entry.id;
+    final response = await _douban.get('/subject/$id');
+    final data = (response.data as Map).cast<String, dynamic>();
+    final rating = data['rating'];
+    final ratingValue = rating is Map ? (rating['value'] as num?)?.toDouble() : null;
+    final cover = data['cover_url']?.toString() ??
+        (data['pic'] as Map?)?['large']?.toString() ??
+        entry.posterUrl;
+    final photos = await _loadDoubanPhotos(id);
+    return ExternalMediaDetail(
+      tmdbId: 0,
+      mediaType: entry.mediaType,
+      title: '${data['title'] ?? entry.title}',
+      originalTitle: data['original_title']?.toString() ?? entry.originalTitle,
+      overview: data['intro']?.toString() ??
+          data['summary']?.toString() ??
+          entry.overview,
+      posterUrl: cover,
+      backdropUrl: photos.firstOrNull ?? entry.backdropUrl,
+      rating: ratingValue ?? entry.rating,
+      year: data['year']?.toString() ?? entry.year,
+      genres: (data['genres'] as List? ?? const [])
+          .map((item) => '$item')
+          .toList(),
+      images: photos,
+      doubanId: id,
+    );
+  }
+
+  Future<List<String>> _loadDoubanPhotos(String id) async {
+    try {
+      final response = await _douban.get(
+        '/subject/$id/photos',
+        queryParameters: const {'count': 100},
+      );
+      final data = response.data;
+      if (data is! Map) return const [];
+      final rows = data['photos'];
+      if (rows is! List) return const [];
+      return rows.whereType<Map>().map((photo) {
+        final raw = photo.cast<String, dynamic>();
+        final image = raw['image'];
+        if (image is Map) {
+          final imageMap = image.cast<String, dynamic>();
+          final large = imageMap['large'];
+          final normal = imageMap['normal'];
+          if (large is Map && large['url'] != null) {
+            return large['url']?.toString();
+          }
+          if (normal is Map && normal['url'] != null) {
+            return normal['url']?.toString();
+          }
+        }
+        return raw['image'] is String
+            ? raw['image']?.toString()
+            : raw['thumb']?.toString() ?? raw['cover']?.toString();
+      }).whereType<String>().where((url) => url.isNotEmpty).toList();
+    } catch (_) {
+      // 剧照接口失败不影响主详情页。
+      return const [];
+    }
+  }
+
+  Future<ExternalMediaDetail> _loadImdbDetail(DiscoverEntry entry) async {
+    final id = entry.imdbId ?? entry.id;
+    final type = entry.mediaType.toLowerCase() == 'movie' ? 'movie' : 'series';
+    final response = await _imdb.get('/meta/$type/$id.json');
+    final root = (response.data as Map).cast<String, dynamic>();
+    final data = (root['meta'] as Map?)?.cast<String, dynamic>() ?? root;
+    final cast = (data['cast'] as List? ?? const []).whereType<Map>().toList();
+    return ExternalMediaDetail(
+      tmdbId: int.tryParse('${data['moviedb_id'] ?? ''}') ?? 0,
+      mediaType: entry.mediaType,
+      title: '${data['name'] ?? entry.title}',
+      originalTitle: data['original_name']?.toString() ?? entry.originalTitle,
+      overview: data['description']?.toString() ?? entry.overview,
+      posterUrl: data['poster']?.toString() ?? entry.posterUrl,
+      backdropUrl: data['background']?.toString() ?? entry.backdropUrl,
+      rating: double.tryParse('${data['imdbRating'] ?? ''}') ?? entry.rating,
+      year: data['year']?.toString() ?? entry.year,
+      genres: (data['genres'] as List? ?? const []).map((item) => '$item').toList(),
+      people: cast.map((item) => ExternalPerson(
+        id: int.tryParse('${item['id'] ?? 0}') ?? 0,
+        name: '${item['name'] ?? ''}',
+        character: item['character']?.toString(),
+        profileUrl: item['photo']?.toString(),
+      )).toList(),
+      imdbId: id,
+    );
   }
 
   Future<ExternalMediaDetail> _loadDetail(int id, String type, DiscoverEntry original) async {

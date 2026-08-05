@@ -9,6 +9,7 @@ import '../../../core/api/discover/discover_models.dart';
 import '../../../core/api/discover/external_media_models.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/providers/external_media_providers.dart';
+import '../../../core/providers/discover_providers.dart';
 import '../../../core/providers/media_providers.dart';
 import '../../../core/providers/playback_providers.dart';
 import '../../../core/providers/unified_resource_provider.dart';
@@ -464,12 +465,37 @@ class _UnifiedMediaDetailScreenState
     super.dispose();
   }
 
+  Future<void> _loadPlaybackHistory() async {
+    final scopeKey = buildWatchHistoryScopeKey(widget.server);
+    if (scopeKey == null) return;
+    try {
+      _scopeRecords = await ref.read(watchHistoryProvider).loadScope(scopeKey);
+      final matching = _scopeRecords.where((record) =>
+          record.sourceEntryId == widget.entry.id ||
+          record.lastEmbyItemId == widget.entry.id);
+      final record = matching.isNotEmpty ? matching.first : null;
+      final core = record?.playerCore;
+      _core = core != null && core.isNotEmpty
+          ? normalizePlayerCore(core)
+          : normalizePlayerCore(ref.read(playerCoreProvider));
+    } catch (_) {
+      _scopeRecords = const [];
+      _core = normalizePlayerCore(ref.read(playerCoreProvider));
+    }
+  }
+
   Future<void> _load() async {
-    final cacheKey = '${widget.server.id}:${widget.entry.id}';
     final cached = _detailCache[cacheKey];
     if (cached != null) {
       _detail = cached;
+      await _loadPlaybackHistory();
       setState(() => _loading = false);
+      if (cached.seasons.isNotEmpty) {
+        await _selectSeason(_selectedSeasonId ?? cached.initialSeasonId ?? cached.seasons.first.id);
+      } else {
+        _selectedEntry = cached.entry;
+        _updateResume(cached.entry);
+      }
       return;
     }
     setState(() {
@@ -529,29 +555,29 @@ class _UnifiedMediaDetailScreenState
   }
 
   Future<void> _loadExternalDetail(UnifiedMediaEntry entry) async {
-    final ids = entry.providerIds;
+    final selectedSource = ref.read(reviewSourceProvider);
     final discoverEntry = DiscoverEntry(
-      id: ids['tmdb'] ?? ids['imdb'] ?? entry.id,
+      id: switch (selectedSource) {
+        ReviewSource.tmdb => entry.providerIds['tmdb'] ?? entry.id,
+        ReviewSource.imdb => entry.providerIds['imdb'] ?? entry.id,
+        ReviewSource.douban => entry.providerIds['douban'] ?? entry.id,
+      },
       title: entry.name,
-      source: ids['tmdb']?.isNotEmpty == true
-          ? ReviewSource.tmdb
-          : ids['imdb']?.isNotEmpty == true
-              ? ReviewSource.imdb
-              : ReviewSource.douban,
+      source: selectedSource,
       posterUrl: entry.posterUrl,
       backdropUrl: entry.backdropUrl,
       rating: entry.rating,
       year: entry.year?.toString(),
       overview: entry.overview,
       mediaType: entry.isSeries ? 'tv' : 'movie',
-      tmdbId: ids['tmdb'],
-      imdbId: ids['imdb'],
-      doubanId: ids['douban'],
+      tmdbId: entry.providerIds['tmdb'],
+      imdbId: entry.providerIds['imdb'],
+      doubanId: entry.providerIds['douban'],
     );
     try {
       _externalDetail = await ref
           .read(externalMediaServiceProvider)
-          .detail(discoverEntry);
+          .detail(discoverEntry, source: selectedSource);
     } catch (_) {
       _externalDetail = null;
     }
@@ -579,8 +605,14 @@ class _UnifiedMediaDetailScreenState
           : episodes.where((episode) =>
               (episode.mediaItem?.indexNumber ?? episode.indexNumber) == latest.episode).firstOrNull;
       final selected = historyEpisode ?? preferred ?? (episodes.isEmpty ? null : episodes.first);
+      final orderedEpisodes = selected == null
+          ? episodes
+          : [
+              selected,
+              ...episodes.where((episode) => episode.id != selected.id),
+            ];
       setState(() {
-        _episodes = episodes;
+        _episodes = orderedEpisodes;
         _selectedEntry = selected;
         _loadingMedia = selected != null;
         if (_scopeRecords.isNotEmpty) {

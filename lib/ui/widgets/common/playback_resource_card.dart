@@ -6,6 +6,7 @@ class PlaybackResourceCard extends StatelessWidget {
     required this.serverName,
     this.serverIcon,
     this.isCurrent = false,
+    this.isSelected = false,
     this.isBest = false,
     this.resolution,
     this.dynamicRange,
@@ -13,11 +14,13 @@ class PlaybackResourceCard extends StatelessWidget {
     this.size,
     this.bitrate,
     this.onTap,
+    this.onDoubleTap,
   });
 
   final String serverName;
   final Widget? serverIcon;
   final bool isCurrent;
+  final bool isSelected;
   final bool isBest;
   final String? resolution;
   final String? dynamicRange;
@@ -25,6 +28,7 @@ class PlaybackResourceCard extends StatelessWidget {
   final int? size;
   final int? bitrate;
   final VoidCallback? onTap;
+  final VoidCallback? onDoubleTap;
 
   String _text(String? value, String fallback) =>
       value == null || value.trim().isEmpty ? fallback : value.trim();
@@ -56,8 +60,15 @@ class PlaybackResourceCard extends StatelessWidget {
         );
     return Card(
       clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: isSelected
+            ? BorderSide(color: Theme.of(context).colorScheme.primary, width: 2.5)
+            : BorderSide.none,
+      ),
       child: InkWell(
         onTap: onTap,
+        onDoubleTap: onDoubleTap,
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
