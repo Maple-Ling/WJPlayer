@@ -353,6 +353,7 @@ class ExternalMediaService {
 
     return groups.entries
         .map((e) => ExternalSeason(
+              id: e.key,
               number: e.key,
               name: 'Season ${e.key}',
               episodes: e.value
@@ -364,6 +365,7 @@ class ExternalMediaService {
                     final thumb = v['thumbnail'];
                     if (ep is! int) return null;
                     return ExternalEpisode(
+                      id: ep,
                       number: ep,
                       name: name?.toString() ?? '',
                       overview: overview?.toString(),
