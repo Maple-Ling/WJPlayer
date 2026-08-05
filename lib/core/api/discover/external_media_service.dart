@@ -34,7 +34,6 @@ class ExternalMediaService {
 
   Map<String, dynamic> _query([Map<String, dynamic>? extra]) => {
         'language': 'zh-CN',
-        if (!_key.contains('.')) 'api_key': _key,
         ...?extra,
       };
 
