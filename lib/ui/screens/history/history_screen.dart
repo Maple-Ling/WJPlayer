@@ -280,7 +280,7 @@ class _HistoryTile extends ConsumerWidget {
         builder: (_) => UnifiedMediaDetailScreen(
           server: server,
           entry: UnifiedMediaEntry(
-            id: targetId,
+            id: targetId!,
             name: record.title,
             type: isEpisode ? 'Series' : 'Movie',
             posterUrl: record.sourcePosterUrl,
@@ -327,7 +327,7 @@ class _HistoryTile extends ConsumerWidget {
         builder: (_) => UnifiedMediaDetailScreen(
           server: server,
           entry: UnifiedMediaEntry(
-            id: id,
+            id: id!,
             name: record.title,
             type: server.sourceKind == SourceKind.feiniu ? 'Movie' : 'Series',
             posterUrl: record.sourcePosterUrl,
