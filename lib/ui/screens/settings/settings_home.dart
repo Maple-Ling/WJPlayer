@@ -77,10 +77,6 @@ class SettingsScreen extends ConsumerWidget {
   void _showSyncSettings(BuildContext context) =>
       _openSubPage(context, const SyncSettingsScreen());
 
-  /// 追剧日历入口：未解锁先弹爱发电订单校验，解锁后进日历页。
-  void _openCalendar(BuildContext context, WidgetRef ref) =>
-      openCalendarGated(context, ref);
-
   void _showTranslationSettings(BuildContext context) =>
       _openSubPage(context, const TranslationSettingsScreen());
 
