@@ -13,13 +13,11 @@ import '../core/theme/app_motion.dart';
 import '../plugins/plugin_system.dart';
 import '../ui/screens/discover/discover_screen.dart';
 import '../ui/screens/history/history_screen.dart';
-import '../ui/screens/download/download_screen.dart';
 import '../ui/screens/favorites/favorites_screen.dart';
 import '../ui/screens/home/home_screen.dart';
 import '../ui/screens/library/libraries_screen.dart';
 import '../ui/screens/library/library_detail_screen.dart';
 import '../ui/screens/player/player_screen.dart';
-import '../ui/screens/rankings/rankings_screen.dart';
 import '../ui/screens/search/search_screen.dart';
 import '../ui/screens/server/add_server_screen.dart';
 import '../ui/screens/server/edit_server_screen.dart';
@@ -237,9 +235,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           playerCoreOverride: state.uri.queryParameters['core'],
         ),
       ),
-      GoRoute(path: '/downloads', builder: (_, __) => const DownloadScreen()),
       GoRoute(path: '/favorites', builder: (_, __) => const FavoritesScreen()),
-      GoRoute(path: '/rankings', builder: (_, __) => const RankingsScreen()),
       GoRoute(
         path: '/browse',
         builder: (context, state) => Consumer(
