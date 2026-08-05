@@ -10,6 +10,7 @@ import '../../../core/sources/feiniu_backend.dart';
 import '../../../core/sources/media_source_backend.dart';
 // SourcePlayback is no longer used; resume flows through unified detail.
 import '../../../core/sources/unified_media_adapter.dart';
+import '../source/unified_media_screens.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../widgets/common/media_widgets.dart';
 
@@ -262,19 +263,31 @@ class _HistoryTile extends ConsumerWidget {
       BuildContext context, WidgetRef ref, ServerConfig server) async {
     ref.read(currentServerProvider.notifier).state = server;
     ref.read(authStateProvider.notifier).state = AuthState.authenticated;
-    final id = server.sourceKind == SourceKind.feiniu
-        ? (record.mediaKind == WatchHistoryMediaKind.episode
-                ? record.seriesEntryId
-                : record.sourceEntryId)
-            ?? record.mediaPath
-        : (record.mediaKind == WatchHistoryMediaKind.episode
+    final isEpisode = record.mediaKind == WatchHistoryMediaKind.episode;
+    // 进入"剧集/电影"详情：优先序列(id)，保证飞牛按正确类型拉取完整详情（季/集/演员/剧照）。
+    final targetId = server.sourceKind == SourceKind.feiniu
+        ? (record.seriesEntryId ?? record.sourceEntryId) ?? record.mediaPath
+        : (isEpisode
                 ? record.seriesEntryId
                 : record.lastEmbyItemId);
-    if (id == null || id.isEmpty) {
+    if (targetId == null || targetId.isEmpty) {
       AppToast.show(context, '该记录缺少可打开的资源标识', kind: AppToastKind.error);
       return;
     }
-    context.push('/detail/$id');
+    // 直接使用影视详情页整体 UI（真实类型 entry），飞牛/emby 保持一致。
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => UnifiedMediaDetailScreen(
+          server: server,
+          entry: UnifiedMediaEntry(
+            id: targetId,
+            name: record.mediaName ?? _title(record),
+            type: isEpisode ? 'Series' : 'Movie',
+            posterUrl: record.sourcePosterUrl,
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _resume(
@@ -309,7 +322,20 @@ class _HistoryTile extends ConsumerWidget {
       AppToast.show(context, '该记录缺少可恢复的资源标识', kind: AppToastKind.error);
       return;
     }
-    context.push('/detail/$id?autoplay=1');
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => UnifiedMediaDetailScreen(
+          server: server,
+          entry: UnifiedMediaEntry(
+            id: id,
+            name: record.mediaName ?? _title(record),
+            type: server.sourceKind == SourceKind.feiniu ? 'Movie' : 'Series',
+            posterUrl: record.sourcePosterUrl,
+          ),
+          autoPlay: true,
+        ),
+      ),
+    );
   }
 
   void _searchAllLibraries(BuildContext context, WidgetRef ref) {

@@ -500,7 +500,11 @@ class _MainShellState extends ConsumerState<MainShell> {
     final isKeyboardVisible = mediaQuery.viewInsets.bottom > 0;
     final showFloatingTabBar = _supportsFloatingTabBar && !isKeyboardVisible;
     final bottomPadding = mediaQuery.padding.bottom;
-    final tabHeight = showFloatingTabBar ? 64.0 + bottomPadding : 0.0;
+    // 底部 tab 栏下方再间隔一个“同状态栏高度”的悬停空隙。
+    final statusGap = showFloatingTabBar ? mediaQuery.padding.top : 0.0;
+    final tabHeight = showFloatingTabBar
+        ? 64.0 + bottomPadding + statusGap
+        : 0.0;
 
     return PopScope(
       // canPop:false → 拦截 go_router 冒泡到根导航器的返回（分支根/退出），交由 _handleShellPop。
@@ -550,6 +554,8 @@ class _FloatingTabBar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    // 底部悬停空隙：间隔一个“同状态栏高度”的距离，不贴屏幕底边。
+    final statusGap = MediaQuery.of(context).padding.top;
     final navBg = isDark ? AppColors.darkNavBackground : AppColors.lightNavBackground;
     final selectedBg = isDark ? AppColors.darkNavSelected : AppColors.lightNavSelected;
     final textColor = isDark ? Colors.white : const Color(0xFF1C1C1E);
@@ -614,7 +620,7 @@ class _FloatingTabBar extends ConsumerWidget {
 
     return Container(
       alignment: Alignment.center,
-      margin: const EdgeInsets.symmetric(vertical: 8),
+      margin: EdgeInsets.only(top: 8, bottom: statusGap + 8),
       child: SafeArea(
         top: false,
         child: Row(

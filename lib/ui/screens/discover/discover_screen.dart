@@ -46,135 +46,104 @@ class DiscoverScreen extends ConsumerWidget {
   }
 }
 
-/// 影视来源胶囊选择器：水平居中，宽度贴合文字，绿色·指示加粗；
-/// 点开在当前胶囊原位正下方展开垂直列表（当前项置顶），选完即收起。
-class _SourceCapsuleSelector extends StatefulWidget {
+/// 影视来源胶囊选择器：水平居中，宽度贴合文字，绿色·指示加粗。
+/// 点开后从胶囊正下方弹出三项列表（豆瓣在上，TMDB 居中，IMDb 在下），
+/// 当前来源带勾选态，选完即收起。改用 PopupMenuButton 确保三项都可点。
+class _SourceCapsuleSelector extends StatelessWidget {
   const _SourceCapsuleSelector({required this.source, required this.onChanged});
   final ReviewSource source;
   final ValueChanged<ReviewSource> onChanged;
 
   @override
-  State<_SourceCapsuleSelector> createState() => _SourceCapsuleSelectorState();
-}
-
-class _SourceCapsuleSelectorState extends State<_SourceCapsuleSelector> {
-  bool _open = false;
-  final GlobalKey _anchorKey = GlobalKey();
-
-  @override
-  void didUpdateWidget(covariant _SourceCapsuleSelector oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // 外部切换来源（如其他入口）时收起菜单，避免指示与展开态不一致。
-    if (oldWidget.source != widget.source && _open) {
-      _open = false;
-    }
-  }
-
-  void _toggle() => setState(() => _open = !_open);
-
-  void _select(ReviewSource value) {
-    if (value != widget.source) widget.onChanged(value);
-    setState(() => _open = false);
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _CapsulePill(
-          key: _anchorKey,
-          source: widget.source,
-          selected: true,
-          open: _open,
-          onTap: _toggle,
-        ),
-        // 原位正下方展开，不覆盖顶部；当前项（豆瓣）就在胶囊这一格。
-        Offstage(
-          offstage: !_open,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final value in ReviewSource.values)
-                if (value != widget.source)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: _CapsulePill(
-                      source: value,
-                      selected: false,
-                      open: false,
-                      onTap: () => _select(value),
-                    ),
+    final scheme = Theme.of(context).colorScheme;
+    return PopupMenuButton<ReviewSource>(
+      tooltip: '切换评分来源',
+      offset: const Offset(0, -56),
+      position: PopupMenuPosition.under,
+      color: scheme.surfaceContainerHighest,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 6,
+      onSelected: (value) {
+        if (value != source) onChanged(value);
+      },
+      itemBuilder: (_) => [
+        for (final value in ReviewSource.values)
+          PopupMenuItem<ReviewSource>(
+            value: value,
+            height: 46,
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 24,
+                  child: value == source
+                      ? const Icon(Icons.check_rounded,
+                          size: 20, color: Color(0xFF34C759))
+                      : null,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  value.label,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight:
+                        value == source ? FontWeight.w800 : FontWeight.w600,
+                    color: scheme.onSurface,
                   ),
-            ],
+                ),
+              ],
+            ),
           ),
-        ),
       ],
+      child: _CapsulePill(source: source, selected: true),
     );
   }
 }
 
 class _CapsulePill extends StatelessWidget {
-  const _CapsulePill({
-    super.key,
-    required this.source,
-    required this.selected,
-    required this.open,
-    required this.onTap,
-  });
+  const _CapsulePill({required this.source, required this.selected});
 
   final ReviewSource source;
   final bool selected;
-  final bool open;
-  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final onSurface = Theme.of(context).colorScheme.onSurface;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
+    return Container(
+      // 左右只比文字多出一点，整体居中
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(999),
-        child: Container(
-          // 左右只比文字多出一点，整体居中
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 绿色·指示，加粗
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: const Color(0xFF34C759),
+              shape: BoxShape.circle,
+            ),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 绿色·指示，加粗
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF34C759),
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                source.label,
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 16,
-                  color: onSurface,
-                ),
-              ),
-              const SizedBox(width: 2),
-              Icon(
-                open
-                    ? Icons.keyboard_arrow_up_rounded
-                    : Icons.keyboard_arrow_down_rounded,
-                size: 18,
-                color: onSurface,
-              ),
-            ],
+          const SizedBox(width: 6),
+          Text(
+            source.label,
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 16,
+              color: onSurface,
+            ),
           ),
-        ),
+          const SizedBox(width: 2),
+          Icon(
+            Icons.keyboard_arrow_down_rounded,
+            size: 18,
+            color: onSurface,
+          ),
+        ],
       ),
     );
   }
@@ -464,10 +433,7 @@ class _DiscoverCategoryScreenState extends ConsumerState<DiscoverCategoryScreen>
           PopupMenuButton<String>(
             icon: const Icon(Icons.sort_rounded),
             tooltip: '排序',
-            onSelected: (key) => setState(() {
-              _sortBy = key;
-              _descending = _sortBy == 'create_time';
-            }),
+            onSelected: _sort,
             itemBuilder: (_) => [
               for (final option in kDiscoverSortOptions)
                 PopupMenuItem(
@@ -487,7 +453,13 @@ class _DiscoverCategoryScreenState extends ConsumerState<DiscoverCategoryScreen>
           IconButton(
             icon: const Icon(Icons.swap_vert_rounded),
             tooltip: '正序/倒序',
-            onPressed: () => setState(() => _descending = !_descending),
+            onPressed: () {
+              setState(() => _descending = !_descending);
+              ref.read(discoverCategoryProvider(widget.category).notifier).sort(
+                    DiscoverSortPref(
+                        sortBy: _sortBy, descending: _descending),
+                  );
+            },
           ),
         ],
       ),

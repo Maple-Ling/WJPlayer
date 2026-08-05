@@ -155,7 +155,15 @@ class _UnifiedMediaHomeScreenState
 
   Future<void> _openEntry(ServerConfig server, UnifiedMediaEntry entry) async {
     ref.read(currentServerProvider.notifier).state = server;
-    context.push('/detail/${entry.id}');
+    // 直接使用影视详情页组件（真实 entry），飞牛/emby 均走统一影视详情 UI。
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => UnifiedMediaDetailScreen(
+          server: server,
+          entry: entry,
+        ),
+      ),
+    );
   }
 
   Future<void> _openContinueDetail(
@@ -166,7 +174,15 @@ class _UnifiedMediaHomeScreenState
   Future<void> _playContinue(
       ServerConfig server, UnifiedContinueItem item) async {
     ref.read(currentServerProvider.notifier).state = server;
-    context.push('/detail/${item.entry.id}?autoplay=1');
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => UnifiedMediaDetailScreen(
+          server: server,
+          entry: item.entry,
+          autoPlay: true,
+        ),
+      ),
+    );
     if (mounted) await _load();
   }
 
