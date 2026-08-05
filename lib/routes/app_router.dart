@@ -4,17 +4,13 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../core/providers/app_providers.dart';
-import '../core/providers/calendar_providers.dart';
 import '../core/providers/media_providers.dart';
-import '../core/providers/ranking_providers.dart';
-import '../ui/screens/calendar/calendar_screen.dart';
 import '../core/theme/app_colors.dart';
 import '../core/theme/app_motion.dart';
 import '../plugins/plugin_system.dart';
 import '../ui/screens/discover/discover_screen.dart';
 import '../ui/screens/history/history_screen.dart';
 import '../ui/screens/favorites/favorites_screen.dart';
-import '../ui/screens/home/home_screen.dart';
 import '../ui/screens/library/libraries_screen.dart';
 import '../ui/screens/library/library_detail_screen.dart';
 import '../ui/screens/player/player_screen.dart';
@@ -95,11 +91,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                     builder: (context, ref, _) {
                       final server = ref.watch(currentServerProvider);
                       if (server == null) return const ServerListScreen();
-                      if (server.sourceKind == SourceKind.emby ||
-                          server.sourceKind == SourceKind.feiniu) {
-                        return const UnifiedMediaHomeScreen();
-                      }
-                      return const HomeScreen();
+                      return const UnifiedMediaHomeScreen();
                     },
                   ),
                   state: state,

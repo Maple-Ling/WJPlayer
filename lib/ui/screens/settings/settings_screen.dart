@@ -32,7 +32,6 @@ import '../../../core/services/translation/whisper/desktop_binary_manager.dart';
 import '../../../core/services/translation/whisper/whisper_model.dart';
 import '../../../core/services/translation/whisper/whisper_model_manager.dart';
 import '../../../core/providers/update_providers.dart';
-import '../../../core/providers/ranking_providers.dart';
 import '../../../core/providers/proxy_providers.dart';
 import '../../../core/network/proxy_settings.dart';
 import '../../../core/network/proxy_http_client.dart';
@@ -42,9 +41,7 @@ import '../../widgets/common/app_update_gate.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../../plugins/ui/plugin_management_screen.dart';
 import '../server/server_list_screen.dart';
-import '../calendar/calendar_screen.dart';
 import '../../../core/providers/afdian_providers.dart';
-import '../../../core/providers/calendar_providers.dart';
 import 'wallpaper_crop_screen.dart';
 
 part 'settings_aggregation.dart';
