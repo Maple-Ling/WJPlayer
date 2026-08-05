@@ -703,7 +703,10 @@ class MpvPlayerPlugin(
         // Idle and window management
         MPVLib.setOptionString("idle", "once")
         MPVLib.setOptionString("force-window", "no")
+        // keepaspect 只负责保持比例；aspect override 必须明确清除，不能用 -1。
+        // -1 的含义是“强制优先使用容器比例”，不是“自动/默认”。
         MPVLib.setOptionString("keepaspect", "yes")
+        MPVLib.setOptionString("video-aspect-override", "no")
 
         // Subtitles
         MPVLib.setOptionString("sub-visibility", "yes")
@@ -982,17 +985,17 @@ class MpvPlayerPlugin(
         // ---- Aspect ratio ----
 
         fun setAspectRatio(ratio: String) {
-            // 原生 mpv 在屏幕大小的 surface 里自行做缩放/letterbox，故比例由 mpv 属性控制：
-            // video-aspect-override 改显示宽高比；keepaspect=no 变形拉伸铺满；panscan=1 保持
-            // 比例放大裁切铺满。每个模式都把另外两项复位，避免上次模式残留。
+            // 默认/自适应必须让 mpv 使用媒体真实 DAR/SAR；-1 会强制采用容器比例，
+            // 对容器 DAR 错误或缺失的视频可能产生拉伸。铺满只通过 panscan 裁切，
+            // 不关闭 keepaspect。
             when (ratio) {
                 "16:9" -> applyAspect(override = "16:9")
                 "4:3" -> applyAspect(override = "4:3")
                 "21:9" -> applyAspect(override = "21:9")
-                "原始" -> applyAspect(override = "0") // 用片源原始比例
-                "拉伸" -> applyAspect(override = "-1", keepAspect = false) // 变形铺满
-                "铺满" -> applyAspect(override = "-1", panscan = 1.0) // 裁切铺满
-                else -> applyAspect(override = "-1") // 默认比例交给媒体内核
+                "原始" -> applyAspect(override = "no")
+                "拉伸" -> applyAspect(override = "no", keepAspect = false)
+                "铺满" -> applyAspect(override = "no", panscan = 1.0)
+                else -> applyAspect(override = "no")
             }
         }
 
