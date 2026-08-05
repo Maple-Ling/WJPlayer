@@ -42,6 +42,7 @@ class PlayerOverlay extends StatefulWidget {
     required this.frameRate,
     required this.bitrate,
     this.mediaSize = '',
+    required this.initialDanmakuEnabled,
     required this.initialDanmakuDeduplication,
     required this.initialAutoSkip,
     required this.initialDanmakuOpacity,
@@ -125,6 +126,8 @@ class PlayerOverlay extends StatefulWidget {
   final String frameRate;
   final String bitrate;
   final String mediaSize;
+
+  final bool initialDanmakuEnabled;
   final bool initialDanmakuDeduplication;
   final bool initialAutoSkip;
   final double initialDanmakuOpacity;
@@ -744,24 +747,10 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                     fit: StackFit.expand,
                     children: [
                       Positioned(
-                        left: 16,
-                        top: 72,
-                        child: IgnorePointer(
-                          child: Text(
-                            [
-                              if (widget.initialCore.isNotEmpty)
-                                widget.initialCore == 'exoPlayer' ? 'EXO' : 'MPV',
-                              if (widget.bitrate.isNotEmpty) widget.bitrate,
-                              if (widget.mediaSize.isNotEmpty) widget.mediaSize,
-                            ].join(' · '),
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 11,
-                              shadows: [Shadow(color: Colors.black87, blurRadius: 4)],
-                            ),
-                          ),
-                        ),
-                      ),
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        child: TopBar(
                           logo: widget.logo,
                           logoImage: widget.logoImage,
                           logoText: widget.logoText,
@@ -802,6 +791,25 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                                 break;
                             }
                           },
+                        ),
+                      ),
+                      Positioned(
+                        left: 16,
+                        top: 72,
+                        child: IgnorePointer(
+                          child: Text(
+                            [
+                              if (widget.initialCore.isNotEmpty)
+                                widget.initialCore == 'exoPlayer' ? 'EXO' : 'MPV',
+                              if (widget.bitrate.isNotEmpty) widget.bitrate,
+                              if (widget.mediaSize.isNotEmpty) widget.mediaSize,
+                            ].join(' · '),
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 11,
+                              shadows: [Shadow(color: Colors.black87, blurRadius: 4)],
+                            ),
+                          ),
                         ),
                       ),
                       Positioned(

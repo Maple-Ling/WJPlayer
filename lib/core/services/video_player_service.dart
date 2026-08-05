@@ -1486,8 +1486,7 @@ class VideoPlayerService extends ChangeNotifier {
     _cancelHideControlsTimer();
     notifyListeners();
   }
-
-
+  void onDragEnd(DragEndDetails details) {
     if (!_isDragging) return;
     _isDragging = false;
     // 仅在确实处于进度拖动时才 seek；竖向/无效手势保持原位，避免松手误跳。
