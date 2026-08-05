@@ -649,6 +649,7 @@ class _FloatingTabBar extends ConsumerWidget {
         ),
       ),
     );
+    );
   }
 }
 

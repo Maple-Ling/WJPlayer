@@ -485,7 +485,7 @@ class _UnifiedMediaDetailScreenState
   }
 
   Future<void> _load() async {
-    final cached = _detailCache[cacheKey];
+    final cacheKey = '${widget.server.id}:${widget.entry.id}';
     if (cached != null) {
       _detail = cached;
       await _loadPlaybackHistory();

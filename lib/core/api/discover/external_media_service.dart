@@ -10,8 +10,14 @@ class ExternalMediaService {
   static const _base = 'https://api.themoviedb.org/3';
   static const _image = 'https://image.tmdb.org/t/p';
   static const _encryptedKey = String.fromEnvironment('TMDB_API_KEY_ENC', defaultValue: '');
-  Dio? _dio;
-  String _key = '';
+  final Dio _douban = buildSourceDio(
+    baseUrl: 'https://m.douban.com/rexxar/api/v2',
+    headers: const {
+      'Accept': 'application/json',
+      'Referer': 'https://m.douban.com/',
+    },
+  );
+  final Dio _imdb = buildSourceDio(baseUrl: 'https://v3-cinemeta.strem.io');
 
   Future<Dio> _client() async {
     if (_dio != null) return _dio!;
