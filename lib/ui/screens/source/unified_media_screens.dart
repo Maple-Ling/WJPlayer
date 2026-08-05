@@ -47,8 +47,8 @@ class UnifiedEmbyDetailRoute extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final server = ref.watch(currentServerProvider);
-    if (server == null || server.sourceKind != SourceKind.emby) {
-      return const Scaffold(body: Center(child: Text('当前不是 Emby 服务器')));
+    if (server == null) {
+      return const Scaffold(body: Center(child: Text('请先选择服务器')));
     }
     return UnifiedMediaDetailScreen(
       server: server,
@@ -151,10 +151,8 @@ class _UnifiedMediaHomeScreenState
   }
 
   Future<void> _openEntry(ServerConfig server, UnifiedMediaEntry entry) async {
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => UnifiedMediaDetailScreen(server: server, entry: entry),
-    ));
-    if (mounted) await _load();
+    ref.read(currentServerProvider.notifier).state = server;
+    context.push('/detail/${entry.id}');
   }
 
   Future<void> _openContinueDetail(
@@ -164,13 +162,8 @@ class _UnifiedMediaHomeScreenState
 
   Future<void> _playContinue(
       ServerConfig server, UnifiedContinueItem item) async {
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => UnifiedMediaDetailScreen(
-        server: server,
-        entry: item.entry,
-        autoPlay: true,
-      ),
-    ));
+    ref.read(currentServerProvider.notifier).state = server;
+    context.push('/detail/${item.entry.id}?autoplay=1');
     if (mounted) await _load();
   }
 
@@ -801,23 +794,16 @@ class _UnifiedMediaDetailScreenState
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverAppBar(
-              expandedHeight: MediaQuery.sizeOf(context).height * 0.52,
+              expandedHeight: MediaQuery.sizeOf(context).height * 0.44,
               pinned: true,
               stretch: true,
               backgroundColor: Colors.transparent,
               leading: _roundButton(
                   Icons.arrow_back_rounded, () => Navigator.of(context).maybePop()),
               actions: [
-                Center(
-                  child: SelectedRatingBadge(
-                    item: entry.ratingItem,
-                    compact: false,
-                  ),
-                ),
                 if (_externalDetail != null)
                   _roundButton(Icons.more_vert_rounded,
                       () => _showLinksSheet(_externalDetail!)),
-                const SizedBox(width: 6),
               ],
               flexibleSpace: FlexibleSpaceBar(
                 collapseMode: CollapseMode.parallax,
@@ -928,10 +914,10 @@ class _UnifiedMediaDetailScreenState
               ),
             ),
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 48),
               sliver: SliverList.list(children: [
+                const SizedBox(height: 14),
                 if (entry.overview?.isNotEmpty == true) ...[
-                  const SizedBox(height: 22),
                   CollapsibleOverview(text: entry.overview!),
                 ],
                 if (detail.seasons.isNotEmpty) ...[

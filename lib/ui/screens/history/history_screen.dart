@@ -10,7 +10,6 @@ import '../../../core/sources/feiniu_backend.dart';
 import '../../../core/sources/media_source_backend.dart';
 // SourcePlayback is no longer used; resume flows through unified detail.
 import '../../../core/sources/unified_media_adapter.dart';
-import '../source/unified_media_screens.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../widgets/common/media_widgets.dart';
 
@@ -263,107 +262,54 @@ class _HistoryTile extends ConsumerWidget {
       BuildContext context, WidgetRef ref, ServerConfig server) async {
     ref.read(currentServerProvider.notifier).state = server;
     ref.read(authStateProvider.notifier).state = AuthState.authenticated;
-    if (server.sourceKind == SourceKind.feiniu) {
-      final stableId = record.mediaKind == WatchHistoryMediaKind.episode
-          ? (record.seriesEntryId ?? record.sourceEntryId ?? record.mediaPath)
-          : (record.sourceEntryId ?? record.mediaPath);
-      if (stableId == null || stableId.isEmpty) return;
-      final entry = UnifiedMediaEntry(
-        id: stableId,
-        name: record.seriesTitle ?? record.title,
-        type: record.mediaKind == WatchHistoryMediaKind.episode
-            ? 'Episode'
-            : 'Movie',
-        posterUrl: record.sourcePosterUrl,
-      );
-      await Navigator.of(context).push(MaterialPageRoute<void>(
-        builder: (_) => UnifiedMediaDetailScreen(server: server, entry: entry),
-      ));
-      return;
-    }
-    final itemId = record.mediaKind == WatchHistoryMediaKind.episode
-        ? record.seriesEntryId
-        : record.lastEmbyItemId;
-    if (itemId == null || itemId.isEmpty) {
+    final id = server.sourceKind == SourceKind.feiniu
+        ? (record.mediaKind == WatchHistoryMediaKind.episode
+                ? record.seriesEntryId
+                : record.sourceEntryId)
+            ?? record.mediaPath
+        : (record.mediaKind == WatchHistoryMediaKind.episode
+                ? record.seriesEntryId
+                : record.lastEmbyItemId);
+    if (id == null || id.isEmpty) {
       AppToast.show(context, '该记录缺少可打开的资源标识', kind: AppToastKind.error);
       return;
     }
-    // Emby 也走完整媒体详情页（顶部沉浸剧照 + 选集），而非旧的 /detail 单独页。
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => UnifiedMediaDetailScreen(
-        server: server,
-        entry: UnifiedMediaEntry(
-          id: itemId,
-          name: record.seriesTitle ?? record.title,
-          type: record.mediaKind == WatchHistoryMediaKind.episode
-              ? 'Episode'
-              : 'Movie',
-          posterUrl: record.sourcePosterUrl,
-        ),
-      ),
-    ));
+    context.push('/detail/$id');
   }
 
   Future<void> _resume(
       BuildContext context, WidgetRef ref, ServerConfig server) async {
     ref.read(currentServerProvider.notifier).state = server;
     ref.read(authStateProvider.notifier).state = AuthState.authenticated;
+    String? id;
     if (server.sourceKind == SourceKind.feiniu) {
-      try {
-        // 新记录已保存飞牛 item GUID，优先精确恢复，绝不再把「正在播放的条目」
-        // 错误地按标题模糊搜索到其它片源。旧记录才回退标题搜索。
-        final stableId = record.sourceEntryId ?? record.mediaPath;
-        final entry = stableId != null && stableId.isNotEmpty
-            ? SourceEntry(
-                id: stableId,
-                name: record.title,
-                isDir: false,
-                isVideo: true,
-                thumbUrl: record.sourcePosterUrl,
-              )
-            : (await FeiniuBackend().search(server, record.title))
-                .where((e) => !e.isDir && e.isVideo)
-                .firstOrNull;
-        if (!context.mounted) return;
-        if (entry == null) throw StateError('not found');
-        await Navigator.of(context).push(MaterialPageRoute<void>(
-          builder: (_) => UnifiedMediaDetailScreen(
-            server: server,
-            entry: UnifiedMediaEntry(
-              id: entry.id,
-              name: entry.name,
-              type: record.mediaKind == WatchHistoryMediaKind.episode ? 'Episode' : 'Movie',
-              sourceEntry: entry,
-              posterUrl: record.sourcePosterUrl,
-            ),
-            autoPlay: true,
-          ),
-        ));
-        return;
-      } catch (_) {
-        if (context.mounted) {
-          AppToast.show(context, '${server.name}中未找到对应资源',
-              kind: AppToastKind.error);
+      final stableId = record.sourceEntryId ?? record.mediaPath;
+      if (stableId != null && stableId.isNotEmpty) {
+        id = stableId;
+      } else {
+        try {
+          final entry = (await FeiniuBackend().search(server, record.title))
+              .where((e) => !e.isDir && e.isVideo)
+              .firstOrNull;
+          if (!context.mounted) return;
+          if (entry == null) throw StateError('not found');
+          id = entry.id;
+        } catch (_) {
+          if (context.mounted) {
+            AppToast.show(context, '${server.name}中未找到对应资源',
+                kind: AppToastKind.error);
+          }
+          return;
         }
-        return;
       }
+    } else {
+      id = record.lastEmbyItemId;
     }
-    final itemId = record.lastEmbyItemId;
-    if (itemId == null || itemId.isEmpty) {
+    if (id == null || id.isEmpty) {
       AppToast.show(context, '该记录缺少可恢复的资源标识', kind: AppToastKind.error);
       return;
     }
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => UnifiedMediaDetailScreen(
-        server: server,
-        entry: UnifiedMediaEntry(
-          id: itemId,
-          name: record.seriesTitle ?? record.title,
-          type: record.mediaKind == WatchHistoryMediaKind.episode ? 'Episode' : 'Movie',
-        ),
-        autoPlay: true,
-      ),
-    ));
+    context.push('/detail/$id?autoplay=1');
   }
 
   void _searchAllLibraries(BuildContext context, WidgetRef ref) {
