@@ -22,6 +22,8 @@ class PlayerSettingsScreen extends ConsumerWidget {
     final externalMpvPath = ref.watch(externalMpvPathProvider);
     final gpuNextEnabled = ref.watch(gpuNextEnabledProvider);
     final pgsBlendMode = ref.watch(pgsBlendModeProvider);
+    final anime4kEnabled =
+        ref.watch(anime4KLevelProvider) != 'off';
 
     return Scaffold(
       backgroundColor: Theme.of(context).brightness == Brightness.light
@@ -171,6 +173,15 @@ class PlayerSettingsScreen extends ConsumerWidget {
             onChanged: (value) =>
                 ref.read(hardwareDecodingProvider.notifier).state = value,
           ),
+          if (playerCore == 'mpv' || playerCore == 'nativeMpv')
+            TdSwitchTile(
+              title: const Text('Anime4K 超分'),
+              subtitle: const Text('开启后使用 Anime4K 着色器提升动画画质（仅 MPV 内核支持）'),
+              value: anime4kEnabled,
+              onChanged: (value) => ref
+                  .read(anime4KLevelProvider.notifier)
+                  .state = value ? 'modeA' : 'off',
+            ),
           if (playerCore == 'mpv' || playerCore == 'nativeMpv')
             TdSwitchTile(
               title: const Text('杜比视界自动切换软解'),

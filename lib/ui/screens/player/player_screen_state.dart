@@ -195,6 +195,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   @override
   void initState() {
     super.initState();
+    // Anime4K 档位从全局设置同步（设置页/播放器面板均可改）。
+    _anime4kMode = ref.read(anime4KLevelProvider);
     WidgetsBinding.instance.addObserver(this);
     // 播放期间保持屏幕常亮，防止观看中自动息屏。
     WakelockPlus.enable();
@@ -2757,6 +2759,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 tooltip: '弹幕',
                 onTap: _showDanmakuCapsule,
               ),
+              if (_isMpvCore)
+                _TopActionButton(
+                  icon: _anime4kMode == 'off'
+                      ? Icons.auto_awesome_rounded
+                      : Icons.auto_awesome,
+                  tooltip: 'Anime4K 超分',
+                  onTap: _showAnime4kPanel,
+                ),
+              _TopActionButton(
+                icon: Icons.settings_overscan_rounded,
+                tooltip: '软解/硬解',
+                onTap: _toggleHardwareDecoding,
+              ),
               _TopActionButton(
                 icon: Icons.closed_caption_rounded,
                 tooltip: '弹幕设置',
@@ -2957,6 +2972,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
               await _playerService.applySuperResolutionLevel(mode);
               if (!mounted) return;
               setState(() => _anime4kMode = mode);
+              // 同步全局设置，保持设置页开关一致。
+              ref.read(anime4KLevelProvider.notifier).state = mode;
               final n = _playerService.activeGlslShaderCount;
               AppToast.show(
                   context,
