@@ -86,8 +86,8 @@ class ServerConfig {
     this.hidden = false,
   });
 
-  /// 是否文件浏览型源（非 Emby）。
-  bool get isFileBrowse => isFileBrowseSource(sourceKind);
+  /// 是否文件浏览型源（非 Emby）。现仅飞牛。
+  bool get isFileBrowse => sourceKind == SourceKind.feiniu;
 
   /// 当前生效的线路地址（即当前选中的线路 URL）。
   String get activeLineUrl {
