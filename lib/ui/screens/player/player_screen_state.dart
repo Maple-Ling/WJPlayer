@@ -1850,8 +1850,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   ),
                   cores: _supportedPlayerCores(),
                   lines: _lineOptions(server),
-                  audioTracks: _audioTrackLabels(),
-                  subtitleTracks: _subtitleTrackLabels(),
                   episodes: overlayEpisodes,
                   onUiVisibilityChanged: (visible) {
                     if (visible != _playerService.showControls) {
@@ -3773,9 +3771,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   void _showInfoCapsule() {
     final resource = ref.read(unifiedResourceProvider);
-    final video = resource?.video ?? {};
-    final audioTracks = resource?.audios ?? [];
-    final subtitleTracks = resource?.subtitles ?? [];
+    final video = resource?.video ?? const <String, dynamic>{};
+    final audioTracks = resource?.audios ?? const <Map<String, dynamic>>[];
+    final subtitleTracks =
+        resource?.subtitles ?? const <Map<String, dynamic>>[];
     final isFeiniu = resource?.isFeiniu ?? false;
 
     String _trackLabel(Map<String, dynamic> t) {
@@ -3787,7 +3786,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         final codec = t['codec'] as String?;
         final codecLabel = codec != null ? ' ($codec)' : '';
         final channels = t['channels'] as int?;
-        final channelLabel = channels != null ? ', $channelsCH' : '';
+        final channelLabel = channels != null ? ', $channels CH' : '';
         return '$name$codecLabel$channelLabel';
       }
       final index = (t['index'] as int? ?? 0) + 1;
@@ -3822,7 +3821,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         ? '${video['bitrate'] ?? '未知'} bps'
         : '未知';
 
-    final items = <Widget>[
+    final items = <CapsuleMenuItem>[
       capsuleInfo(
         label: '标题',
         subLabel: ref.read(currentPlayingItemProvider)?.name ?? widget.itemId,

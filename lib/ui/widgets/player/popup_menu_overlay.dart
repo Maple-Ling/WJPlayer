@@ -780,19 +780,15 @@ class PopupMediaInfoMenu extends StatelessWidget {
             ? _subtitlePill()
             : null;
 
-    final enc = unifiedResource != null
-        ? (_videoDisplay(unifiedResource!.video)
-            .replaceAll(' (HDR10+)', '').replaceAll(' (HDR10)', ''))
+    final video = unifiedResource?.video;
+    final enc = video != null
+        ? _videoDisplay(video)
+            .replaceAll(' (HDR10+)', '')
+            .replaceAll(' (HDR10)', '')
         : encoder ?? '未知';
-    final res = unifiedResource != null
-        ? _resolution(unifiedResource!.video)
-        : resolution ?? '未知';
-    final fps = unifiedResource != null
-        ? _frameRate(unifiedResource!.video)
-        : frameRate ?? '未知';
-    final br = unifiedResource != null
-        ? _bitrate(unifiedResource!.video)
-        : bitrate ?? '未知';
+    final res = video != null ? _resolution(video) : resolution ?? '未知';
+    final fps = video != null ? _frameRate(video) : frameRate ?? '未知';
+    final br = video != null ? _bitrate(video) : bitrate ?? '未知';
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -879,7 +875,7 @@ class PopupMediaInfoMenu extends StatelessWidget {
       final codec = track['codec'] as String?;
       final codecLabel = codec != null ? ' ($codec)' : '';
       final channels = track['channels'] as int?;
-      final channelLabel = channels != null ? ', $channelsCH' : '';
+      final channelLabel = channels != null ? ', $channels CH' : '';
       return '$name$codecLabel$channelLabel';
     } else {
       final index = (track['index'] as int? ?? 0) + 1;
@@ -1061,7 +1057,7 @@ class PopupTrackMenu extends StatelessWidget {
       final codec = track['codec'] as String?;
       final codecLabel = codec != null ? ' ($codec)' : '';
       final channels = track['channels'] as int?;
-      final channelLabel = channels != null ? ', $channelsCH' : '';
+      final channelLabel = channels != null ? ', $channels CH' : '';
       return '$name$codecLabel$channelLabel';
     } else {
       final index = (track['index'] as int? ?? 0) + 1;
@@ -1391,7 +1387,7 @@ class PopupMenuOverlay extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final unifiedResource = ref.read(unifiedResourceProvider);
     final menu = activeMenu;
     if (menu == null) return const SizedBox.shrink();
