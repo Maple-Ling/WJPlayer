@@ -1856,6 +1856,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   frameRate: _mediaFrameRate(mediaSource),
                   bitrate: _mediaBitrate(mediaSource),
                   mediaSize: _mediaSize(mediaSource),
+                  initialDanmakuEnabled: ref.watch(danmakuEnabledProvider),
                   initialDanmakuDeduplication: ref.watch(danmakuDedupProvider),
                   initialAutoSkip: ref.watch(autoSkipSegmentsProvider),
                   initialDanmakuOpacity: ref.watch(danmakuOpacityProvider),
@@ -2354,6 +2355,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     String label;
     double value;
 
+    IconData icon;
     if (_playerService.activeVerticalAction == 'brightness') {
       label = '亮度';
       icon = Icons.brightness_high;
@@ -4025,6 +4027,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     return '${value.toStringAsFixed(value >= 100 ? 0 : 2)} ${units[unit]}';
   }
 
+  int _currentEpisodeNumber(MediaItem? item) {
     final source = _activeSourcePlay;
     if (source != null && source.playlist.isNotEmpty) {
       final index = source.playlistIndex;

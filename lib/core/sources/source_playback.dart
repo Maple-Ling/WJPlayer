@@ -31,6 +31,9 @@ class SourcePlayback {
   /// 直链播放鉴权头（Authorization / Authx 等），由协议层传入。
   final Map<String, String>? httpHeaders;
 
+  /// 同一季的可播列表。详情页传入后，播放器内“上下集/选集”可直接切换飞牛分集。
+  final List<SourceEntry> playlist;
+
   /// 外部媒体 Logo（TMDB 等），用于直链源播放页顶部；服务器源无 Logo 时为空。
   final String? logoUrl;
 
