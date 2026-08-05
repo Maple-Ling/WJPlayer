@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/material.dart';
@@ -51,6 +52,7 @@ class _DanmakuOverlayState extends State<DanmakuOverlay>
   Duration _smoothPosition = Duration.zero;
   Duration _lastSyncPosition = Duration.zero;
   Duration _lastSyncElapsed = Duration.zero;
+  double _lastPlaybackRate = 1.0;
 
   /// 段落缓存随 State 存活（跨帧持久），替代旧的 static 缓存（跨实例共享是隐患）。
   final DanmakuLayoutCache _cache = DanmakuLayoutCache();
@@ -60,12 +62,16 @@ class _DanmakuOverlayState extends State<DanmakuOverlay>
     super.initState();
     _smoothPosition = widget.position;
     _lastSyncPosition = widget.position;
+    _lastSyncElapsed = Duration.zero;
     _ticker = createTicker(_onTick)..start();
   }
 
   void _onTick(Duration elapsed) {
     _tickerElapsed = elapsed;
-    if (!widget.isPlaying) return;
+    if (!widget.isPlaying) {
+      _lastSyncElapsed = elapsed;
+      return;
+    }
     final delta = elapsed - _lastSyncElapsed;
     final scaledMicros =
         (delta.inMicroseconds * widget.playbackRate.clamp(0.1, 8.0)).round();
@@ -77,11 +83,16 @@ class _DanmakuOverlayState extends State<DanmakuOverlay>
   @override
   void didUpdateWidget(DanmakuOverlay old) {
     super.didUpdateWidget(old);
-    if (widget.position != old.position ||
-        widget.playbackRate != old.playbackRate) {
+    final positionDelta = (widget.position - old.position).abs();
+    final rateChanged = (widget.playbackRate - old.playbackRate).abs() > 0.001;
+    // 正常播放时父层每次刷新都会带来微小 position 差异，不能重置时间轴；
+    // 只有 seek/换集/暂停恢复/倍速改变才重新锚定。
+    final isSeek = positionDelta > const Duration(milliseconds: 450);
+    if (isSeek || rateChanged) {
       _lastSyncPosition = widget.position;
       _lastSyncElapsed = _tickerElapsed;
       _smoothPosition = widget.position;
+      _lastPlaybackRate = widget.playbackRate;
     }
     if (widget.isPlaying && !old.isPlaying) {
       _lastSyncPosition = _smoothPosition;
@@ -218,7 +229,7 @@ class DanmakuPainter extends CustomPainter {
   static const double _minFontSize = 12.0;
   static const double _baseSpeed = 120.0;
   static const double _topBottomDuration = 5.0;
-  static const double _trackHeight = 32.0;
+  double get _trackHeight => (_fontSize + 12.0).clamp(34.0, 56.0);
   static const double _padding = 4.0;
   static const double _visibleWindow = 30.0;
 
@@ -328,34 +339,47 @@ class DanmakuPainter extends CustomPainter {
       added++;
     }
 
-    // 轨道占用：每条轨道记录「最近一条」占用者，用于给新弹幕挑不冲突的轨道。
-    // 滚动/顶部/底部三类各自一套轨道。
-    final scrollOccupant = List<_DanmakuTrackItem?>.filled(trackCount, null);
-    final topOccupant = List<_DanmakuTrackItem?>.filled(trackCount, null);
-    final bottomOccupant = List<_DanmakuTrackItem?>.filled(trackCount, null);
-
-    // Pass 1：已分配轨道的弹幕直接复用冻结轨道号（不再重算 → 不抖动），并登记占用。
-    final unassigned = <_DanmakuTrackItem>[];
-    for (final ti in visibleItems) {
-      final lane = cache.laneOf[ti.index];
-      if (lane == null) {
-        unassigned.add(ti);
-        continue;
+    // 每帧按当前实际横向矩形重新分配轨道。只冻结轨道号会导致弹幕进入/离场后，
+    // 同一轨道的左右矩形发生重叠；这里以当前 x + width 做真实碰撞检测。
+    cache.laneOf.clear();
+    final lanes = List<List<_DanmakuTrackItem>>.generate(
+      trackCount, (_) => <_DanmakuTrackItem>[]);
+    final born = visibleItems
+        .where((ti) => ti.item.time <= _currentSeconds)
+        .toList()
+      ..sort((a, b) => a.item.time.compareTo(b.item.time));
+    for (final ti in born) {
+      final x = _computeX(ti, size);
+      var selectedLane = -1;
+      for (var lane = 0; lane < trackCount; lane++) {
+        final collision = lanes[lane].any((other) {
+          final ox = _computeX(other, size);
+          return x < ox + other.width + _padding &&
+              x + ti.width + _padding > ox;
+        });
+        if (!collision) {
+          selectedLane = lane;
+          break;
+        }
       }
-      ti.startY = lane * _trackHeight + _padding;
-      _recordOccupant(ti, lane, scrollOccupant, topOccupant, bottomOccupant);
-    }
-
-    // Pass 2：给尚未分配、且已经「出生」（当前时间到点）的弹幕分配轨道并冻结。
-    // 未到点的（time>当前）先不分配——等它真正从右侧进场那一帧再挑轨道，避免扎堆。
-    unassigned.sort((a, b) => a.item.time.compareTo(b.item.time));
-    for (final ti in unassigned) {
-      if (ti.item.time > _currentSeconds) continue;
-      final lane = _assignLane(
-          ti, size, scrollOccupant, topOccupant, bottomOccupant, trackCount);
-      cache.laneOf[ti.index] = lane;
-      ti.startY = lane * _trackHeight + _padding;
-      _recordOccupant(ti, lane, scrollOccupant, topOccupant, bottomOccupant);
+      // 轨道全部繁忙时选择当前最早离场的轨道；这是极端高密度下的
+      // 最小损伤策略，正常密度下不会进入这里。
+      if (selectedLane < 0) {
+        selectedLane = 0;
+        var earliest = double.infinity;
+        for (var lane = 0; lane < trackCount; lane++) {
+          final release = lanes[lane]
+              .map((item) => _computeX(item, size) + item.width)
+              .fold<double>(double.negativeInfinity, math.max);
+          if (release < earliest) {
+            earliest = release;
+            selectedLane = lane;
+          }
+        }
+      }
+      cache.laneOf[ti.index] = selectedLane;
+      ti.startY = selectedLane * _trackHeight + _padding;
+      lanes[selectedLane].add(ti);
     }
 
     for (final trackItem in visibleItems) {
@@ -439,7 +463,6 @@ class DanmakuPainter extends CustomPainter {
   double _computeX(_DanmakuTrackItem trackItem, Size size) {
     final type = trackItem.item.type;
     final elapsed = _currentSeconds - trackItem.item.time;
-    if (elapsed < 0) return -trackItem.width;
 
     if (type == 4 || type == 5) {
       // 固定弹幕（顶部/底部）只显示 _topBottomDuration 秒；过期返回屏外坐标，让

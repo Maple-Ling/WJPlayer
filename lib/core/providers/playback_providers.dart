@@ -26,6 +26,10 @@ String normalizePlayerCore(String? value) {
   switch (value) {
     case 'mpv':
     case 'media_kit':
+      // Android 仅保留原生 MPV；兼容历史配置，不再暴露旧 MPV 选项。
+      if (!isDesktopPlatform && defaultTargetPlatform != TargetPlatform.iOS) {
+        return 'nativeMpv';
+      }
       return 'mpv';
     case 'exoPlayer':
     case 'video_player':

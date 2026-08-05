@@ -817,6 +817,18 @@ class MediaStream {
   final double? averageFrameRate; // 平均帧率
   final String? colorSpace; // bt2020nc / bt709 ...
   final String? colorTransfer; // smpte2084 (PQ) / arib-std-b67 (HLG) ...
+  final String? colorRange; // limited / full
+  final String? colorPrimaries; // bt709 / bt2020
+  final String? colorMatrix; // bt709 / bt2020nc
+  final String? aspectRatio; // DAR，例如 16:9
+  final String? sampleAspectRatio; // SAR，例如 1:1
+  final int? sampleRate; // 音频采样率 Hz
+  final int? bitDepth; // 音频/视频位深
+  final String? channelLayout; // stereo / 5.1 / 7.1
+  final String? timeBase;
+  final int? refFrames;
+  final int? gopSize;
+  final String? frameType;
 
   MediaStream({
     required this.index,
@@ -845,7 +857,19 @@ class MediaStream {
     this.averageFrameRate,
     this.colorSpace,
     this.colorTransfer,
-  });
+    this.colorRange,
+    this.colorPrimaries,
+    this.colorMatrix,
+    this.aspectRatio,
+    this.sampleAspectRatio,
+    this.sampleRate,
+    this.bitDepth,
+    this.channelLayout,
+    this.timeBase,
+    this.refFrames,
+    this.gopSize,
+    this.frameType,
+
 
   bool get isVideo => type == 'Video';
   bool get isAudio => type == 'Audio';

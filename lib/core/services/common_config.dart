@@ -4,6 +4,7 @@ import 'package:cryptography/cryptography.dart';
 import 'package:uuid/uuid.dart';
 
 import '../providers/server_providers.dart';
+import '../sources/source_kind.dart';
 
 /// 通用配置（CommonConfig）—— **免密码、跨客户端**的服务器配置互导格式。
 ///
@@ -59,7 +60,8 @@ class CommonConfig {
   // ---- ServerConfig <-> CommonServiceConfig(snake_case)---------------------
 
   static Map<String, dynamic> _serverToCommon(ServerConfig s) => {
-        'type': 'emby',
+        'type': s.sourceKind.name,
+      'source_kind': s.sourceKind.name,
         'id': s.id,
         'name': s.name,
         'url': s.baseUrl,
@@ -86,8 +88,12 @@ class CommonConfig {
   static ServerConfig _commonToServer(Map<String, dynamic> j) {
     final options = (j['options'] as Map?)?.cast<String, dynamic>() ??
         const <String, dynamic>{};
-    final lines = (j['lines'] as List<dynamic>?)
-            ?.whereType<Map>()
+    final sourceKind = sourceKindFromName(
+        (j['source_kind'] ?? j['sourceKind'] ?? j['type'])?.toString());
+    final baseUrl = (j['url'] ?? j['baseUrl'])?.toString() ?? '';
+    final rawLines = (j['lines'] as List<dynamic>?) ?? const [];
+    final lines = rawLines
+            .whereType<Map>()
             .map((raw) {
               final l = raw.cast<String, dynamic>();
               return ServerLine(
@@ -103,16 +109,19 @@ class CommonConfig {
     return ServerConfig(
       id: (j['id'] as String?) ?? _uuid.v4(),
       name: (j['name'] as String?) ?? '服务器',
-      baseUrl: (j['url'] as String?) ?? '',
+      baseUrl: baseUrl,
       iconUrl: j['icon'] as String?,
       remark: options['remark'] as String?,
-      lines: lines,
+      lines: lines.isEmpty && sourceKind == SourceKind.feiniu
+          ? [ServerLine(id: 'default', name: '默认线路', url: baseUrl)]
+          : lines,
       activeLineIndex: (options['active_line_index'] as num?)?.toInt() ?? 0,
       username: j['username'] as String?,
       authToken: j['access_token'] as String?,
       userId: j['user_id'] as String?,
       password: j['password'] as String?,
       allowInsecureTls: options['allow_insecure_tls'] as bool? ?? false,
+      sourceKind: sourceKind,
     );
   }
 

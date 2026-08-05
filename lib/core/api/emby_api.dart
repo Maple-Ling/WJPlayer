@@ -1660,6 +1660,18 @@ MediaStream _parseMediaStream(Map<String, dynamic> d) {
     averageFrameRate: _tryDouble(d['AverageFrameRate']),
     colorSpace: d['ColorSpace']?.toString(),
     colorTransfer: d['ColorTransfer']?.toString(),
+    colorRange: d['VideoRange']?.toString() ?? d['ColorRange']?.toString(),
+    colorPrimaries: d['ColorPrimaries']?.toString(),
+    colorMatrix: d['ColorMatrix']?.toString(),
+    aspectRatio: d['DisplayAspectRatio']?.toString() ?? d['AspectRatio']?.toString(),
+    sampleAspectRatio: d['SampleAspectRatio']?.toString(),
+    sampleRate: _asInt(d['SampleRate']),
+    bitDepth: _asInt(d['BitDepth']),
+    channelLayout: d['ChannelLayout']?.toString(),
+    timeBase: d['TimeBase']?.toString(),
+    refFrames: _asInt(d['RefFrames']),
+    gopSize: _asInt(d['GopSize'] ?? d['GOPSize']),
+    frameType: d['FrameType']?.toString(),
   );
 }
 

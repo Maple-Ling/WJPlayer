@@ -101,6 +101,15 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
       _pathController.text = s.activeLineUrl.isEmpty
           ? '/'
           : (Uri.tryParse(s.activeLineUrl)?.path ?? '/');
+      final activeUri = Uri.tryParse(s.activeLineUrl);
+      if (activeUri != null && activeUri.host.isNotEmpty) {
+        _urlController.text = activeUri.hasPort
+            ? '${activeUri.host}:${activeUri.port}'
+            : activeUri.host;
+        _protocol = activeUri.scheme.toLowerCase() == 'http'
+            ? ServerProtocol.http
+            : ServerProtocol.https;
+      }
       _usernameController.text = s.username ?? '';
       _passwordController.text = s.password ?? '';
       for (final line in s.lines) {
@@ -148,144 +157,208 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
   }
 
   TextStyle get _labelStyle =>
-      const TextStyle(fontSize: 14, fontWeight: FontWeight.w700);
+      const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF687386));
 
   BoxDecoration get _cardDeco => BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.04),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(24),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x12000000),
+            blurRadius: 18,
+            offset: Offset(0, 6),
+          ),
+        ],
       );
 
   Widget _fieldLabel(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.only(left: 14, bottom: 6),
         child: Text(text, style: _labelStyle),
       );
 
   InputDecoration _fieldDeco({String? hint, required IconData icon}) =>
       InputDecoration(
         hintText: hint,
-        prefixIcon: Icon(icon),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(28),
-        ),
+        hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF9AA3B2)),
+        prefixIcon: Icon(icon, size: 20, color: const Color(0xFF98A1B1)),
         filled: true,
+        fillColor: const Color(0xFFF0F2F5),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(999),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(999),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(999),
+          borderSide: const BorderSide(color: Color(0xFF5B8DEF), width: 1.5),
+        ),
       );
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16).copyWith(bottom: 120),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _fieldLabel('服务器名称'),
-          TextField(
-            controller: _nameController,
-            decoration: _fieldDeco(hint: '留空则自动获取', icon: Icons.badge_outlined),
-          ),
-          const SizedBox(height: 14),
-          if (!widget.hideMainUrl) ...[
-            _fieldLabel('备注'),
-            TextField(
-              controller: _remarkController,
-              decoration: _fieldDeco(hint: '选填', icon: Icons.notes),
-            ),
-            const SizedBox(height: 14),
-            _fieldLabel('服务器地址'),
-            ProtocolAddressField(
-              controller: _urlController,
-              label: '服务器地址',
-              hint: 'example.com:8096',
-              onProtocolChanged: (v) => _protocol = v,
-            ),
-            const SizedBox(height: 14),
-            _fieldLabel('路径'),
-            TextField(
-              controller: _pathController,
-              decoration: _fieldDeco(icon: Icons.folder),
-            ),
-            const SizedBox(height: 14),
-          ],
-          _fieldLabel('用户名'),
-          TextField(
-            controller: _usernameController,
-            decoration: _fieldDeco(icon: Icons.person),
-          ),
-          const SizedBox(height: 14),
-          _fieldLabel('密码'),
-          TextField(
-            controller: _passwordController,
-            decoration: _fieldDeco(icon: Icons.lock),
-            obscureText: true,
-          ),
-          if (_isEdit) ...[
-            const SizedBox(height: 14),
-            _fieldLabel('安全'),
-            SwitchListTile.adaptive(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('信任自签名证书'),
-              subtitle: const Text('仅对自签名证书的服务器开启',
-                  style: TextStyle(fontSize: 12)),
-              value: _allowInsecureTls,
-              onChanged: (v) => setState(() => _allowInsecureTls = v),
-            ),
-          ],
-          if (_errorMessage != null) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.errorContainer,
-                borderRadius: BorderRadius.circular(16),
+    final theme = Theme.of(context);
+    return ColoredBox(
+      color: const Color(0xFFF4F6F9),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 36),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 22),
+          decoration: _cardDeco,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _fieldLabel('服务器名称'),
+              TextField(
+                controller: _nameController,
+                decoration: _fieldDeco(
+                    hint: '留空则自动获取', icon: Icons.dns_outlined),
               ),
-              child: Text(
-                _errorMessage!,
-                style: TextStyle(
-                    color: Theme.of(context).colorScheme.onErrorContainer),
+              const SizedBox(height: 14),
+              if (!widget.hideMainUrl) ...[
+                _fieldLabel('备注（例如：到期时间）'),
+                TextField(
+                  controller: _remarkController,
+                  decoration: _fieldDeco(hint: '选填', icon: Icons.notes_rounded),
+                ),
+                const SizedBox(height: 14),
+                _fieldLabel('服务器地址'),
+                ProtocolAddressField(
+                  controller: _urlController,
+                  label: '输入或粘贴服务器地址',
+                  hint: 'example.com:8096 或完整网址',
+                  initialProtocol: _protocol,
+                  onProtocolChanged: (v) => _protocol = v,
+                ),
+                const SizedBox(height: 14),
+                _fieldLabel('路径'),
+                TextField(
+                  controller: _pathController,
+                  decoration: _fieldDeco(
+                      hint: '例如：emby', icon: Icons.folder_open_rounded),
+                ),
+                const SizedBox(height: 14),
+              ],
+              _fieldLabel('用户名'),
+              TextField(
+                controller: _usernameController,
+                decoration: _fieldDeco(
+                    hint: '服务器登录用户名', icon: Icons.person_outline_rounded),
+                keyboardType: TextInputType.text,
+                autocorrect: false,
               ),
-            ),
-          ],
-          const SizedBox(height: 24),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              shape: const StadiumBorder(),
-              padding: const EdgeInsets.symmetric(vertical: 16),
-            ),
-            onPressed: _isLoading ? null : _saveAndConnect,
-            child: _isLoading
-                ? const SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : Text(_isEdit ? '保存' : '连接并保存'),
+              const SizedBox(height: 14),
+              _fieldLabel('密码'),
+              TextField(
+                controller: _passwordController,
+                decoration: _fieldDeco(
+                    hint: '服务器登录密码', icon: Icons.lock_outline_rounded),
+                obscureText: true,
+                autocorrect: false,
+              ),
+              if (_isEdit) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF0F2F5),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('信任自签名证书',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    subtitle: const Text('仅对自签名证书的服务器开启',
+                        style: TextStyle(fontSize: 11)),
+                    value: _allowInsecureTls,
+                    onChanged: (v) => setState(() => _allowInsecureTls = v),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 20),
+              Row(children: [
+                Expanded(child: _sectionTitle('服务器线路')),
+                _addLineButton(),
+              ]),
+              const SizedBox(height: 4),
+              Text(
+                '支持粘贴完整网址，自动识别协议、主机和路径',
+                style: theme.textTheme.bodySmall?.copyWith(
+                    color: const Color(0xFF8B95A5), fontSize: 11),
+              ),
+              const SizedBox(height: 10),
+              if (_lines.isEmpty)
+                _emptyLinesHint()
+              else
+                ...List.generate(_lines.length, (i) => _buildLineCard(i)),
+              if (_errorMessage != null) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.errorContainer,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Text(_errorMessage!,
+                      style: TextStyle(
+                          color: theme.colorScheme.onErrorContainer)),
+                ),
+              ],
+              const SizedBox(height: 20),
+              SizedBox(
+                height: 52,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF4A7BD0),
+                    shape: const StadiumBorder(),
+                    elevation: 4,
+                    shadowColor: const Color(0x555B8DEF),
+                  ),
+                  onPressed: _isLoading ? null : _saveAndConnect,
+                  icon: _isLoading
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2,
+                              color: Colors.white))
+                      : const Icon(Icons.link_rounded),
+                  label: Text(_isEdit ? '保存并连接' : '连接并保存'),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 28),
-
-          Row(children: [
-            Text('服务器线路', style: _labelStyle),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text('点 + 新增一行，无需单独保存',
-                  style: TextStyle(
-                      fontSize: 12, color: Colors.grey.shade600)),
-            ),
-            IconButton(
-              tooltip: '新增线路',
-              onPressed: _addLine,
-              icon: const Icon(Icons.add_circle_outline),
-            ),
-          ]),
-          if (_lines.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Text('暂无线路，点右上角 + 添加',
-                  style: TextStyle(color: Colors.grey.shade500)),
-            )
-          else
-            ...List.generate(_lines.length, (i) => _buildLineCard(i)),
-        ],
+        ),
       ),
     );
   }
+
+  Widget _sectionTitle(String text) => Text(text, style: _labelStyle);
+
+  Widget _addLineButton() => Material(
+        color: const Color(0xFFEAF1FF),
+        shape: const CircleBorder(),
+        child: IconButton(
+          tooltip: '新增线路',
+          visualDensity: VisualDensity.compact,
+          onPressed: _addLine,
+          icon: const Icon(Icons.add, color: Color(0xFF4A7BD0), size: 20),
+        ),
+      );
+
+  Widget _emptyLinesHint() => Container(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: const Color(0xFFF7F8FA),
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: const Text('暂无线路，点击右侧 + 添加',
+            style: TextStyle(color: Color(0xFF8B95A5), fontSize: 12)),
+      );
 
   Widget _buildLineCard(int index) {
     final line = _lines[index];
@@ -342,30 +415,40 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
 
   List<ServerLine> _collectLines() {
     final result = <ServerLine>[];
-    // 编辑模式隐藏了主地址：不重复添加默认线路，线路以下方列表为准。
-    if (!widget.hideMainUrl) {
-      final mainHost = _urlController.text.trim();
-      if (mainHost.isNotEmpty) {
-        result.add(ServerLine(
-          id: 'default',
-          name: _remarkController.text.trim().isEmpty
-              ? '默认线路'
-              : _remarkController.text.trim(),
-          url: _fullUrl(mainHost, _protocol, _pathController.text),
-          remark: _remarkController.text.trim().isEmpty
-              ? null
-              : _remarkController.text.trim(),
-        ));
-      }
+    final mainHost = _urlController.text.trim();
+    // 新增页：主地址作为默认线路，再追加用户新增线路。
+    // 编辑页：主地址统一代表第一条线路，避免同一条线路重复保存；其余线路保留。
+    if (mainHost.isNotEmpty && (!_isEdit || _lines.isEmpty)) {
+      result.add(ServerLine(
+        id: 'default',
+        name: _remarkController.text.trim().isEmpty
+            ? '默认线路'
+            : _remarkController.text.trim(),
+        url: _fullUrl(mainHost, _protocol, _pathController.text),
+        remark: _remarkController.text.trim().isEmpty
+            ? null
+            : _remarkController.text.trim(),
+      ));
     }
-    for (final line in _lines) {
-      final host = line.urlController.text.trim();
+    for (var index = 0; index < _lines.length; index++) {
+      final line = _lines[index];
+      final host = index == 0 && _isEdit
+          ? mainHost
+          : line.urlController.text.trim();
       if (host.isEmpty) continue;
-      final remark = line.remarkController.text.trim();
+      final protocol = index == 0 && _isEdit ? _protocol : line.protocol;
+      final path = index == 0 && _isEdit
+          ? _pathController.text
+          : line.pathController.text;
+      final remark = index == 0 && _isEdit
+          ? _remarkController.text.trim().isEmpty
+              ? line.remarkController.text.trim()
+              : _remarkController.text.trim()
+          : line.remarkController.text.trim();
       result.add(ServerLine(
         id: line.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
         name: remark.isEmpty ? '线路 ${result.length + 1}' : remark,
-        url: _fullUrl(host, line.protocol, line.pathController.text),
+        url: _fullUrl(host, protocol, path),
         remark: remark.isEmpty ? null : remark,
       ));
     }

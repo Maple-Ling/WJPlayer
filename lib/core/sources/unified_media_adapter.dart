@@ -272,6 +272,7 @@ class EmbyUnifiedMediaAdapter implements UnifiedMediaAdapter {
     return sources.map((source) {
       Map<String, dynamic> stream(MediaStream value) => {
             'codec_name': value.codec,
+            'container': source.container,
             'language': value.language,
             'title': value.displayTitle ?? value.title,
             'is_external': value.isExternal,
@@ -288,6 +289,18 @@ class EmbyUnifiedMediaAdapter implements UnifiedMediaAdapter {
             'average_frame_rate': value.averageFrameRate,
             'color_space': value.colorSpace,
             'color_transfer': value.colorTransfer,
+            'color_range': value.colorRange,
+            'color_primaries': value.colorPrimaries,
+            'color_matrix': value.colorMatrix,
+            'aspect_ratio': value.aspectRatio,
+            'sample_aspect_ratio': value.sampleAspectRatio,
+            'sample_rate': value.sampleRate,
+            'bit_depth': value.bitDepth,
+            'channel_layout': value.channelLayout,
+            'time_base': value.timeBase,
+            'ref_frames': value.refFrames,
+            'gop_size': value.gopSize,
+            'frame_type': value.frameType,
           };
       final videos = source.mediaStreams.where((item) => item.isVideo).toList();
       final audios = source.mediaStreams.where((item) => item.isAudio).toList();
@@ -442,17 +455,61 @@ class FeiniuUnifiedMediaAdapter implements UnifiedMediaAdapter {
     final media =
         await backend.mediaDetails(server, entry.sourceEntry ?? _source(entry));
     final file = media.file;
+    final video = _normalizeStream(media.video);
+    final audios = media.audios.map(_normalizeStream).toList();
+    final subtitles = media.subtitles.map(_normalizeStream).toList();
     return [
       UnifiedMediaResource(
         id: entry.id,
         name: (file?['file_name'] ?? '默认资源').toString(),
         path: file?['path']?.toString(),
         size: (file?['size'] as num?)?.toInt(),
-        video: media.video,
-        audios: media.audios,
-        subtitles: media.subtitles,
+        video: video,
+        audios: audios,
+        subtitles: subtitles,
+        isFeiniu: true,
       ),
     ];
+  }
+
+  Map<String, dynamic> _normalizeStream(Map<String, dynamic>? source) {
+    final raw = source ?? const <String, dynamic>{};
+    dynamic first(List<String> keys) {
+      for (final key in keys) {
+        final value = raw[key];
+        if (value != null && value.toString().isNotEmpty) return value;
+      }
+      return null;
+    }
+    return {
+      ...raw,
+      'codec_name': first(['codec_name', 'codec', 'Codec', 'video_codec']),
+      'container': first(['container', 'format', 'file_format']),
+      'language': first(['language', 'lang', 'Language']),
+      'title': first(['title', 'name', 'display_title', 'displayName']),
+      'displayName': first(['displayName', 'display_name', 'title', 'name']),
+      'bitrate': first(['bitrate', 'bit_rate', 'BitRate']),
+      'width': first(['width', 'Width']),
+      'height': first(['height', 'Height']),
+      'sample_rate': first(['sample_rate', 'sampleRate', 'samplerate']),
+      'bit_depth': first(['bit_depth', 'bitDepth', 'bits_per_sample']),
+      'channels': first(['channels', 'channel_count', 'channelCount']),
+      'channel_layout': first(['channel_layout', 'channelLayout', 'layout']),
+      'aspect_ratio': first(['aspect_ratio', 'display_aspect_ratio', 'dar']),
+      'sample_aspect_ratio': first(['sample_aspect_ratio', 'sar']),
+      'pixel_format': first(['pixel_format', 'pix_fmt', 'pixelFormat']),
+      'color_range': first(['color_range', 'colorRange', 'range']),
+      'color_space': first(['color_space', 'colorSpace']),
+      'color_matrix': first(['color_matrix', 'colorMatrix']),
+      'color_transfer': first(['color_transfer', 'colorTransfer', 'transfer']),
+      'video_range': first(['video_range', 'videoRange', 'dynamic_range']),
+      'video_range_type': first(['video_range_type', 'videoRangeType', 'hdr_type']),
+      'real_frame_rate': first(['real_frame_rate', 'realFrameRate', 'fps']),
+      'average_frame_rate': first(['average_frame_rate', 'averageFrameRate']),
+      'gop_size': first(['gop_size', 'gopSize', 'gop']),
+      'time_base': first(['time_base', 'timeBase']),
+      'is_external': first(['is_external', 'isExternal']) ?? false,
+    };
   }
 
   UnifiedMediaEntry _entry(SourceEntry source, [Map<String, dynamic>? detail]) {

@@ -596,7 +596,9 @@ final rankingCrossServerMatchProvider = StreamProvider.autoDispose
       .where((s) =>
           (s.sourceKind == SourceKind.emby ||
               s.sourceKind == SourceKind.feiniu) &&
-          (s.authToken ?? '').isNotEmpty)
+          ((s.authToken ?? '').isNotEmpty ||
+              (s.sourceKind == SourceKind.feiniu &&
+                  (s.username ?? '').isNotEmpty)))
       .toList();
   if (targets.isEmpty) {
     yield const <ServerMatchInfo>[];

@@ -10,12 +10,14 @@ class ProtocolAddressField extends StatefulWidget {
     this.label = '服务器地址',
     this.hint = 'example.com:8096',
     this.onProtocolChanged,
+    this.initialProtocol = ServerProtocol.https,
   });
 
   final TextEditingController controller;
   final String label;
   final String hint;
   final ValueChanged<ServerProtocol>? onProtocolChanged;
+  final ServerProtocol initialProtocol;
 
   @override
   State<ProtocolAddressField> createState() => _ProtocolAddressFieldState();
@@ -32,6 +34,7 @@ class _ProtocolAddressFieldState extends State<ProtocolAddressField> {
   @override
   void initState() {
     super.initState();
+    _protocol = widget.initialProtocol;
     _consumeCompleteUrl(widget.controller.text);
     widget.controller.addListener(_handleInput);
   }

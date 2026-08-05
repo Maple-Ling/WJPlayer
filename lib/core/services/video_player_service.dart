@@ -121,6 +121,9 @@ class VideoPlayerService extends ChangeNotifier {
   double _dragStartVolume = 1.0;
   double _currentVolume = 1.0;
   double _currentBrightness = 1.0;
+  double? _entryVolume;
+  double? _entryBrightness;
+  Future<void>? _systemControlsHydration;
   double _dragStartBrightness = 1.0;
 
   /// 手势轴锁定：0=未定向, 1=水平(进度), 2=竖向(亮度/音量), -1=已判定但本次手势不响应。
@@ -1278,6 +1281,15 @@ class VideoPlayerService extends ChangeNotifier {
   /// 播放页进入时读取系统当前亮度/媒体音量，作为手势起点。
   Future<void> hydrateSystemControls() async {
     if (!Platform.isAndroid) return;
+    if (_systemControlsHydration != null) {
+      await _systemControlsHydration;
+      return;
+    }
+    _systemControlsHydration = _hydrateSystemControlsOnce();
+    await _systemControlsHydration;
+  }
+
+  Future<void> _hydrateSystemControlsOnce() async {
     try {
       final values = await Future.wait<num?>([
         _systemControls.invokeMethod<num>('getBrightness'),
@@ -1286,19 +1298,36 @@ class VideoPlayerService extends ChangeNotifier {
       if (values[0] != null) {
         _currentBrightness =
             values[0]!.toDouble().clamp(0.01, 1.0).toDouble();
+        _entryBrightness ??= _currentBrightness;
       }
       if (values[1] != null) {
         _currentVolume = values[1]!.toDouble().clamp(0.0, 1.0).toDouble();
+        _entryVolume ??= _currentVolume;
       }
       notifyListeners();
     } catch (_) {}
   }
 
-  /// 离开播放页时恢复系统默认亮度，避免同一个 FlutterActivity 后续页面继续沿用播放亮度。
-  Future<void> restoreSystemBrightness() async {
+  /// 离开播放页时恢复进入播放页前的系统亮度和媒体音量。
+  Future<void> restoreSystemControls() async {
     if (!Platform.isAndroid) return;
+    // 极快退出时也要等进入页的系统状态读取完成，避免快照尚未写入。
+    await hydrateSystemControls();
     try {
-      await _systemControls.invokeMethod<void>('restoreBrightness');
+      final brightness = _entryBrightness;
+      final volume = _entryVolume;
+      if (brightness != null) {
+        await _systemControls.invokeMethod<num>('setBrightness', {
+          'value': brightness,
+        });
+      } else {
+        await _systemControls.invokeMethod<void>('restoreBrightness');
+      }
+      if (volume != null) {
+        await _systemControls.invokeMethod<num>('setMediaVolume', {
+          'value': volume,
+        });
+      }
     } catch (_) {}
   }
 
@@ -1355,8 +1384,13 @@ class VideoPlayerService extends ChangeNotifier {
   /// 锁定/解锁屏幕。锁定/解锁后都短暂显示对应按钮再自动隐藏，避免解锁键长驻左上角破坏沉浸感。
   void toggleLock() {
     _isLocked = !_isLocked;
-    _showControls = true;
-    _startHideControlsTimer();
+    // 锁定时立即隐藏完整 UI；解锁时恢复完整 UI，锁定按钮由覆盖层单独保留。
+    _showControls = !_isLocked;
+    if (_showControls) {
+      _startHideControlsTimer();
+    } else {
+      _cancelHideControlsTimer();
+    }
     notifyListeners();
   }
 
@@ -1366,10 +1400,6 @@ class VideoPlayerService extends ChangeNotifier {
     if (_isLocked || !isInitialized) return;
     _isDragging = true;
     _isScrubbingPosition = false;
-    // 触摸操作即使从隐藏 HUD 开始，也必须让原有进度条实时出现。
-    if (!_showControls) {
-      _showControls = true;
-    }
     _gestureAxis = 0;
     _dragStartX = details.globalPosition.dx;
     _dragStartY = details.globalPosition.dy;
@@ -1379,6 +1409,7 @@ class VideoPlayerService extends ChangeNotifier {
     _dragPreviewPosition = position;
     _dragStartVolume = volume;
     _dragStartBrightness = _currentBrightness;
+    _lastHapticPercent = -1;
     _cancelHideControlsTimer();
     notifyListeners();
   }
@@ -1407,6 +1438,10 @@ class VideoPlayerService extends ChangeNotifier {
         final action = activeVerticalAction;
         _gestureAxis = (action == 'brightness' || action == 'volume') ? 2 : -1;
         _isScrubbingPosition = false;
+        if (_gestureAxis == 2) {
+          _showControls = false;
+          _cancelHideControlsTimer();
+        }
       }
       if (_gestureAxis == -1) return;
     }
@@ -1433,19 +1468,26 @@ class VideoPlayerService extends ChangeNotifier {
             (_dragStartBrightness + delta).clamp(0.0, 1.0).toDouble();
         if ((target - _currentBrightness).abs() >= 0.01) {
           unawaited(setBrightness(target));
-          _hapticTick();
+          _hapticTick(target);
         }
       } else {
         final target = (_dragStartVolume + delta).clamp(0.0, 1.0).toDouble();
         if ((target - volume).abs() >= 0.01) {
           unawaited(setVolume(target));
-          _hapticTick();
+          _hapticTick(target);
         }
       }
     }
   }
 
-  void onDragEnd(DragEndDetails details) {
+  void hideControlsTemporarily() {
+    if (_isLocked || !_showControls) return;
+    _showControls = false;
+    _cancelHideControlsTimer();
+    notifyListeners();
+  }
+
+
     if (!_isDragging) return;
     _isDragging = false;
     // 仅在确实处于进度拖动时才 seek；竖向/无效手势保持原位，避免松手误跳。
@@ -1461,13 +1503,16 @@ class VideoPlayerService extends ChangeNotifier {
 
   /// 竖向调节亮度/音量时按步进触发轻微震动。
   DateTime? _lastHapticTick;
+  int _lastHapticPercent = -1;
 
-  void _hapticTick() {
+  void _hapticTick(double value) {
+    final percent = (value * 100).round().clamp(0, 100);
+    final tick = percent ~/ 5;
+    if (tick == _lastHapticPercent) return;
+    _lastHapticPercent = tick;
     final now = DateTime.now();
     if (_lastHapticTick != null &&
-        now.difference(_lastHapticTick!).inMilliseconds < 60) {
-      return;
-    }
+        now.difference(_lastHapticTick!).inMilliseconds < 45) return;
     _lastHapticTick = now;
     HapticFeedback.selectionClick();
   }

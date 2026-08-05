@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -14,7 +15,6 @@ import '../../../core/providers/unified_resource_provider.dart';
 import '../../../core/providers/server_card_stats_provider.dart';
 import '../../../core/providers/server_providers.dart';
 import '../../../core/providers/watch_history_providers.dart';
-import '../../../core/providers/unified_resource_provider.dart';
 import '../../../core/services/watch_history/watch_history_models.dart';
 import '../../../core/sources/media_source_backend.dart';
 import '../../../core/sources/source_playback.dart';
@@ -482,27 +482,36 @@ class _UnifiedMediaDetailScreenState
       _detailCache[cacheKey] = detail;
       _detail = detail;
       await _loadExternalDetail(detail.entry);
-      // 加载作用域内观看记录（Q4 续播进度 / Q5 自动滚动）
       final scopeKey = buildWatchHistoryScopeKey(widget.server);
       if (scopeKey != null) {
         _scopeRecords = await ref.read(watchHistoryProvider).loadScope(scopeKey);
-        // 沿用该媒体上次播放使用的内核（需求：记录存在就记忆内核）。
-        for (final record in _scopeRecords) {
-          final core = record.playerCore;
-          if (core != null && core.isNotEmpty) {
-            _core = normalizePlayerCore(core);
-            break;
-          }
+        final matching = _scopeRecords.where((record) =>
+            record.sourceEntryId == widget.entry.id ||
+            record.lastEmbyItemId == widget.entry.id);
+        final record = matching.isNotEmpty ? matching.first : null;
+        final core = record?.playerCore;
+        if (core != null && core.isNotEmpty) {
+          _core = normalizePlayerCore(core);
+        } else {
+          _core = normalizePlayerCore(ref.read(playerCoreProvider));
         }
       }
       if (detail.seasons.isNotEmpty) {
+        final latest = _latestPlayedEpisode();
+        final latestSeason = latest.season;
         final preferred = detail.seasons.where((season) {
           final id = season.id.contains(':')
               ? season.id.substring(season.id.indexOf(':') + 1)
               : season.id;
           return season.id == detail.initialSeasonId || id == detail.initialSeasonId;
         }).firstOrNull;
-        await _selectSeason((preferred ?? detail.seasons.first).id);
+        final historySeason = latestSeason == null
+            ? null
+            : detail.seasons.where((season) =>
+                _seasonNumber(season.name) == latestSeason ||
+                _seasonNumber(season.id) == latestSeason).firstOrNull;
+        await _selectSeason(
+            (historySeason ?? preferred ?? detail.seasons.first).id);
       } else {
         _selectedEntry = detail.entry;
         await _loadResources(detail.entry);
@@ -564,8 +573,12 @@ class _UnifiedMediaDetailScreenState
       final preferred = episodes
           .where((episode) => episode.id == detail.initialEntryId)
           .firstOrNull;
-      final selected =
-          preferred ?? (episodes.isEmpty ? null : episodes.first);
+      final latest = _latestPlayedEpisode();
+      final historyEpisode = latest.episode == null
+          ? null
+          : episodes.where((episode) =>
+              (episode.mediaItem?.indexNumber ?? episode.indexNumber) == latest.episode).firstOrNull;
+      final selected = historyEpisode ?? preferred ?? (episodes.isEmpty ? null : episodes.first);
       setState(() {
         _episodes = episodes;
         _selectedEntry = selected;
@@ -695,19 +708,33 @@ class _UnifiedMediaDetailScreenState
   }
 
   int _lastWatchedEpisodeIndex(List<UnifiedMediaEntry> episodes) {
-    // 记录按最近播放排序，取第一个命中本季的记录对应索引。
-    final wantedSeason = int.tryParse(_selectedSeasonId ?? '') ?? -1;
+    // 优先取当前季最近播放记录；若当前季没有记录，则取全剧最近播放的季集，
+    // 由调用方先切到对应季。这里保留当前季无记录时从第一集开始的兜底。
+    final wantedSeason = _seasonNumber(_selectedSeasonId);
     for (final record in _scopeRecords) {
-      final seasonMatch = wantedSeason < 0 ||
-          (record.seasonNumber ?? -1) == wantedSeason;
-      if (!seasonMatch || record.episodeNumber == null) continue;
-      for (var i = 0; i < episodes.length; i++) {
-        final ep = episodes[i];
-        final epNum = ep.mediaItem?.indexNumber ?? ep.indexNumber;
-        if (epNum == record.episodeNumber) return i;
-      }
+      if (wantedSeason != null && record.seasonNumber != wantedSeason) continue;
+      final episodeNumber = record.episodeNumber;
+      if (episodeNumber == null) continue;
+      final index = episodes.indexWhere((ep) =>
+          (ep.mediaItem?.indexNumber ?? ep.indexNumber) == episodeNumber);
+      if (index >= 0) return index;
     }
     return 0;
+  }
+
+  int? _seasonNumber(String? seasonId) {
+    if (seasonId == null) return null;
+    final match = RegExp(r'(?:season:)?(\d+)$').firstMatch(seasonId);
+    return int.tryParse(match?.group(1) ?? seasonId);
+  }
+
+  ({int? season, int? episode}) _latestPlayedEpisode() {
+    for (final record in _scopeRecords) {
+      if (record.seasonNumber != null && record.episodeNumber != null) {
+        return (season: record.seasonNumber, episode: record.episodeNumber);
+      }
+    }
+    return (season: null, episode: null);
   }
 
   String _resumeLabel() {    final ticks = _resumePositionTicks;
@@ -728,6 +755,12 @@ class _UnifiedMediaDetailScreenState
   Future<void> _play() async {
     final entry = _selectedEntry;
     if (entry == null) return;
+    // 点击播放即刻锁定横屏，网络解析在横屏播放器内等待，避免竖屏停留。
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     // Emby 走 /player/:id（内部自行解析媒体源，与外部详情页同路径，稳定可播）；
     // 其它源（飞牛/网盘）走 /source-player（source-player 依赖 MediaSourceBackend.resolvePlay）。
     if (widget.server.sourceKind == SourceKind.emby) {
@@ -762,6 +795,7 @@ class _UnifiedMediaDetailScreenState
           preferredAudioListIndex:
               _resource?.audios.isNotEmpty == true ? _audioIndex : null,
           preferredSubtitleListIndex: _subtitleIndex,
+          logoUrl: _externalDetail?.logoUrl,
           playlist: _episodes
               .map((item) => item.sourceEntry)
               .whereType<SourceEntry>()
@@ -927,7 +961,9 @@ class _UnifiedMediaDetailScreenState
                 if (detail.seasons.isNotEmpty) ...[
                   const SizedBox(height: 18),
                   _buildSeasonSelector(detail.seasons),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 8),
+                  _buildEpisodeRangeSelector(),
+                  const SizedBox(height: 10),
                   _buildEpisodes(),
                 ],
                 const SizedBox(height: 20),
@@ -1071,6 +1107,42 @@ class _UnifiedMediaDetailScreenState
                     style: const TextStyle(fontWeight: FontWeight.w700)),
               ))
           .toList(),
+    );
+  }
+
+  /// 当季分段选择：每 10 集一个区间。
+  Widget _buildEpisodeRangeSelector() {
+    if (_episodes.isEmpty) return const SizedBox.shrink();
+    final ranges = <int>[
+      for (var start = 1; start <= _episodes.length; start += 10) start,
+    ];
+    final current = _selectedEntry == null
+        ? 1
+        : (_episodes.indexWhere((e) => e.id == _selectedEntry!.id) + 1).clamp(1, _episodes.length);
+    final selectedStart = ((current - 1) ~/ 10) * 10 + 1;
+    return SizedBox(
+      height: 38,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: ranges.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 6),
+        itemBuilder: (_, index) {
+          final start = ranges[index];
+          final end = (start + 9).clamp(start, _episodes.length);
+          return ChoiceChip(
+            label: Text('$start-$end'),
+            selected: start == selectedStart,
+            onSelected: (_) {
+              final target = (start - 1).clamp(0, _episodes.length - 1);
+              _episodeController.animateTo(
+                target * 228.0,
+                duration: const Duration(milliseconds: 240),
+                curve: Curves.easeOutCubic,
+              );
+            },
+          );
+        },
+      ),
     );
   }
 
@@ -1681,41 +1753,48 @@ class _UnifiedMediaDetailScreenState
     final resource = _resource;
     if (resource == null) {
       return const SizedBox(
-        height: 120,
-        child: Center(child: Text('服务端未返回媒体流信息，播放后仍可由内核识别轨道')),
-      );
+          height: 120, child: Center(child: Text('暂无媒体流信息')));
     }
+    String value(dynamic item) => item == null ? '' : '$item';
     final cards = <Widget>[
       if (resource.video != null)
         _infoCard('视频', Icons.videocam_rounded, [
-          ('编码', _videoDisplay(resource.video!)),
-          ('画面比例', _aspectRatio(resource.video!)),
+          ('编码格式', _videoDisplay(resource.video!)),
+          ('封装格式', value(resource.video!['container'])),
           ('分辨率', _resolution(resource.video!)),
+          ('SAR', value(resource.video!['sample_aspect_ratio'])),
+          ('DAR', value(resource.video!['aspect_ratio'] ?? _aspectRatio(resource.video!))),
           ('帧率', _frameRate(resource.video!)),
           ('码率', _bitrate(resource.video!['bitrate'])),
-          (
-            '色深/色彩',
-            _colorDepth(resource.video!)
-          ),
+          ('像素格式', value(resource.video!['pixel_format'])),
+          ('位深度', resource.video!['bit_depth'] == null ? '' : '${resource.video!['bit_depth']} bit'),
+          ('色彩范围', value(resource.video!['color_range'])),
+          ('色彩空间', value(resource.video!['color_space'])),
+          ('色彩矩阵', value(resource.video!['color_matrix'])),
+          ('色域/传输', value(resource.video!['color_transfer'])),
+          ('HDR类型', value(resource.video!['video_range_type'])),
+          ('GOP长度', value(resource.video!['gop_size'])),
+          ('时间基', value(resource.video!['time_base'])),
         ]),
       for (var i = 0; i < resource.audios.length; i++)
         _infoCard('音频 ${i + 1}', Icons.audiotrack_rounded, [
-          ('编码', resource.audios[i]['codec_name']),
-          ('语言', resource.audios[i]['language']),
-          ('标题', resource.audios[i]['title']),
-          ('声道', resource.audios[i]['channels']),
+          ('编码格式', value(resource.audios[i]['codec_name'])),
+          ('语言', value(resource.audios[i]['language'])),
+          ('采样率', resource.audios[i]['sample_rate'] == null ? '' : '${resource.audios[i]['sample_rate']} Hz'),
+          ('位深度', resource.audios[i]['bit_depth'] == null ? '' : '${resource.audios[i]['bit_depth']} bit'),
+          ('声道', value(resource.audios[i]['channel_layout'] ?? resource.audios[i]['channels'])),
           ('码率', _bitrate(resource.audios[i]['bitrate'])),
         ]),
       for (var i = 0; i < resource.subtitles.length; i++)
         _infoCard('字幕 ${i + 1}', Icons.subtitles_rounded, [
-          ('编码', resource.subtitles[i]['codec_name']),
-          ('语言', resource.subtitles[i]['language']),
-          ('标题', resource.subtitles[i]['title']),
+          ('编码', value(resource.subtitles[i]['codec_name'])),
+          ('语言', value(resource.subtitles[i]['language'])),
+          ('标题', value(resource.subtitles[i]['title'])),
           ('外挂', resource.subtitles[i]['is_external'] == true ? '是' : '否'),
         ]),
     ];
     return SizedBox(
-      height: 240,
+      height: 310,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: cards.length,
@@ -1743,21 +1822,32 @@ class _UnifiedMediaDetailScreenState
           Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
         ]),
         const SizedBox(height: 12),
-        for (final row in visible)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              SizedBox(
-                width: 60,
-                child:
-                    Text(row.$1, style: Theme.of(context).textTheme.bodySmall),
-              ),
-              Expanded(
-                child: Text('${row.$2}',
-                    maxLines: 2, overflow: TextOverflow.ellipsis),
-              ),
-            ]),
+        Expanded(
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final row in visible)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      SizedBox(
+                        width: 60,
+                        child: Text(row.$1,
+                            style: Theme.of(context).textTheme.bodySmall),
+                      ),
+                      Expanded(
+                        child: Text('${row.$2}',
+                            maxLines: 3, overflow: TextOverflow.ellipsis),
+                      ),
+                    ]),
+                  ),
+              ],
+            ),
           ),
+        ),
       ]),
     );
   }

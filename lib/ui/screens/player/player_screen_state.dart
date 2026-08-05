@@ -109,9 +109,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     }
     final mode = ref.read(aspectRatioProvider);
     if (mode == '拉伸') {
-      return Offset.zero & containerSize;
+      ref.read(aspectRatioProvider.notifier).state = '铺满';
     }
-    final safeMode = mode == '全屏' ? '铺满' : mode;
+    final safeMode = mode == '全屏' || mode == '拉伸' ? '铺满' : mode;
     final ratio = _resolveDisplayAspectRatio();
     if (ratio == null || ratio <= 0) {
       return Offset.zero & containerSize;
@@ -140,6 +140,31 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     return Rect.fromLTWH(0, top, containerSize.width, contentHeight);
   }
 
+  double? _streamDisplayAspectRatio(MediaStream? stream) {
+    if (stream == null || stream.width == null || stream.height == null ||
+        stream.width! <= 0 || stream.height! <= 0) return null;
+    final dar = stream.aspectRatio;
+    if (dar != null) {
+      final darMatch = RegExp(r'^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$').firstMatch(dar);
+      if (darMatch != null) {
+        final w = double.tryParse(darMatch.group(1)!);
+        final h = double.tryParse(darMatch.group(2)!);
+        if (w != null && h != null && h > 0) return w / h;
+      }
+      final numeric = double.tryParse(dar);
+      if (numeric != null && numeric > 0) return numeric;
+    }
+    final sar = stream.sampleAspectRatio;
+    if (sar != null) {
+      final match = RegExp(r'^(\d+):(\d+)$').firstMatch(sar);
+      final sw = match == null ? null : double.tryParse(match.group(1)!);
+      final sh = match == null ? null : double.tryParse(match.group(2)!);
+      if (sw != null && sh != null && sh > 0) {
+        return stream.width! / stream.height! * sw / sh;
+      }
+    }
+    return stream.width! / stream.height!;
+  }
   double? _resolveDisplayAspectRatio() {
     final aspectMode = ref.read(aspectRatioProvider);
     switch (aspectMode) {
@@ -296,6 +321,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   Future<void> _initializePlayer({Duration? startPositionOverride}) async {
+    // 路由未显式指定时，先恢复该媒体上次手动选择的内核；没有覆盖才使用系统默认。
+    if (_sourceCoreOverride == null && _activeSourcePlay == null) {
+      final remembered =
+          await PlaybackPrefsStore.instance.readPlayerCore(widget.itemId);
+      if (remembered != null && mounted) _sourceCoreOverride = remembered;
+    }
     // 内核/解码/线路重建必须把旧内核的当前位置作为初始化起点传进去；不能先从
     // 服务端续播点初始化再补 seek，慢速大文件会在补 seek 前开始播放并覆盖本地进度。
     final sourcePlay = _activeSourcePlay;
@@ -341,12 +372,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     final mediaSource = selection.mediaSource;
     _sanitizeSelectionState(mediaSource);
     final videoStream = mediaSource?.primaryVideoStream;
-    _initialVideoAspectRatio = (videoStream?.width != null &&
-            videoStream?.height != null &&
-            videoStream!.width! > 0 &&
-            videoStream.height! > 0)
-        ? videoStream.width! / videoStream.height!
-        : null;
+    _initialVideoAspectRatio = _streamDisplayAspectRatio(videoStream);
 
     final videoUrl = api.playback.getVideoStreamUrl(
       selection.primaryRequest.itemId,
@@ -573,8 +599,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       },
     );
 
-    await _playerService.play();
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
 
+    await _playerService.play();
     // L0：回填推断出的取流形态（下次播放即可据持久化值直接调档）。
     if (inferredKind != null) {
       final server = ref.read(currentServerProvider);
@@ -651,14 +682,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         },
         streamUrlTtl: const Duration(minutes: 3),
       );
-      await _playerService.play();
-      _startSourceProgressReporting(sp);
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
       SystemChrome.setPreferredOrientations([
         DeviceOrientation.landscapeLeft,
         DeviceOrientation.landscapeRight,
       ]);
-      // 外挂字幕（ani-rss 等源带回）：加载首条作默认；内封由内核原生读取。
+      await _playerService.play();
+      _startSourceProgressReporting(sp);
       if (play.subtitles.isNotEmpty) {
         try {
           await _playerService.loadLibassSubtitle(play.subtitles.first.url);
@@ -1736,7 +1766,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     final sp = _activeSourcePlay;
     if (sp != null) unawaited(_reportSourceProgress(sp, force: true));
     unawaited(PrefetchProxy.instance.stop());
-    unawaited(_playerService.restoreSystemBrightness());
+    unawaited(_playerService.restoreSystemControls());
     _playerService.dispose();
     _longPressTimer?.cancel();
     _gestureHintTimer?.cancel();
@@ -1806,6 +1836,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
               Positioned.fill(
                 child: PlayerOverlay(
                   visible: _playerService.showControls,
+                  isLocked: _playerService.isLocked,
                   isPlaying: _playerService.isPlaying,
                   position: _playerService.position,
                   duration: _playerService.duration,
@@ -1816,13 +1847,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   serverName: server?.name ?? '',
                   serverLine: lineName,
                   logoText: _logoText(item),
-                  logoImage: _logoImage(item),
+                  logoImage: _activeSourcePlay?.logoUrl?.isNotEmpty == true
+                      ? NetworkImage(_activeSourcePlay!.logoUrl!)
+                      : _logoImage(item),
                   mediaInfoTitle: item?.name ?? '',
                   encoder: _mediaEncoder(mediaSource),
                   resolution: _mediaResolution(mediaSource),
                   frameRate: _mediaFrameRate(mediaSource),
                   bitrate: _mediaBitrate(mediaSource),
-                  initialDanmakuEnabled: ref.watch(danmakuEnabledProvider),
+                  mediaSize: _mediaSize(mediaSource),
                   initialDanmakuDeduplication: ref.watch(danmakuDedupProvider),
                   initialAutoSkip: ref.watch(autoSkipSegmentsProvider),
                   initialDanmakuOpacity: ref.watch(danmakuOpacityProvider),
@@ -1920,7 +1953,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   Widget _buildPlayerBody(MediaItem? item, BoxConstraints constraints) {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: _playerService.toggleControls,
+      onTap: _playerService.isLocked
+          ? null
+          : _playerService.toggleControls,
       onDoubleTapDown: _onDoubleTapDown,
       onLongPressStart: (_) => _onLongPressStart(),
       onLongPressEnd: (_) => _onLongPressEnd(),
@@ -2259,7 +2294,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   void _onScaleEnd(ScaleEndDetails details) {
     if (!_gestureIsZoom) {
+      final adjustingLevel = _playerService.isAdjustingLevel;
       _playerService.onDragEnd(DragEndDetails());
+      if (adjustingLevel && !_playerService.isLocked) {
+        _playerService.hideControlsTemporarily();
+      }
     }
     _gestureIsZoom = false;
   }
@@ -2313,7 +2352,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   Widget _buildGestureIndicator() {
     String label;
-    IconData icon;
     double value;
 
     if (_playerService.activeVerticalAction == 'brightness') {
@@ -2327,7 +2365,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     }
 
     return Align(
-      alignment: const Alignment(0, -0.5),
+      alignment: const Alignment(0, -0.72),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -2390,7 +2428,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   Widget _buildLongPressIndicator() => Align(
-        alignment: const Alignment(0, -0.5),
+        alignment: const Alignment(0, -0.72),
         child: IgnorePointer(
           child: Text(
             _formatSpeed(ref.read(longPressSpeedProvider)),
@@ -2646,11 +2684,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 onPressed: () => context.pop(),
               ),
               // 媒体 logo 图（poster 缩略图），替代文字标题
-              if (item != null && _mediaLogoUrl(item) != null)
+              if (item != null && _currentLogoUrl(item) != null)
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: MediaImage(
-                    imageUrl: _mediaLogoUrl(item)!,
+                    imageUrl: _currentLogoUrl(item)!,
                     width: 40,
                     height: 40,
                     fit: BoxFit.cover,
@@ -2800,15 +2838,42 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       ],
     );
   }
+  String? _currentLogoUrl(MediaItem item) {
+    final sourceLogo = _activeSourcePlay?.logoUrl;
+    if (sourceLogo?.isNotEmpty == true) return sourceLogo;
+    return _mediaLogoUrl(item);
+  }
+
   String? _mediaLogoUrl(MediaItem item) {
     final api = ref.read(apiClientProvider);
     try {
+      // 播放器左上角必须优先使用 Logo（艺术字），不能把海报当 Logo。
+      // 剧集/单集可能只在父级或系列上有 Logo，MediaItem 已在解析层回填对应 ID/tag。
+      final logoItemId = item.logoItemId;
+      final logoTag = item.logoImageTag;
+      if (logoItemId?.isNotEmpty == true && logoTag?.isNotEmpty == true) {
+        return api.image.getLogoImageUrl(
+          logoItemId!,
+          tag: logoTag,
+          maxWidth: 360,
+        );
+      }
       if (item.primaryImageTag != null) {
         return api.image.getPrimaryImageUrl(item.id,
             tag: item.primaryImageTag, maxWidth: 160);
       }
+      if (item.parentPrimaryImageItemId?.isNotEmpty == true &&
+          item.parentPrimaryImageTag?.isNotEmpty == true) {
+        return api.image.getPrimaryImageUrl(item.parentPrimaryImageItemId!,
+            tag: item.parentPrimaryImageTag, maxWidth: 160);
+      }
+      if (item.seriesId?.isNotEmpty == true &&
+          item.seriesPrimaryImageTag?.isNotEmpty == true) {
+        return api.image.getPrimaryImageUrl(item.seriesId!,
+            tag: item.seriesPrimaryImageTag, maxWidth: 160);
+      }
       if (item.backdropImageTag != null) {
-        return api.image.getBackdropImageUrl(item.id,
+        return api.image.getBackdropImageUrl(item.backdropItemId ?? item.id,
             tag: item.backdropImageTag, maxWidth: 160);
       }
     } catch (_) {}
@@ -3826,29 +3891,63 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         label: '标题',
         subLabel: ref.read(currentPlayingItemProvider)?.name ?? widget.itemId,
       ),
-      capsuleInfo(label: '编码器', subLabel: encoder),
+      capsuleInfo(label: '编码格式', subLabel: encoder),
+      if (resource != null && video['container'] != null)
+        capsuleInfo(label: '封装格式', subLabel: '${video['container']}'),
       capsuleInfo(label: '分辨率', subLabel: resolution),
+      if (video['sample_aspect_ratio'] != null)
+        capsuleInfo(label: 'SAR', subLabel: '${video['sample_aspect_ratio']}'),
+      if (video['aspect_ratio'] != null)
+        capsuleInfo(label: 'DAR', subLabel: '${video['aspect_ratio']}'),
       capsuleInfo(label: '帧率', subLabel: frameRate),
-      capsuleInfo(label: '码率', subLabel: bitrate),
+      capsuleInfo(label: '视频码率', subLabel: bitrate),
+      if (video['pixel_format'] != null)
+        capsuleInfo(label: '像素格式', subLabel: '${video['pixel_format']}'),
+      if (video['bit_depth'] != null)
+        capsuleInfo(label: '位深度', subLabel: '${video['bit_depth']} bit'),
+      if (video['color_range'] != null)
+        capsuleInfo(label: '色彩范围', subLabel: '${video['color_range']}'),
+      if (video['color_space'] != null)
+        capsuleInfo(label: '色彩空间', subLabel: '${video['color_space']}'),
+      if (video['color_matrix'] != null)
+        capsuleInfo(label: '色彩矩阵', subLabel: '${video['color_matrix']}'),
+      if (video['color_transfer'] != null)
+        capsuleInfo(label: 'HDR/传输', subLabel: '${video['color_transfer']}'),
+      if (video['video_range_type'] != null)
+        capsuleInfo(label: 'HDR类型', subLabel: '${video['video_range_type']}'),
+      if (video['gop_size'] != null)
+        capsuleInfo(label: 'GOP长度', subLabel: '${video['gop_size']}'),
+      if (video['time_base'] != null)
+        capsuleInfo(label: '时间基', subLabel: '${video['time_base']}'),
     ];
 
-    if (audioTracks.isNotEmpty) {
-      items.add(capsuleInfo(
-        label: '音频',
-        subLabel: _trackLabel(audioTracks.first),
-      ));
+    for (var i = 0; i < audioTracks.length; i++) {
+      final audio = audioTracks[i];
+      final details = <String>[
+        if (audio['codec_name'] != null) '${audio['codec_name']}',
+        if (audio['sample_rate'] != null) '${audio['sample_rate']} Hz',
+        if (audio['bit_depth'] != null) '${audio['bit_depth']} bit',
+        if (audio['channels'] != null) '${audio['channels']} ch',
+        if (audio['bitrate'] != null) _bitrateLabel(audio['bitrate']),
+      ].where((s) => s.isNotEmpty).join(' · ');
+      items.add(capsuleInfo(label: '音频 ${i + 1}', subLabel: details.isEmpty ? _trackLabel(audio) : details));
     }
-    if (subtitleTracks.isNotEmpty) {
-      items.add(capsuleInfo(
-        label: '字幕',
-        subLabel: _trackLabel(subtitleTracks.first),
-      ));
+    for (var i = 0; i < subtitleTracks.length; i++) {
+      items.add(capsuleInfo(label: '字幕 ${i + 1}', subLabel: _trackLabel(subtitleTracks[i])));
     }
 
     _showCapsuleMenu(title: '媒体信息', items: items);
   }
 
   // ==================== 新播放器控制层适配辅助 ====================
+
+  String _bitrateLabel(dynamic value) {
+    final n = value is num ? value.toDouble() : double.tryParse('$value') ?? 0;
+    if (n <= 0) return '';
+    return n >= 1000000
+        ? '${(n / 1000000).toStringAsFixed(1)} Mbps'
+        : '${(n / 1000).toStringAsFixed(0)} kbps';
+  }
 
   String _episodeLabel(MediaItem? item) {
     if (item == null) return '';
@@ -3887,16 +3986,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           : item?.name ?? '';
 
   ImageProvider<Object>? _logoImage(MediaItem? item) {
-    final itemId = item?.logoItemId;
-    final tag = item?.logoImageTag;
-    if (itemId == null || itemId.isEmpty || tag == null || tag.isEmpty) {
-      return null;
-    }
-    final url = ref.read(apiClientProvider).image.getLogoImageUrl(
-          itemId,
-          tag: tag,
-          maxWidth: 360,
-        );
+    if (item == null) return null;
+    final url = _mediaLogoUrl(item);
     return url == null || url.isEmpty ? null : NetworkImage(url);
   }
 
@@ -3921,7 +4012,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     return '${(value / 1000000).toStringAsFixed(1)} Mbps';
   }
 
-  int _currentEpisodeNumber(MediaItem? item) {
+  String _mediaSize(MediaSource? source) {
+    final bytes = source?.size ?? 0;
+    if (bytes <= 0) return '';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    var value = bytes.toDouble();
+    var unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit++;
+    }
+    return '${value.toStringAsFixed(value >= 100 ? 0 : 2)} ${units[unit]}';
+  }
+
     final source = _activeSourcePlay;
     if (source != null && source.playlist.isNotEmpty) {
       final index = source.playlistIndex;
@@ -3961,9 +4064,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   List<String> _supportedPlayerCores() {
     if (Platform.isAndroid) {
-      return const ['exoPlayer', 'nativeMpv', 'mpv'];
+      return const ['exoPlayer', 'nativeMpv'];
     }
-    return const ['mpv', 'exoPlayer'];
+    return const ['mpv'];
   }
 
   List<PopupLineOption> _lineOptions(ServerConfig? server) {
@@ -4569,6 +4672,18 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   void _showAggregationCapsule() {
+    if (_overlayAggregateSources(
+      ref.read(currentPlayingItemProvider),
+      ref.read(playbackInfoProvider(widget.itemId)).valueOrNull,
+      _currentMediaSource(
+        ref.read(currentPlayingItemProvider),
+        ref.read(playbackInfoProvider(widget.itemId)).valueOrNull,
+      ),
+      const [],
+    ).isEmpty) {
+      _showAggregationSearch();
+      return;
+    }
     _showCapsuleMenu(
       title: '聚合搜索 · 更多资源',
       items: [
@@ -4991,11 +5106,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   Future<void> _switchCore(String core) async {
     final savedPosition = _playerService.position;
     final normalizedCore = normalizePlayerCore(core);
-    if (_activeSourcePlay != null || widget.playerCoreOverride != null) {
-      _sourceCoreOverride = normalizedCore;
-    } else {
-      ref.read(playerCoreProvider.notifier).state = normalizedCore;
-    }
+    // 播放器界面修改只写当前媒体覆盖，不触碰系统默认内核。
+    _sourceCoreOverride = normalizedCore;
+    await PlaybackPrefsStore.instance.writePlayerCore(widget.itemId, normalizedCore);
     await _playerService.dispose();
     _playerService = VideoPlayerService();
     _activePlayerService = _playerService;

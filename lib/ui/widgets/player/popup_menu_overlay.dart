@@ -721,11 +721,10 @@ class PopupAspectRatioMenu extends StatelessWidget {
   final String selectedAspect;
   final ValueChanged<String> onAspectSelected;
 
-  /// 比例选项精简为 3 项：自适应 / 裁切铺满 / 等比填充（双向拉伸，禁单向）。
+  /// 比例选项只保留自适应 / 裁切铺满。
   static const values = <MapEntry<String, String>>[
     MapEntry('自动', '自适应'),
     MapEntry('铺满', '裁切铺满'),
-    MapEntry('拉伸', '等比填充'),
   ];
 
   @override
@@ -814,11 +813,15 @@ class PopupMediaInfoMenu extends StatelessWidget {
 
   Widget _audioPill() {
     final unified = unifiedResource;
-    final label = unified != null
-        ? unified.audios.isNotEmpty
-            ? _trackLabel(unified.audios.first, unified.isFeiniu)
-            : '无音轨'
-        : (selectedAudioTrack ?? '无音轨');
+    // 以播放器当前已选轨道为准；统一资源只作为播放器尚未上报轨道时的回退。
+    // 不能固定显示 unified.audios.first，否则切换资源/音轨后会一直显示共享资源首轨。
+    final label = selectedAudioTrack?.trim().isNotEmpty == true
+        ? selectedAudioTrack!
+        : unified != null
+            ? unified.audios.isNotEmpty
+                ? _trackLabel(unified.audios.first, unified.isFeiniu)
+                : '无音轨'
+            : '无音轨';
     return PopupMenuPill(label: '当前音频', sub: label);
   }
 

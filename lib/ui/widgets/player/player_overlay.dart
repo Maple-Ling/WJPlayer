@@ -18,6 +18,7 @@ class PlayerOverlay extends StatefulWidget {
   const PlayerOverlay({
     super.key,
     required this.visible,
+    required this.isLocked,
     required this.isPlaying,
     required this.position,
     required this.duration,
@@ -40,7 +41,7 @@ class PlayerOverlay extends StatefulWidget {
     required this.resolution,
     required this.frameRate,
     required this.bitrate,
-    required this.initialDanmakuEnabled,
+    this.mediaSize = '',
     required this.initialDanmakuDeduplication,
     required this.initialAutoSkip,
     required this.initialDanmakuOpacity,
@@ -98,6 +99,7 @@ class PlayerOverlay extends StatefulWidget {
   });
 
   final bool visible;
+  final bool isLocked;
   final bool isPlaying;
   final Duration position;
   final Duration duration;
@@ -122,8 +124,7 @@ class PlayerOverlay extends StatefulWidget {
   final String resolution;
   final String frameRate;
   final String bitrate;
-
-  final bool initialDanmakuEnabled;
+  final String mediaSize;
   final bool initialDanmakuDeduplication;
   final bool initialAutoSkip;
   final double initialDanmakuOpacity;
@@ -695,6 +696,9 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
 
   @override
   Widget build(BuildContext context) {
+    // 锁定态禁止控制层抢占空白区域，底层视频 GestureDetector 继续接收播放手势；
+    // 解锁态空白点击隐藏 UI，按钮区域仍由自身命中。
+    final overlayInteractive = isUiVisible && !widget.isLocked;
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth.isFinite
@@ -714,7 +718,7 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
             // visible=true 时由下方 GestureDetector 接管空白处点击。
             Positioned.fill(
               child: IgnorePointer(
-                ignoring: !isUiVisible,
+                ignoring: !overlayInteractive,
                 child: GestureDetector(
                   behavior: HitTestBehavior.translucent,
                   onTap: () {
@@ -740,10 +744,24 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                     fit: StackFit.expand,
                     children: [
                       Positioned(
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        child: TopBar(
+                        left: 16,
+                        top: 72,
+                        child: IgnorePointer(
+                          child: Text(
+                            [
+                              if (widget.initialCore.isNotEmpty)
+                                widget.initialCore == 'exoPlayer' ? 'EXO' : 'MPV',
+                              if (widget.bitrate.isNotEmpty) widget.bitrate,
+                              if (widget.mediaSize.isNotEmpty) widget.mediaSize,
+                            ].join(' · '),
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 11,
+                              shadows: [Shadow(color: Colors.black87, blurRadius: 4)],
+                            ),
+                          ),
+                        ),
+                      ),
                           logo: widget.logo,
                           logoImage: widget.logoImage,
                           logoText: widget.logoText,
@@ -815,7 +833,10 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                           onAction: (action) {
                             switch (action) {
                               case PlayerBottomAction.aggregate:
-                                _openMenu(PopupMenuId.aggregate);
+                                // 没有跨服务器资源时只保留按钮，不打开空的长条菜单。
+                                if (widget.sources.isNotEmpty) {
+                                  _openMenu(PopupMenuId.aggregate);
+                                }
                                 break;
                               case PlayerBottomAction.core:
                                 _openMenu(PopupMenuId.core);
@@ -840,6 +861,12 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                         child: SideButtons(
                           horizontalPadding: width * 0.08,
                           onLock: widget.onLock,
+                          lockIconBuilder: (color) => Icon(
+                            widget.isLocked
+                                ? Icons.lock_rounded
+                                : Icons.lock_open_rounded,
+                            color: color,
+                          ),
                           onRotate: widget.onRotate,
                         ),
                       ),
@@ -847,6 +874,20 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                   ),
                 ),
               ),
+              if (widget.isLocked)
+                Positioned(
+                  left: width * 0.08,
+                  top: (height - 48) / 2,
+                  child: Material(
+                    color: Colors.black.withValues(alpha: 0.35),
+                    shape: const CircleBorder(),
+                    child: IconButton(
+                      tooltip: '解锁屏幕',
+                      icon: const Icon(Icons.lock_rounded, color: Colors.white),
+                      onPressed: widget.onLock,
+                    ),
+                  ),
+                ),
               if (isUiVisible && activeMenu != null)
                 Positioned.fill(
                   child: PopupMenuOverlay(

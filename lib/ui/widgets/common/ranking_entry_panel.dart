@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/ranking/ranking_models.dart';
 import '../../../core/providers/media_providers.dart';
 import '../../../core/providers/server_providers.dart';
-import '../../screens/source/feiniu_detail_screen.dart';
+import '../../screens/source/unified_media_screens.dart';
 import '../../utils/media_helpers.dart';
 import 'media_widgets.dart';
 
@@ -198,8 +198,10 @@ class _ServerMatchRow extends ConsumerWidget {
           if (server != null) {
             ref.read(currentServerProvider.notifier).state = server;
             Navigator.of(context).push(MaterialPageRoute<void>(
-              builder: (_) =>
-                  FeiniuMediaDetailScreen(server: server, entry: entry),
+              builder: (_) => UnifiedMediaDetailScreen(
+                server: server,
+                entry: unifiedEntryFromSource(entry),
+              ),
             ));
             return;
           }
