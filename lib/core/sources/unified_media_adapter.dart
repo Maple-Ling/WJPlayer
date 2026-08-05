@@ -126,6 +126,7 @@ class UnifiedMediaResource {
     this.video,
     this.audios = const [],
     this.subtitles = const [],
+    this.isFeiniu = false,
   });
   final String id;
   final String name;
@@ -134,6 +135,7 @@ class UnifiedMediaResource {
   final Map<String, dynamic>? video;
   final List<Map<String, dynamic>> audios;
   final List<Map<String, dynamic>> subtitles;
+  final bool isFeiniu;
 }
 
 abstract class UnifiedMediaAdapter {
