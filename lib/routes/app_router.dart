@@ -452,15 +452,16 @@ class _MainShellState extends ConsumerState<MainShell> {
   bool _onScrollNotification(ScrollNotification notification) {
     if (!_isHomePage) return false;
 
+    // 按滚动方向控制底部栏：内容下滑（手指上滑浏览）→ 隐藏并保持；
+    // 内容上滑（手指下滑回看）→ 显示。滚动停止保持当前状态，
+    // 不再 ScrollEnd 立即恢复（旧行为导致"隐藏后又弹回"）。
     if (notification is ScrollUpdateNotification) {
       final delta = notification.scrollDelta ?? 0;
-      if (delta.abs() > 1.5) {
-        // 下滑时最多淡到可发现状态，不能变成完全透明且仍拦截触摸。
-        _tabOpacity.value = (_tabOpacity.value - delta / 150).clamp(0.18, 1.0);
+      if (delta > 1.5) {
+        _tabOpacity.value = 0.0;
+      } else if (delta < -1.5) {
+        _tabOpacity.value = 1.0;
       }
-    } else if (notification is ScrollEndNotification) {
-      // 手指离开后立即恢复，避免滚动中断/嵌套列表导致底栏永久隐藏。
-      _tabOpacity.value = 1.0;
     }
     return false;
   }
@@ -518,10 +519,14 @@ class _MainShellState extends ConsumerState<MainShell> {
           floatingActionButton: showFloatingTabBar
               ? ValueListenableBuilder<double>(
                   valueListenable: _tabOpacity,
-                  builder: (context, value, _) => Opacity(
-                    opacity: _isServerListPage ? 1.0 : value,
-                    child: _FloatingTabBar(
-                      navigationShell: widget.navigationShell,
+                  builder: (context, value, _) => IgnorePointer(
+                    // 完全隐藏时不再拦截触摸（透明度 0 的 Opacity 仍会命中）。
+                    ignoring: value < 0.5,
+                    child: Opacity(
+                      opacity: _isServerListPage ? 1.0 : value,
+                      child: _FloatingTabBar(
+                        navigationShell: widget.navigationShell,
+                      ),
                     ),
                   ),
                 )
