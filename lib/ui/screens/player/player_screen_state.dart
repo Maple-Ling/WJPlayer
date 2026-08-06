@@ -8,9 +8,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   // 轻点判定（全屏点击切换控制栏）：记录按下位置/时间；抬起后延迟
   // 150ms 确认不是连点/双击才 toggle——连点（一秒约 7 次，间隔≈143ms）
   // 的第二次按下会取消第一次的 pending，避免「点两下 UI 闪来闪去」。
+  // _tapWasDoubleTap：按下时若取消了 pending，说明这是连点/双击的后续
+  // 一击，抬起时跳过设置 pending（否则双击第二击抬起仍会 toggle，
+  // 表现为「UI 隐藏时双击还会弹出界面」）。
   Offset _tapDownPosition = Offset.zero;
   DateTime _tapDownTime = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _pendingTapTimer;
+  bool _tapWasDoubleTap = false;
   bool _isSliderDragging = false;
   double? _sliderDragValue;
   bool _decoderSwitchInFlight = false;
@@ -2484,7 +2488,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   /// 全屏轻点按下：记录位置与时间（供抬起时判定轻点）。
   void _onTapDown(PointerDownEvent event) {
     if (_playerService.isLocked) return;
-    // 连点/双击的第二击：取消上一次点击的 pending toggle（不触发 UI 切换）。
+    // 连点/双击的后续一击：取消上一次点击的 pending toggle（不触发 UI 切换），
+    // 并标记本次为连击（抬起时不再设置 pending）。
+    _tapWasDoubleTap = _pendingTapTimer != null;
     _pendingTapTimer?.cancel();
     _pendingTapTimer = null;
     _tapDownPosition = event.position;
@@ -2496,6 +2502,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   /// 双击的播放/暂停/快进功能仍由 onDoubleTapDown 承担，UI 不被连点闪动。
   void _onTapUp(PointerUpEvent event) {
     if (_playerService.isLocked || _isLongPressing) return;
+    if (_tapWasDoubleTap) {
+      // 本次是连点/双击的后续一击：不设置 pending（否则第二击抬起后
+      // 150ms 仍会 toggle，UI 隐藏时双击会把界面弹出来）。
+      _tapWasDoubleTap = false;
+      return;
+    }
     final now = DateTime.now();
     final dt = now.difference(_tapDownTime);
     final dist = (event.position - _tapDownPosition).distance;

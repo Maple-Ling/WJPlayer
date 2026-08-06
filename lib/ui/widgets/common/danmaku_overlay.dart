@@ -348,7 +348,8 @@ class DanmakuPainter extends CustomPainter {
     //   单轨多条弹幕互相交替显示）；
     // - 每帧只做追尾检查：同轨尾条与自身左右重叠才解除冻结重分配；
     //   出屏弹幕释放轨道。
-    final fixedLaneCount = (trackCount * 0.3).floor().clamp(1, 4);
+    final fixedLaneCount =
+        (trackCount * 0.3).floor().clamp(0, trackCount - 1);
     final laneTail = List<_DanmakuTrackItem?>.filled(trackCount, null);
     final scrollOccupant = List<_DanmakuTrackItem?>.filled(trackCount, null);
     final topOccupant = List<_DanmakuTrackItem?>.filled(trackCount, null);
@@ -444,10 +445,14 @@ class DanmakuPainter extends CustomPainter {
     }
 
     for (final trackItem in visibleItems) {
-      if (!cache.laneOf.containsKey(trackItem.index)) continue; // 未出生，先不画
+      final lane = cache.laneOf[trackItem.index];
+      if (lane == null) continue; // 未出生，先不画
       final x = _computeX(trackItem, size);
       if (x + trackItem.width < 0 || x > size.width) continue;
-      final offset = Offset(x, trackItem.startY);
+      // 轨道 Y 统一从 laneOf 恢复：_getTrackItem 每帧重建 startY=0，
+      // 冻结弹幕（分配路径 continue 不设 startY）若直接用 startY 会全部
+      // 叠在顶部第一轨 → 「只能看到一条 + 重叠 + 闪烁」。
+      final offset = Offset(x, lane * _trackHeight + _padding);
       if (trackItem.stroke != null) {
         canvas.drawParagraph(trackItem.stroke!, offset);
       }
