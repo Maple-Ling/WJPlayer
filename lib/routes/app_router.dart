@@ -412,6 +412,14 @@ class _MainShellState extends ConsumerState<MainShell> {
       });
       return;
     }
+    // 服务器主页（/home）：不管从哪个入口进的（服务器列表返回经 PopToHome
+    // 用 go('/home') 替换栈、或 push 进入），返回统一回服务器列表（/servers）。
+    if (widget.currentPath == '/home') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) context.go('/servers');
+      });
+      return;
+    }
     if (widget.navigationShell.currentIndex != 0) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) widget.navigationShell.goBranch(0);
