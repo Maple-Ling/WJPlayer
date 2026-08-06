@@ -4927,6 +4927,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   Future<void> _switchSubtitleTrackByName(String trackName) async {
     if (trackName == '关闭字幕') {
       await _playerService.deselectSubtitleTrack();
+      // 持久化"关闭"：内核切换/重新初始化后保持关闭（_applyTrackSelections
+      // 读到 -1 会再次 deselect）。
+      ref.read(subtitleTrackProvider.notifier).state = -1;
       return;
     }
     final subtitleTracks = _playerService.tracksInfo
@@ -4938,6 +4941,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         final trackId = track['id']?.toString() ?? '';
         if (trackId.isNotEmpty) {
           await _playerService.selectSubtitleTrack(trackId);
+          await _persistSubtitleSelection(trackId);
         }
         return;
       }
@@ -4957,6 +4961,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             final trackId = track['id']?.toString() ?? '';
             if (trackId.isNotEmpty) {
               await _playerService.selectSubtitleTrack(trackId);
+              await _persistSubtitleSelection(trackId);
             }
             return;
           }
@@ -4966,10 +4971,69 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           final trackId = subtitleTracks[i]['id']?.toString() ?? '';
           if (trackId.isNotEmpty) {
             await _playerService.selectSubtitleTrack(trackId);
+            await _persistSubtitleSelection(trackId);
           }
         }
         return;
       }
+    }
+  }
+
+  /// 播放器菜单按显示名选字幕成功后，把选择持久化到 [subtitleTrackProvider]
+  /// （媒体流索引）：内核切换（exo↔mpv）或重新初始化时，_applyTrackSelections
+  /// 只认该 provider 恢复选择——否则菜单选的字幕只作用于当前内核，切内核就丢。
+  /// 通过 player 轨道 id 反查媒体流：先按身份匹配（_matchMpv/_matchExo），
+  /// 未命中按 player 字幕轨顺序对齐 mediaStream 顺序兜底。
+  Future<void> _persistSubtitleSelection(String trackId) async {
+    final item = ref.read(currentPlayingItemProvider);
+    if (item == null) return;
+    final api = ref.read(apiClientProvider);
+    try {
+      final playbackInfo = await api.playback.getPlaybackInfo(item.id);
+      final mediaSource = _resolveMediaSource(playbackInfo);
+      if (mediaSource == null) return;
+      final subtitleStreams =
+          mediaSource.mediaStreams.where((s) => s.isSubtitle).toList();
+      if (subtitleStreams.isEmpty) return;
+      final tracks = _playerService.tracksInfo;
+      final subtitleTracks = tracks
+          .where((t) =>
+              (t['type'] == 'text' || t['type'] == 'bitmap') &&
+              t['id'] != 'auto' &&
+              t['id'] != 'no')
+          .toList();
+      final isMpv = _playerService.coreType == PlayerCoreType.mpv ||
+          _playerService.coreType == PlayerCoreType.nativeMpv;
+      for (final stream in subtitleStreams) {
+        final tid = isMpv
+            ? _matchMpvSubtitleTrack(
+                subtitleTracks,
+                stream.language,
+                stream.displayTitle ?? stream.title,
+                stream.codec,
+                stream.index,
+              )
+            : _matchExoSubtitleTrack(
+                subtitleTracks,
+                stream.language,
+                stream.displayTitle ?? stream.title,
+                stream.codec,
+                stream.index,
+              );
+        if (tid == trackId) {
+          ref.read(subtitleTrackProvider.notifier).state = stream.index;
+          return;
+        }
+      }
+      // 反查未命中：按 player 字幕轨顺序对齐 mediaStream 顺序兜底。
+      final idx =
+          subtitleTracks.indexWhere((t) => t['id']?.toString() == trackId);
+      if (idx >= 0 && idx < subtitleStreams.length) {
+        ref.read(subtitleTrackProvider.notifier).state =
+            subtitleStreams[idx].index;
+      }
+    } catch (_) {
+      // 持久化失败不影响本次切换。
     }
   }
 
