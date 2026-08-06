@@ -5,11 +5,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   late VideoPlayerService _playerService;
   bool _showRemaining = false;
   bool _isLongPressing = false;
-  // 轻点判定（全屏点击切换控制栏，无手势竞技场延迟）：记录按下位置/时间与
-  // 上次轻点时间（双击第二击跳过，双击功能由 onDoubleTapDown 承担）。
+  // 轻点判定（全屏点击切换控制栏）：记录按下位置/时间；抬起后延迟
+  // 150ms 确认不是连点/双击才 toggle——连点（一秒约 7 次，间隔≈143ms）
+  // 的第二次按下会取消第一次的 pending，避免「点两下 UI 闪来闪去」。
   Offset _tapDownPosition = Offset.zero;
   DateTime _tapDownTime = DateTime.fromMillisecondsSinceEpoch(0);
-  DateTime? _lastTapTime;
+  Timer? _pendingTapTimer;
   bool _isSliderDragging = false;
   double? _sliderDragValue;
   bool _decoderSwitchInFlight = false;
@@ -1865,6 +1866,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     WidgetsBinding.instance.removeObserver(this);
     // 离开播放器恢复系统息屏策略。
     WakelockPlus.disable();
+    _pendingTapTimer?.cancel();
     _statusTimer?.cancel();
     SystemInfoService.instance.stop();
     _streamTranslator?.stop();
@@ -2482,26 +2484,27 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   /// 全屏轻点按下：记录位置与时间（供抬起时判定轻点）。
   void _onTapDown(PointerDownEvent event) {
     if (_playerService.isLocked) return;
+    // 连点/双击的第二击：取消上一次点击的 pending toggle（不触发 UI 切换）。
+    _pendingTapTimer?.cancel();
+    _pendingTapTimer = null;
     _tapDownPosition = event.position;
     _tapDownTime = DateTime.now();
   }
 
-  /// 全屏轻点抬起：位移 <20px 且时长 <300ms（非拖动/长按）→ 切换控制栏。
-  /// 双击第二击（300ms 内再次抬起）跳过，避免 toggle 两次抵消——
-  /// 双击的播放/暂停/快进功能仍由 onDoubleTapDown 承担。
+  /// 全屏轻点抬起：位移 <20px 且时长 <150ms（非拖动/长按）→ 延迟 150ms
+  /// 确认 toggle 控制栏。150ms 内再有按下（连点/双击）会取消 pending——
+  /// 双击的播放/暂停/快进功能仍由 onDoubleTapDown 承担，UI 不被连点闪动。
   void _onTapUp(PointerUpEvent event) {
     if (_playerService.isLocked || _isLongPressing) return;
     final now = DateTime.now();
     final dt = now.difference(_tapDownTime);
     final dist = (event.position - _tapDownPosition).distance;
-    if (dt > const Duration(milliseconds: 300) || dist > 20) return;
-    if (_lastTapTime != null &&
-        now.difference(_lastTapTime!) < const Duration(milliseconds: 300)) {
-      _lastTapTime = null;
-      return;
-    }
-    _lastTapTime = now;
-    _playerService.toggleControls();
+    if (dt > const Duration(milliseconds: 150) || dist > 20) return;
+    _pendingTapTimer?.cancel();
+    _pendingTapTimer = Timer(const Duration(milliseconds: 150), () {
+      if (!mounted || _playerService.isLocked) return;
+      _playerService.toggleControls();
+    });
   }
 
   void _onDoubleTapDown(TapDownDetails details) {
