@@ -3409,6 +3409,27 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 .firstOrNull
             : null);
     if (server == null) return;
+    // 顶层剧集（Emby Series / 飞牛 tv|series）没有可直接播放的媒体流：
+    // 直接 source-player/player 必然失败（飞牛 resolvePlay 拿不到 media_guid
+    // 抛「未获取到播放媒体」；Emby Series 无媒体源）。与详情页一致，进该
+    // 服务器详情页选集播放，并 toast 说明去向；播放器保留在栈中，从详情页
+    // 返回可继续播放。
+    final feiniuType = match.sourceEntry
+        ?.raw?['type']
+        ?.toString()
+        .trim()
+        .toLowerCase();
+    final isTopLevelTv = match.sourceEntry != null
+        ? (feiniuType == 'tv' || feiniuType == 'series')
+        : match.item.type == 'Series';
+    if (isTopLevelTv) {
+      AppToast.show(context, '整剧资源：已进入「${server.name}」详情页，请选择剧集播放',
+          position: AppToastPosition.topCenter);
+      _playerNavInFlight = true;
+      openMediaItem(ref, context, match.item);
+      _playerNavInFlight = false;
+      return;
+    }
     _playerNavInFlight = true;
     if (match.sourceEntry != null) {
       // 飞牛/直链源：完整重建播放器（保证服务/纹理/轨道都正确初始化）。
@@ -3434,9 +3455,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           '/player/${match.item.id}?core=${Uri.encodeQueryComponent(_currentCore)}');
       return;
     }
-    // Series 等其它类型（Emby 聚合检索的顶层剧集）：切到归属服务器并进入
-    // 其媒体详情页（详情页内选集播放，与 A 页聚合资源行为一致）；播放器
-    // 保留在栈中，从详情页返回可继续播放。push 不销毁当前 State，恢复防抖。
+    // 其它兜底类型：进该服务器媒体详情页（详情页内选集播放）。
     openMediaItem(ref, context, match.item);
     _playerNavInFlight = false;
   }
