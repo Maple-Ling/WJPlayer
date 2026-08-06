@@ -154,19 +154,23 @@ class AppUpdateService {
   ///
   /// 识别本项目的实际版本形态 `vX.Y.Z[-build<N>][-pre]`（如 `v1.2.0-build88-pre`、
   /// `1.2.0-build88`、`v1.2.0`），按以下优先级排序，**新者为大**：
-  /// 主版本 > 次版本 > 修订号 > 构建号(build N) > 稳定优于预览(pre)。
+  /// 主版本 > 次版本 > 修订号 > 稳定优于预览(pre) > 构建号(build N)。
   ///
-  /// 关键：同一 x.y.z 下更高的 `-buildN` 视为更新——这正是修复「预览版同号漏检」
-  /// 的核心（旧实现只比 x.y.z，丢掉了唯一能区分预发布迭代的构建号）。
+  /// 关键1：同一 x.y.z 下更高的 `-buildN` 视为更新——修复「预览版同号漏检」
+  /// （旧实现只比 x.y.z，丢掉了唯一能区分预发布迭代的构建号）。
+  /// 关键2：**稳定版必须优先于 build**——正式版 `v1.0.0`（build=0）发布后要能
+  /// 覆盖所有 `1.0.0-buildN-pre` 预览版；若 build 先于 isPre 比较，正式版会被
+  /// 判定「已是最新」（build 0 < 预览 build N），用户永远收不到正式版更新。
   static int compareVersions(String a, String b) {
     final pa = _VersionParts.parse(a);
     final pb = _VersionParts.parse(b);
     if (pa.major != pb.major) return pa.major > pb.major ? 1 : -1;
     if (pa.minor != pb.minor) return pa.minor > pb.minor ? 1 : -1;
     if (pa.patch != pb.patch) return pa.patch > pb.patch ? 1 : -1;
-    if (pa.build != pb.build) return pa.build > pb.build ? 1 : -1;
-    // 同一构建号下，稳定版（非 pre）视为比预览版更新（发布即由 pre 晋升而来）。
+    // 稳定版优先于预览版：正式 v1.0.0 覆盖 1.0.0-buildN-pre（无论 build）。
     if (pa.isPre != pb.isPre) return pa.isPre ? -1 : 1;
+    // 同稳定性：build 高者新（区分预发布迭代 / 正式版迭代）。
+    if (pa.build != pb.build) return pa.build > pb.build ? 1 : -1;
     return 0;
   }
 }
