@@ -3463,10 +3463,21 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         ? (feiniuType == 'tv' || feiniuType == 'series')
         : match.item.type == 'Series';
     if (isTopLevelTv) {
-      AppToast.show(context, '整剧资源：已进入「${server.name}」详情页，请选择剧集播放',
-          position: AppToastPosition.topCenter);
+      // 点击聚合剧集资源 = 直接播放：进该服务器详情页并自动开播
+      // （与 BCD 详情页点击播放一致）。
       _playerNavInFlight = true;
-      openMediaItem(ref, context, match.item);
+      context.push(
+        '/detail/${Uri.encodeComponent(match.item.id)}',
+        extra: UnifiedMediaDetailRouteExtra(
+          server: server,
+          entry: UnifiedMediaEntry(
+            id: match.item.id,
+            name: match.item.name,
+            type: match.item.type,
+          ),
+          autoPlay: true,
+        ),
+      );
       _playerNavInFlight = false;
       return;
     }

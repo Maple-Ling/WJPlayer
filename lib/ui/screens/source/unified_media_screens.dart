@@ -1437,9 +1437,9 @@ class _UnifiedMediaDetailScreenState
           ? (feiniuType == 'tv' || feiniuType == 'series')
           : match.item.type == 'Series';
       if (isTopLevelTv) {
-        AppToast.show(context, '整剧资源：已进入「${server.name}」详情页，请选择剧集播放',
-            position: AppToastPosition.topCenter);
-        _openServerDetail(match);
+        // 点击播放 = 直接播放：进该服务器详情页并自动开播（继续上次/首集），
+        // 与 A 页"点击即播"的体验一致；双击（_openServerDetail）才仅进详情浏览。
+        _openServerDetail(match, autoPlay: true);
         return;
       }
       if (!mounted) return;
@@ -1473,7 +1473,7 @@ class _UnifiedMediaDetailScreenState
   }
 
   /// 双击跨服务器资源卡：进入该服务器对应的媒体详情页（复用 UnifiedMediaDetailScreen）。
-  void _openServerDetail(ServerMatchInfo match) {
+  void _openServerDetail(ServerMatchInfo match, {bool autoPlay = false}) {
     // 与 A 页一致：优先 match.sourceServerId（飞牛打标），缺失回退
     // match.item.sourceServerId（Emby 由公共链路在 item 上打标）。
     final server = ref
@@ -1489,11 +1489,31 @@ class _UnifiedMediaDetailScreenState
     if (server == null) return;
     ref.read(currentServerProvider.notifier).state = server;
     // Emby/飞牛的媒体详情统一入口：先切服务器再 push /detail/:id。
+    // 带真实类型 entry + autoPlay 的 extra（避免伪造 Movie type 导致飞牛
+    // 剧集数据拉取不完整；autoPlay=true 时详情页加载后自动开播）。
     final itemId = match.item.id;
     if (itemId.isNotEmpty) {
-      context.push('/detail/${Uri.encodeComponent(itemId)}');
+      context.push(
+        '/detail/${Uri.encodeComponent(itemId)}',
+        extra: UnifiedMediaDetailRouteExtra(
+          server: server,
+          entry: UnifiedMediaEntry(
+            id: itemId,
+            name: match.item.name,
+            type: match.item.type,
+          ),
+          autoPlay: autoPlay,
+        ),
+      );
     } else if (match.sourceEntry != null) {
-      context.push('/detail/${Uri.encodeComponent(match.sourceEntry!.id)}');
+      context.push(
+        '/detail/${Uri.encodeComponent(match.sourceEntry!.id)}',
+        extra: UnifiedMediaDetailRouteExtra(
+          server: server,
+          entry: unifiedEntryFromSource(match.sourceEntry!),
+          autoPlay: autoPlay,
+        ),
+      );
     }
   }
 
