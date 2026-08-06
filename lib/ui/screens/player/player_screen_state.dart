@@ -870,11 +870,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   /// 用户在滑块上调过（subtitleSizeTouchedProvider=true）后一律用用户值。
   double _effectiveSubtitleSize() {
     if (ref.read(subtitleSizeTouchedProvider)) {
-      return ref.read(subtitleSizeProvider);
+      final v = ref.read(subtitleSizeProvider);
+      AppLogger().i('Player', '字幕大小(用户已调): $v');
+      return v;
     }
-    return _playerService.coreType == PlayerCoreType.nativeMpv
+    final v = _playerService.coreType == PlayerCoreType.nativeMpv
         ? 1.0
         : ref.read(subtitleSizeProvider);
+    AppLogger().i('Player', '字幕大小(默认): core=${_playerService.coreType} -> $v');
+    return v;
   }
 
   /// 后台挑轨：等内封轨道就绪（仅在有内封字幕时才等）后，依次应用字幕/音频/次字幕选择。
