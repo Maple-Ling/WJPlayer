@@ -498,7 +498,7 @@ class _UnifiedMediaDetailScreenState
   int _selectedCrossServerIndex = 0;
   // 单击跨服务器资源卡选中的匹配（用于顶部播放按钮直接播放该服务器资源）。
   ServerMatchInfo? _selectedCrossServerMatch;
-  int _episodeRangeStart = 1;
+  int _lastWatchedEpIndex = 0;
   String _core = 'nativeMpv';
   bool _loading = true;
   bool _loadingMedia = false;
@@ -560,20 +560,8 @@ class _UnifiedMediaDetailScreenState
     final cacheKey = '${widget.server.id}:${widget.entry.id}';
     final cached = _detailCache[cacheKey];
     if (cached != null) {
-
       _detail = cached;
-      await _loadPlaybackHistory();
       setState(() => _loading = false);
-      if (cached.seasons.isNotEmpty) {
-        await _selectSeason(_selectedSeasonId ?? cached.initialSeasonId ?? cached.seasons.first.id);
-      } else if (cached.initialSeasonId?.isNotEmpty == true) {
-        // 飞牛部分资源 /season/list 为空（fnOS 版本差异），但 play/info 提供
-        // parent_guid（季）：直接用该季拉分集，避免分集区整体不渲染。
-        await _selectSeason(cached.initialSeasonId!);
-      } else {
-        _selectedEntry = cached.entry;
-        _updateResume(cached.entry);
-      }
       return;
     }
     setState(() {
@@ -603,25 +591,13 @@ class _UnifiedMediaDetailScreenState
         }
       }
       if (detail.seasons.isNotEmpty) {
-        final latest = _latestPlayedEpisode();
-        final latestSeason = latest.season;
         final preferred = detail.seasons.where((season) {
           final id = season.id.contains(':')
               ? season.id.substring(season.id.indexOf(':') + 1)
               : season.id;
           return season.id == detail.initialSeasonId || id == detail.initialSeasonId;
         }).firstOrNull;
-        final historySeason = latestSeason == null
-            ? null
-            : detail.seasons.where((season) =>
-                _seasonNumber(season.name) == latestSeason ||
-                _seasonNumber(season.id) == latestSeason).firstOrNull;
-        await _selectSeason(
-            (historySeason ?? preferred ?? detail.seasons.first).id);
-      } else if (detail.initialSeasonId?.isNotEmpty == true) {
-        // 飞牛部分资源 /season/list 为空但 play/info 提供 parent_guid（季）：
-        // 直接用该季拉分集，保证详情页仍能展示与播放器一致的分集列表。
-        await _selectSeason(detail.initialSeasonId!);
+        await _selectSeason((preferred ?? detail.seasons.first).id);
       } else {
         _selectedEntry = detail.entry;
         await _loadResources(detail.entry);
@@ -685,40 +661,29 @@ class _UnifiedMediaDetailScreenState
       final preferred = episodes
           .where((episode) => episode.id == detail.initialEntryId)
           .firstOrNull;
-      final latest = _latestPlayedEpisode();
-      final historyEpisode = latest.episode == null
-          ? null
-          : episodes.where((episode) =>
-              (episode.mediaItem?.indexNumber ?? episode.indexNumber) == latest.episode).firstOrNull;
-      final selected = historyEpisode ?? preferred ?? (episodes.isEmpty ? null : episodes.first);
-      // 当前播放集编号（用于自动分段 + 滚动定位；无记录时为 null）
-      final targetNumber = historyEpisode == null
-          ? null
-          : (historyEpisode.mediaItem?.indexNumber ??
-              historyEpisode.indexNumber);
-      // 分段起点必须落在 [1, 最后一组起始] 内：历史记录集号可能超出当前季
-      // 总集数（剧集被删减/季数据变化），直接越界会让 _buildEpisodeCards
-      // 的 clamp(下限>上限) 抛 ArgumentError 导致分集区崩溃。
-      final maxStart = episodes.isEmpty
-          ? 1
-          : (((episodes.length - 1) ~/ 10) * 10 + 1);
-      final requested = targetNumber == null || targetNumber <= 0
-          ? 1
-          : (((targetNumber - 1) ~/ 10) * 10 + 1);
+      final selected =
+          preferred ?? (episodes.isEmpty ? null : episodes.first);
       setState(() {
         _episodes = episodes;
         _selectedEntry = selected;
         _loadingMedia = selected != null;
-        _episodeRangeStart = requested > maxStart ? maxStart : requested;
+        if (_scopeRecords.isNotEmpty) {
+          _lastWatchedEpIndex = _lastWatchedEpisodeIndex(episodes);
+        }
       });
       if (selected != null) {
         await _loadResources(selected);
         if (widget.autoPlay && mounted) await _play();
       }
-      // 自动滚动到当前播放集附近：仅滚动定位，不改数组/顺序/位置。
-      // 首次进入时页面可能仍在 loading（列表未挂载），内部会逐帧重试。
-      if (targetNumber != null && targetNumber > 0) {
-        _scrollToCurrentEpisode(targetNumber);
+      // Q5：进入详情后，自动无感滑动到最近播放的剧集（若有）。
+      if (_lastWatchedEpIndex > 0 && _episodeController.hasClients) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_episodeController.hasClients) return;
+          _episodeController.jumpTo(
+            (_lastWatchedEpIndex * 228.0)
+                .clamp(0.0, _episodeController.position.maxScrollExtent),
+          );
+        });
       }
     } catch (error) {
       if (!mounted) return;
@@ -824,6 +789,22 @@ class _UnifiedMediaDetailScreenState
         return;
       }
     }
+  }
+
+  int _lastWatchedEpisodeIndex(List<UnifiedMediaEntry> episodes) {
+    // 记录按最近播放排序，取第一个命中本季的记录对应索引。
+    final wantedSeason = int.tryParse(_selectedSeasonId ?? '') ?? -1;
+    for (final record in _scopeRecords) {
+      final seasonMatch = wantedSeason < 0 ||
+          (record.seasonNumber ?? -1) == wantedSeason;
+      if (!seasonMatch || record.episodeNumber == null) continue;
+      for (var i = 0; i < episodes.length; i++) {
+        final ep = episodes[i];
+        final epNum = ep.mediaItem?.indexNumber ?? ep.indexNumber;
+        if (epNum == record.episodeNumber) return i;
+      }
+    }
+    return 0;
   }
 
   /// 解析季号：仅识别明确的季格式（第 X 季 / Season X / S1 / season:X）。
@@ -1082,13 +1063,11 @@ class _UnifiedMediaDetailScreenState
                 const SizedBox(height: 14),
                 if (entry.overview?.isNotEmpty == true)
                   CollapsibleOverview(text: entry.overview!),
-                if (detail.seasons.isNotEmpty || _episodes.isNotEmpty) ...[
+                if (detail.seasons.isNotEmpty) ...[
                   const SizedBox(height: 18),
-                  _seasonSelector(detail.seasons),
+                  _buildSeasonSelector(detail.seasons),
                   const SizedBox(height: 18),
-                  _episodeRangeCapsules(),
-                  const SizedBox(height: 10),
-                  _buildEpisodeCards(),
+                  _buildEpisodes(),
                 ],
                 const SizedBox(height: 20),
                 _sectionTitle(
@@ -1188,111 +1167,6 @@ class _UnifiedMediaDetailScreenState
     _play();
   }
 
-  /// 自动滚动到指定分集的最左侧位置。
-  /// 仅滚动视口，不修改数组/顺序/位置。列表尚未挂载时逐帧重试（最多 8 次），
-  /// 覆盖首次进入仍在 loading 的时序：此时 ListView 未 build，直接 animateTo 会丢失。
-  void _scrollToCurrentEpisode(int targetNumber, {int retry = 0}) {
-    if (!mounted || retry > 8) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (!_episodeController.hasClients) {
-        _scrollToCurrentEpisode(targetNumber, retry: retry + 1);
-        return;
-      }
-      final uiList = _uiEpisodes;
-      final start = _episodeRangeStart;
-      final end = start + 9;
-      // 当前分段内可见列表（与 _buildEpisodeCards 的过滤口径一致）
-      final visible = uiList
-          .where((e) {
-            final n = e.number <= 0 ? 1 : e.number;
-            return n >= start && n <= end;
-          })
-          .toList();
-      final visibleIdx = visible.indexWhere((e) => e.number == targetNumber);
-      if (visibleIdx < 0) return;
-      final target = (visibleIdx * 228.0)
-          .clamp(0.0, _episodeController.position.maxScrollExtent);
-      _episodeController.animateTo(
-        target,
-        duration: const Duration(milliseconds: 320),
-        curve: Curves.easeOutCubic,
-      );
-    });
-  }
-
-  /// A 模板数据转换层：Unified* 模型 → A 页 UI 展示数据 ----
-  /// 剧集展示模型：对齐 A 页分段胶囊 + 剧集卡片所需字段，保留业务引用 [entry]。
-  List<_UiEpisode> get _uiEpisodes {
-    final result = <_UiEpisode>[];
-    for (final episode in _episodes) {
-      final number = episode.mediaItem?.indexNumber ?? episode.indexNumber;
-      result.add(_UiEpisode(
-        number: number ?? _episodeNumberFromName(episode.name) ?? 0,
-        name: episode.name,
-        overview: episode.overview,
-        stillUrl: episode.backdropUrl?.isNotEmpty == true
-            ? episode.backdropUrl
-            : episode.posterUrl,
-        airDate: episode.airDate,
-        runtime: episode.runtime,
-        entry: episode,
-      ));
-    }
-    // 集号解析失败（0）的条目按列表顺序兜底：第一集→1、第二集→2…
-    // 否则多个无号条目会被渲染层全部当成“第 1 集”，无法区分/选择。
-    var cursor = 0;
-    for (var i = 0; i < result.length; i++) {
-      final ui = result[i];
-      if (ui.number <= 0) {
-        cursor += 1;
-        result[i] = _UiEpisode(
-          number: cursor,
-          name: ui.name,
-          overview: ui.overview,
-          stillUrl: ui.stillUrl,
-          airDate: ui.airDate,
-          runtime: ui.runtime,
-          entry: ui.entry,
-        );
-      } else {
-        cursor = ui.number;
-      }
-    }
-    result.sort((a, b) => a.number.compareTo(b.number));
-    return result;
-  }
-
-  /// UI 展示用的季号解析：与 [_seasonNumber] 口径一致，仅识别明确的季格式。
-  int? _uiSeasonNumber(String? value) {
-    if (value == null) return null;
-    // 与 [_seasonNumber] 同口径：'season:'+guid 长串不算季号，
-    // 支持 "第 N 季"/"第一季"/"Season N"/"S1"。
-    final match = RegExp(
-            r'第\s*(\d+)\s*季|第\s*([一二三四五六七八九十]+)\s*季|'
-            r'^season[:\s]*(\d{1,4})$|[Ss]eason\s*(\d+)|[Ss](\d+)\b',
-            caseSensitive: false)
-        .firstMatch(value);
-    if (match == null) return null;
-    final arabic = match.group(1) ?? match.group(3) ?? match.group(4) ??
-        match.group(5);
-    if (arabic != null) return int.tryParse(arabic);
-    return _chineseSeasonToInt(match.group(2));
-  }
-
-  int? _episodeNumberFromName(String name) {
-    // 覆盖飞牛常见命名：第1集 / 第 1 话 / S1E2 / EP02 / E12 / "01. 标题" / "1 - 标题"
-    final match = RegExp(
-            r'第\s*(\d+)\s*[集话]|[Ee][Pp]?\s*(\d+)|^0*(\d+)\s*[\.、\s-]',
-            caseSensitive: false)
-        .firstMatch(name);
-    if (match != null) {
-      final raw = match.group(1) ?? match.group(2) ?? match.group(3);
-      return int.tryParse(raw ?? '');
-    }
-    return null;
-  }
-
   /// 演员：优先 A 模板所需的外部演员（可点开作品）；无外部数据时由
   /// UnifiedPerson 转换（role→character、imageUrl→profileUrl，id 为空不可点）。
   List<ExternalPerson> get _peopleList {
@@ -1313,223 +1187,91 @@ class _UnifiedMediaDetailScreenState
     ];
   }
 
-  Widget _seasonSelector(List<UnifiedSeason> seasons) {
-    final visible = seasons
-        .where((season) =>
-            _uiSeasonNumber(season.id) != null ||
-            _uiSeasonNumber(season.name) != null)
-        .toList();
-    if (visible.isEmpty) return const SizedBox.shrink();
-    final current =
-        visible.where((season) => season.id == _selectedSeasonId).firstOrNull ??
-            visible.first;
-    final currentNumber =
-        _uiSeasonNumber(current.id) ?? _uiSeasonNumber(current.name) ?? 1;
-    return Row(children: [
-      const Icon(Icons.video_library_rounded, size: 16, color: Color(0xFF5B8DEF)),
-      const SizedBox(width: 6),
-      Text('第 $currentNumber 季',
-          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
-      const SizedBox(width: 6),
-      PopupMenuButton<String>(
-        icon: const Icon(Icons.unfold_more_rounded, size: 20),
-        tooltip: '切换分季',
-        onSelected: _selectSeason,
-        itemBuilder: (_) => [
-          for (final season in visible)
-            PopupMenuItem(value: season.id, child: Text(season.name)),
-        ],
-      ),
-    ]);
-  }
+  Widget _buildSeasonSelector(List<UnifiedSeason> seasons) => Row(children: [
+        Text(
+          seasons
+              .where((season) => season.id == _selectedSeasonId)
+              .firstOrNull
+              ?.name ??
+              '选择季',
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
+        ),
+        PopupMenuButton<String>(
+          icon: const Icon(Icons.unfold_more_rounded),
+          onSelected: _selectSeason,
+          itemBuilder: (_) => [
+            for (final season in seasons)
+              PopupMenuItem(value: season.id, child: Text(season.name)),
+          ],
+        ),
+      ]);
 
-  /// 1-10 / 11-20 / 21-30 分段切换胶囊，选中态带主色 + 阴影，未选中浅色描边。
-  Widget _episodeRangeCapsules() {
-    final episodes = _uiEpisodes;
-    if (episodes.length <= 10) return const SizedBox.shrink();
-    final ranges = <int>[
-      for (var start = 1; start <= episodes.length; start += 10) start,
-    ];
-    final selectedStart = _episodeRangeStart.clamp(1, ranges.last);
-    final scheme = Theme.of(context).colorScheme;
-    return SizedBox(
-      height: 40,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: ranges.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (_, index) {
-          final start = ranges[index];
-          final end = (start + 9).clamp(start, episodes.length);
-          final selected = start == selectedStart;
-          return GestureDetector(
-            onTap: () => setState(() {
-              _episodeRangeStart = start;
-            }),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOutCubic,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                gradient: selected
-                    ? LinearGradient(
-                        colors: [
-                          scheme.primary,
-                          scheme.primary.withValues(alpha: 0.78),
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      )
-                    : null,
-                color: selected ? null : scheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(999),
-                border: selected
-                    ? null
-                    : Border.all(
-                        color: scheme.outlineVariant.withValues(alpha: 0.5)),
-                boxShadow: selected
-                    ? [
-                        BoxShadow(
-                          color: scheme.primary.withValues(alpha: 0.32),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ]
-                    : null,
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (selected) ...[
-                    const Icon(Icons.check_rounded,
-                        size: 14, color: Colors.white),
-                    const SizedBox(width: 4),
-                  ],
-                  Text(
-                    '$start-$end',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: selected
-                          ? FontWeight.w800
-                          : FontWeight.w700,
-                      color: selected ? Colors.white : scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildEpisodeCards() {
-    final episodes = _uiEpisodes;
-    if (episodes.isEmpty) {
-      return const SizedBox(
-          height: 220, child: Center(child: Text('本季暂无剧集')));
-    }
-    final start = _episodeRangeStart.clamp(1, episodes.length);
-    final end = start + 9 > episodes.length ? episodes.length : start + 9;
-    final visible = episodes
-        .where((episode) {
-          final n = episode.number <= 0 ? 1 : episode.number;
-          return n >= start && n <= end;
-        })
-        .toList();
-    return SizedBox(
-      height: 220,
-      child: ListView.separated(
-        controller: _episodeController,
-        scrollDirection: Axis.horizontal,
-        itemCount: visible.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (_, index) {
-          final episode = visible[index];
-          final selected = _selectedEntry?.id == episode.entry.id;
-          return SizedBox(
-            width: 220,
-            child: InkWell(
-              onTap: () => _selectEpisode(episode.entry),
-              borderRadius: BorderRadius.circular(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AspectRatio(
-                    aspectRatio: 16 / 9,
-                    child: ClipRRect(
+  Widget _buildEpisodes() => SizedBox(
+        height: 220,
+        child: _episodes.isEmpty
+            ? const Center(child: Text('本季暂无剧集'))
+            : ListView.separated(
+                controller: _episodeController,
+                scrollDirection: Axis.horizontal,
+                itemCount: _episodes.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (_, index) {
+                  final episode = _episodes[index];
+                  final selected = _selectedEntry?.id == episode.id;
+                  return SizedBox(
+                    width: 220,
+                    child: InkWell(
+                      onTap: () => _selectEpisode(episode),
                       borderRadius: BorderRadius.circular(18),
-                      child: Stack(
-                        fit: StackFit.expand,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          MediaImage(
-                            imageUrl: episode.stillUrl,
-                            httpHeaders: episode.entry.imageHeaders,
-                            fit: BoxFit.cover,
-                            cacheWidth: 440,
-                            // 飞牛分集常缺海报/剧照：加载失败时显示占位图标而非空白。
-                            errorWidget: Container(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest,
-                              alignment: Alignment.center,
-                              child: const Icon(
-                                Icons.tv_rounded,
-                                size: 30,
-                                color: Colors.black26,
-                              ),
+                          AspectRatio(
+                            aspectRatio: 16 / 9,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(18),
+                              child: Stack(fit: StackFit.expand, children: [
+                                MediaImage(
+                                  imageUrl:
+                                      episode.backdropUrl?.isNotEmpty == true
+                                          ? episode.backdropUrl
+                                          : episode.posterUrl,
+                                  httpHeaders: episode.imageHeaders,
+                                  fit: BoxFit.cover,
+                                ),
+                                if (selected)
+                                  DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .primary,
+                                          width: 4),
+                                      borderRadius: BorderRadius.circular(18),
+                                    ),
+                                  ),
+                              ]),
                             ),
                           ),
-                          if (selected)
-                            DecoratedBox(
-                              decoration: BoxDecoration(
-                                border: Border.all(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .primary,
-                                    width: 4),
-                                borderRadius: BorderRadius.circular(18),
-                              ),
-                            ),
+                          const SizedBox(height: 12),
+                          Text(episode.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 13, fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 5),
+                          Text(episode.overview ?? '',
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  height: 1.35, color: Colors.black54)),
                         ],
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(children: [
-                    Text('第 ${episode.number} 集',
-                        style:
-                            const TextStyle(fontWeight: FontWeight.w800)),
-                    const SizedBox(width: 8),
-                    if (episode.runtime != null)
-                      Text('· ${episode.runtime}m',
-                          style: const TextStyle(color: Colors.black54)),
-                    const Spacer(),
-                    if (episode.airDate?.isNotEmpty == true)
-                      Text(episode.airDate!,
-                          style: const TextStyle(color: Colors.black54)),
-                  ]),
-                  const SizedBox(height: 5),
-                  Text(episode.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 5),
-                  Text(episode.overview ?? '',
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          height: 1.35, color: Colors.black54)),
-                ],
+                  );
+                },
               ),
-            ),
-          );
-        },
-      ),
-    );
-  }
+      );
 
   Widget _buildCrossServerResourceList(String query) => Consumer(
         builder: (context, ref, _) {
