@@ -37,6 +37,9 @@ class SourcePlayback {
   /// 外部媒体 Logo（TMDB 等），用于直链源播放页顶部；服务器源无 Logo 时为空。
   final String? logoUrl;
 
+  /// 指定起播位置（聚合切换源续播用）；null 走服务端续播点/默认。
+  final Duration? startPosition;
+
   const SourcePlayback({
     required this.server,
     required this.entry,
@@ -48,6 +51,7 @@ class SourcePlayback {
     this.httpHeaders,
     this.logoUrl,
     this.playlist = const [],
+    this.startPosition,
   });
 
   int get playlistIndex => playlist.indexWhere((item) => item.id == entry.id);
@@ -63,6 +67,7 @@ class SourcePlayback {
         httpHeaders: httpHeaders,
         logoUrl: logoUrl,
         playlist: playlist,
+        startPosition: startPosition,
       );
 
   /// 供播放器内部记账/续播的稳定合成 itemId（不参与 Emby 上报）。

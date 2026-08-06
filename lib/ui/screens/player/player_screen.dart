@@ -73,12 +73,16 @@ class PlayerScreen extends ConsumerStatefulWidget {
   /// 复用本播放页全部能力（弹幕/字幕/手势/续播）。
   final SourcePlayback? sourcePlay;
 
+  /// 指定起播位置（聚合切换源续播用，单位秒）；null 走默认续播逻辑。
+  final Duration? startPosition;
+
   const PlayerScreen({
     super.key,
     required this.itemId,
     this.mediaSourceId,
     this.playerCoreOverride,
     this.sourcePlay,
+    this.startPosition,
   });
 
   @override

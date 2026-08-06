@@ -229,10 +229,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     if (coreString == 'nativeMpv') {
       // Use addPostFrameCallback to delay until after the first frame is built
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _initializePlayer();
+        _initializePlayer(startPositionOverride: widget.startPosition);
       });
     } else {
-      _initializePlayer();
+      _initializePlayer(startPositionOverride: widget.startPosition);
     }
 
     // 监听播放器设置变化并下发到播放器
@@ -681,7 +681,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       _sourcePlayMetadata = play.sourceMetadata.isEmpty
           ? null
           : Map<String, dynamic>.from(play.sourceMetadata);
-      final effectiveStart = startPosition ?? play.resumePosition;
+      final effectiveStart =
+          sp.startPosition ?? startPosition ?? play.resumePosition;
       await _playerService.initialize(
         videoUrl: play.url,
         itemId: sp.syntheticItemId,
@@ -3448,6 +3449,22 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 .firstOrNull
             : null);
     if (server == null) return;
+    // 切换前把当前进度写入本地历史（force）：Emby 新播放器/详情页 autoPlay
+    // 均从历史记录续播，保证"切换后同进度"（本地续播优先于服务端续播点）。
+    final savedPosition = _playerService.position;
+    final sourcePlay = _activeSourcePlay;
+    if (sourcePlay != null) {
+      unawaited(_reportSourceProgress(sourcePlay, force: true));
+    } else {
+      final item = ref.read(currentPlayingItemProvider);
+      if (item != null) {
+        unawaited(_writeWatchHistoryForItem(
+          item: item,
+          positionTicks: savedPosition.inMilliseconds * 10000,
+          force: true,
+        ));
+      }
+    }
     // 顶层剧集（Emby Series / 飞牛 tv|series）没有可直接播放的媒体流：
     // 直接 source-player/player 必然失败（飞牛 resolvePlay 拿不到 media_guid
     // 抛「未获取到播放媒体」；Emby Series 无媒体源）。与详情页一致，进该
@@ -3484,13 +3501,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     }
     _playerNavInFlight = true;
     if (match.sourceEntry != null) {
-      // 飞牛/直链源：完整重建播放器（保证服务/纹理/轨道都正确初始化）。
+      // 飞牛/直链源：完整重建播放器（保证服务/纹理/轨道都正确初始化），
+      // 携带当前进度续播（sp.startPosition 优先于服务端续播点）。
       context.pushReplacement('/source-player',
           extra: SourcePlayback(
             server: server,
             entry: match.sourceEntry!,
             httpHeaders: match.sourceEntry!.thumbHeaders,
             playerCoreOverride: _currentCore,
+            startPosition: savedPosition,
           ));
       return;
     }
@@ -3503,8 +3522,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       } else {
         ref.read(currentServerProvider.notifier).state = server;
       }
+      // 携带当前进度（start=秒）续播。
       context.pushReplacement(
-          '/player/${match.item.id}?core=${Uri.encodeQueryComponent(_currentCore)}');
+          '/player/${match.item.id}?core=${Uri.encodeQueryComponent(_currentCore)}&start=${savedPosition.inSeconds}');
       return;
     }
     // 其它兜底类型：进该服务器媒体详情页（详情页内选集播放）。

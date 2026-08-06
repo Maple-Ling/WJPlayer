@@ -224,6 +224,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           itemId: state.pathParameters['id']!,
           mediaSourceId: state.uri.queryParameters['mediaSourceId'],
           playerCoreOverride: state.uri.queryParameters['core'],
+          startPosition: state.uri.queryParameters['start'] != null
+              ? Duration(
+                  seconds:
+                      int.tryParse(state.uri.queryParameters['start']!) ?? 0)
+              : null,
         ),
       ),
       GoRoute(path: '/favorites', builder: (_, __) => const FavoritesScreen()),
