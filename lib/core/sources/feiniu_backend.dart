@@ -567,7 +567,7 @@ class FeiniuBackend implements MediaSourceBackend {
     // 列表条目的 TV 身份，否则详情页会被降级成“只有当前单集”。
     final type = entryType == 'TV' ? 'TV' : rawType;
     final headers = await imageHeaders(server);
-    final enriched = _itemToEntry(server, {
+    var enriched = _itemToEntry(server, {
       ...?entry.raw,
       ...merged,
       'guid': guid,
@@ -596,6 +596,26 @@ class FeiniuBackend implements MediaSourceBackend {
         } catch (_) {
           // 反查失败不阻断当前单集详情与播放。
         }
+      }
+    } else {
+      // 部分 fnOS 版本的 /item、/play/info 对剧集返回的 type 不可靠
+      // （Movie/Video/缺失，尤其搜索结果条目）。参考 fntv_danmu_all：
+      // 最终以 /season/list 是否有结果判定剧集（电影返回空列表，无副作用）。
+      // 命中则提升为剧集身份，修复"部分飞牛资源详情页不显示分集"。
+      try {
+        final trySeasons = await _listSeasons(server, guid);
+        if (trySeasons.isNotEmpty) {
+          seriesGuid = guid;
+          seasons = trySeasons;
+          enriched = _itemToEntry(server, {
+            ...?entry.raw,
+            ...merged,
+            'guid': guid,
+            'type': 'TV',
+          }, headers);
+        }
+      } catch (_) {
+        // 非剧集（电影/视频）或接口不可用：保持原类型。
       }
     }
     return FeiniuItemDetail(

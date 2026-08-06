@@ -4229,6 +4229,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   ) {
     final result = <PopupAggregateSource>[];
     final server = ref.read(currentServerProvider);
+    final serverName = (server?.name ?? '').trim();
     final currentSources = playbackInfo?.mediaSources ??
         item?.mediaSources ??
         const <MediaSource>[];
@@ -4238,7 +4239,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       result.add(
         PopupAggregateSource(
           id: key,
-          name: source.name ?? server?.name ?? '',
+          // 胶囊标题位显示**服务器名**（源名如"原画/1080P"已由 resolution
+          // 槽位展示），避免出现"不知道是哪个服务器的资源"。
+          name: serverName.isNotEmpty ? serverName : (source.name ?? ''),
           resolution: source.qualityLabel,
           metadata: _sourceMetadata(source),
           dynamicRange: video?.videoRangeLabel,
@@ -4251,10 +4254,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     for (final version in versions) {
       final key = '${version.server.id}:${version.item.id}:${version.source.id}';
       final video = version.source.primaryVideoStream;
+      final versionServerName = (version.server.name ?? '').trim();
       result.add(
         PopupAggregateSource(
           id: key,
-          name: version.server.name,
+          name: versionServerName.isNotEmpty
+              ? versionServerName
+              : (version.source.name ?? ''),
           resolution: version.source.qualityLabel,
           metadata: _sourceMetadata(version.source),
           dynamicRange: video?.videoRangeLabel,

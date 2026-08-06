@@ -178,10 +178,23 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/detail/:id',
-        builder: (context, state) => UnifiedEmbyDetailRoute(
-          itemId: state.pathParameters['id']!,
-          autoPlay: state.uri.queryParameters['autoplay'] == '1',
-        ),
+        builder: (context, state) {
+          // 支持带完整服务器+真实类型 entry 的跳转（搜索/历史/飞牛库等入口）：
+          // 避免手动 Navigator.push 与 StatefulShellRoute 混用导致的灰屏，
+          // 也避免 /detail 伪造 Movie type 造成飞牛剧集数据拉取不完整。
+          final extra = state.extra;
+          if (extra is UnifiedMediaDetailRouteExtra) {
+            return UnifiedMediaDetailScreen(
+              server: extra.server,
+              entry: extra.entry,
+              autoPlay: extra.autoPlay,
+            );
+          }
+          return UnifiedEmbyDetailRoute(
+            itemId: state.pathParameters['id']!,
+            autoPlay: state.uri.queryParameters['autoplay'] == '1',
+          );
+        },
       ),
       GoRoute(
         path: '/season/:id',

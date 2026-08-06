@@ -103,12 +103,16 @@ class _FeiniuHomeScreenState extends ConsumerState<FeiniuHomeScreen> {
         builder: (_) => FeiniuLibraryScreen(server: server, root: entry),
       ));
     } else {
-      await Navigator.of(context).push(MaterialPageRoute<void>(
-        builder: (_) => UnifiedMediaDetailScreen(
+      // 经 go_router 统一路由打开详情页（真实类型 entry），
+      // 避免手动 push 与 shell 混用导致灰屏。
+      if (!context.mounted) return;
+      await context.push(
+        '/detail/${Uri.encodeComponent(entry.id)}',
+        extra: UnifiedMediaDetailRouteExtra(
           server: server,
           entry: unifiedEntryFromSource(entry),
         ),
-      ));
+      );
     }
     if (mounted) await _load();
   }

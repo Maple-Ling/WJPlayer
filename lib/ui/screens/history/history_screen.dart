@@ -281,16 +281,18 @@ class _HistoryTile extends ConsumerWidget {
         return;
       }
       // 直接使用影视详情页整体 UI（真实类型 entry），飞牛/emby 保持一致。
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => UnifiedMediaDetailScreen(
-            server: server,
-            entry: UnifiedMediaEntry(
-              id: targetId!,
-              name: record.title,
-              type: isEpisode ? 'Series' : 'Movie',
-              posterUrl: record.sourcePosterUrl,
-            ),
+      // 经 go_router 统一路由（extra 携带真实服务器+entry），避免手动
+      // Navigator.push 与 StatefulShellRoute 混用导致播放器退出后灰屏。
+      if (!context.mounted) return;
+      await context.push(
+        '/detail/${Uri.encodeComponent(targetId!)}',
+        extra: UnifiedMediaDetailRouteExtra(
+          server: server,
+          entry: UnifiedMediaEntry(
+            id: targetId!,
+            name: record.title,
+            type: isEpisode ? 'Series' : 'Movie',
+            posterUrl: record.sourcePosterUrl,
           ),
         ),
       );
@@ -334,18 +336,19 @@ class _HistoryTile extends ConsumerWidget {
         AppToast.show(context, '该记录缺少可恢复的资源标识', kind: AppToastKind.error);
         return;
       }
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => UnifiedMediaDetailScreen(
-            server: server,
-            entry: UnifiedMediaEntry(
-              id: id!,
-              name: record.title,
-              type: server.sourceKind == SourceKind.feiniu ? 'Movie' : 'Series',
-              posterUrl: record.sourcePosterUrl,
-            ),
-            autoPlay: true,
+      // 经 go_router 统一路由打开详情页（真实服务器+entry），与 _openDetail 一致。
+      if (!context.mounted) return;
+      await context.push(
+        '/detail/${Uri.encodeComponent(id!)}',
+        extra: UnifiedMediaDetailRouteExtra(
+          server: server,
+          entry: UnifiedMediaEntry(
+            id: id!,
+            name: record.title,
+            type: server.sourceKind == SourceKind.feiniu ? 'Movie' : 'Series',
+            posterUrl: record.sourcePosterUrl,
           ),
+          autoPlay: true,
         ),
       );
     } finally {

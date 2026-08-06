@@ -39,6 +39,20 @@ UnifiedMediaEntry unifiedEntryFromSource(SourceEntry source) => UnifiedMediaEntr
       sourceEntry: source,
     );
 
+/// go_router /detail/:id 的扩展参数：携带真实服务器与完整 entry 打开详情页，
+/// 供搜索/历史/飞牛库等入口使用（避免手动 Navigator.push 与 shell 混用）。
+class UnifiedMediaDetailRouteExtra {
+  const UnifiedMediaDetailRouteExtra({
+    required this.server,
+    required this.entry,
+    this.autoPlay = false,
+  });
+
+  final ServerConfig server;
+  final UnifiedMediaEntry entry;
+  final bool autoPlay;
+}
+
 
 class UnifiedEmbyDetailRoute extends ConsumerWidget {
   const UnifiedEmbyDetailRoute({
@@ -1497,10 +1511,17 @@ class _UnifiedMediaDetailScreenState
       );
 
   void _openCrossServerMatch(ServerMatchInfo match) {
-    final server = ref
-        .read(serverListProvider)
-        .where((item) => item.id == match.sourceServerId)
-        .firstOrNull;
+    final servers = ref.read(serverListProvider);
+    // 与影视（外部）详情页一致：优先 match.sourceServerId，缺失时回退
+    // match.item.sourceServerId（部分源只在 MediaItem 上打来源标记）。
+    final server = servers
+            .where((item) => item.id == match.sourceServerId)
+            .firstOrNull ??
+        (match.item.sourceServerId != null
+            ? servers
+                .where((s) => s.id == match.item.sourceServerId)
+                .firstOrNull
+            : null);
     if (server == null) return;
     ref.read(currentServerProvider.notifier).state = server;
     if (!mounted) return;
@@ -1541,9 +1562,9 @@ class _UnifiedMediaDetailScreenState
     // Emby/飞牛的媒体详情统一入口：先切服务器再 push /detail/:id。
     final itemId = match.item.id;
     if (itemId.isNotEmpty) {
-      context.push('/detail/$itemId');
+      context.push('/detail/${Uri.encodeComponent(itemId)}');
     } else if (match.sourceEntry != null) {
-      context.push('/detail/${match.sourceEntry!.id}');
+      context.push('/detail/${Uri.encodeComponent(match.sourceEntry!.id)}');
     }
   }
 

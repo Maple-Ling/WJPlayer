@@ -235,12 +235,18 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               clipBehavior: Clip.antiAlias,
               child: ListTile(
                 contentPadding: const EdgeInsets.all(10),
-                onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                  builder: (_) => UnifiedMediaDetailScreen(
-            server: server,
-            entry: unifiedEntryFromSource(entry),
-          ),
-                )),
+                onTap: () {
+                  ref.read(currentServerProvider.notifier).state = server;
+                  ref.read(authStateProvider.notifier).state =
+                      AuthState.authenticated;
+                  context.push(
+                    '/detail/${Uri.encodeComponent(entry.id)}',
+                    extra: UnifiedMediaDetailRouteExtra(
+                      server: server,
+                      entry: unifiedEntryFromSource(entry),
+                    ),
+                  );
+                },
                 leading: SizedBox(
                   width: 58,
                   height: 86,
@@ -359,12 +365,12 @@ class _EmbyAggregateSection extends StatelessWidget {
       );
 }
 
-class _FeiniuAggregateSection extends StatelessWidget {
+class _FeiniuAggregateSection extends ConsumerWidget {
   const _FeiniuAggregateSection({required this.group});
   final FeiniuSearchGroup group;
 
   @override
-  Widget build(BuildContext context) => Column(
+  Widget build(BuildContext context, WidgetRef ref) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 12),
@@ -382,14 +388,22 @@ class _FeiniuAggregateSection extends StatelessWidget {
                 return SizedBox(
                   width: 110,
                   child: GestureDetector(
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => UnifiedMediaDetailScreen(
+                    onTap: () {
+                      // 与历史页/详情页入口一致：先切当前服务器并标记已认证，
+                      // 再经 go_router 统一路由打开（带真实类型 entry），
+                      // 避免手动 Navigator.push 与 shell 混用导致灰屏。
+                      ref.read(currentServerProvider.notifier).state =
+                          group.server;
+                      ref.read(authStateProvider.notifier).state =
+                          AuthState.authenticated;
+                      context.push(
+                        '/detail/${Uri.encodeComponent(entry.id)}',
+                        extra: UnifiedMediaDetailRouteExtra(
                           server: group.server,
                           entry: unifiedEntryFromSource(entry),
                         ),
-                      ),
-                    ),
+                      );
+                    },
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [

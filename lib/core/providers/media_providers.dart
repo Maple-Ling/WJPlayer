@@ -623,11 +623,35 @@ final rankingCrossServerMatchProvider = StreamProvider.autoDispose
         ).future);
         final playable = entries;
         if (playable.isEmpty) return null;
-        final lower = query.toLowerCase();
-        final best = playable.firstWhere(
-          (entry) => entry.name.toLowerCase() == lower,
-          orElse: () => playable.first,
-        );
+        // 严格匹配不可靠（服务器间标题可能带年份/后缀/大小写差异），
+        // 归一化（去空白/标点/小写）后优先精确相等，其次互相包含，
+        // 都失败才取第一条。避免命中无关条目导致 /play/info 404（Not Found）。
+        String norm(String s) => s
+            .toLowerCase()
+            .replaceAll(RegExp(r"[\s\-_.:()（）【】'\x22]+"), '');
+        final target = norm(query);
+        var best = playable.first;
+        var bestScore = -1;
+        for (final entry in playable) {
+          final name = norm(entry.name);
+          final type = (entry.raw?['type']?.toString() ?? '').toLowerCase();
+          int score;
+          if (name.isNotEmpty && name == target) {
+            score = 3;
+          } else if (name.isNotEmpty &&
+              (name.contains(target) || target.contains(name))) {
+            score = 2;
+          } else {
+            continue;
+          }
+          // 顶层剧集/电影优先；明确的分集降权（避免选中单集当整剧）。
+          if (type == 'episode' || type == 'season') score -= 2;
+          if (type == 'tv' || type == 'series' || type == 'movie') score += 1;
+          if (score > bestScore) {
+            bestScore = score;
+            best = entry;
+          }
+        }
         final raw = best.raw ?? const <String, dynamic>{};
         final rawType = '${raw['type'] ?? ''}'.toLowerCase();
         final type = rawType == 'episode'
