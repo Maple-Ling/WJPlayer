@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -538,6 +540,19 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
       if (type == DioExceptionType.connectionError ||
           type == DioExceptionType.unknown && e.message?.contains('SocketException') == true) {
         return '无法连接服务器：\n1. 地址或端口是否正确\n2. 当前网络是否能访问该服务器';
+      }
+      // Dio 会把 TLS 握手失败（证书过期/自签/不受信任）归为 unknown——
+      // 其他第三方客户端默认不验证证书所以能连，这里明确提示解决办法。
+      if (type == DioExceptionType.unknown) {
+        final inner = e.error;
+        final msg = '${e.message ?? ''}'.toLowerCase();
+        final isTlsFailure = inner is HandshakeException ||
+            msg.contains('handshake') ||
+            msg.contains('certificate') ||
+            msg.contains('ssl');
+        if (isTlsFailure) {
+          return 'TLS 握手失败（服务器证书过期或不受信任）：\n1. 请确认服务器证书有效\n2. 或开启该服务器的「允许不安全 TLS」';
+        }
       }
       if (status != null) {
         if (status == 400) {
