@@ -27,7 +27,9 @@ import '../../widgets/common/media_metadata_badges.dart';
 import '../../widgets/common/media_widgets.dart';
 import '../../widgets/common/adaptive_poster_blend.dart';
 import '../../widgets/common/playback_resource_card.dart';
+import '../../widgets/common/app_toast.dart';
 import '../../utils/media_helpers.dart';
+import '../../../core/utils/track_preference.dart';
 import '../discover/external_media_detail_screen.dart';
 
 UnifiedMediaEntry unifiedEntryFromSource(SourceEntry source) => UnifiedMediaEntry(
@@ -495,9 +497,14 @@ class _UnifiedMediaDetailScreenState
   int _resourceIndex = 0;
   int _audioIndex = 0;
   int _subtitleIndex = -1;
+  // 用户是否手动选过音轨/内核：手动选择优先于策略默认与 HDR 自动切换。
+  bool _audioTouched = false;
+  bool _coreTouched = false;
   int _selectedCrossServerIndex = 0;
   // 单击跨服务器资源卡选中的匹配（用于顶部播放按钮直接播放该服务器资源）。
   ServerMatchInfo? _selectedCrossServerMatch;
+  // 跨服务器资源播放防抖：连点播放键/资源卡只 push 一个页面，杜绝导航栈堆积。
+  bool _navInFlight = false;
   int _lastWatchedEpIndex = 0;
   String _core = 'nativeMpv';
   bool _loading = true;
@@ -547,9 +554,13 @@ class _UnifiedMediaDetailScreenState
           record.lastEmbyItemId == widget.entry.id);
       final record = matching.isNotEmpty ? matching.first : null;
       final core = record?.playerCore;
-      _core = core != null && core.isNotEmpty
-          ? normalizePlayerCore(core)
-          : normalizePlayerCore(ref.read(playerCoreProvider));
+      if (core != null && core.isNotEmpty) {
+        _core = normalizePlayerCore(core);
+        // 历史记录里的内核 = 用户上次观看时的手动选择，HDR 自动切换不再覆盖。
+        _coreTouched = true;
+      } else {
+        _core = normalizePlayerCore(ref.read(playerCoreProvider));
+      }
     } catch (_) {
       _scopeRecords = const [];
       _core = normalizePlayerCore(ref.read(playerCoreProvider));
@@ -586,6 +597,8 @@ class _UnifiedMediaDetailScreenState
         final core = record?.playerCore;
         if (core != null && core.isNotEmpty) {
           _core = normalizePlayerCore(core);
+          // 历史记录里的内核 = 用户上次观看时的手动选择，HDR 自动切换不再覆盖。
+          _coreTouched = true;
         } else {
           _core = normalizePlayerCore(ref.read(playerCoreProvider));
         }
@@ -771,11 +784,78 @@ class _UnifiedMediaDetailScreenState
     final resource = _resource;
     final audioMax = (resource?.audios.length ?? 0) - 1;
     final subtitleMax = (resource?.subtitles.length ?? 0) - 1;
-    _audioIndex =
-        audioMax < 0 ? 0 : _audioIndex.clamp(0, audioMax).toInt();
+    if (_audioTouched) {
+      // 用户手动选过音轨：保留选择，只做越界收拢。
+      _audioIndex = audioMax < 0 ? 0 : _audioIndex.clamp(0, audioMax).toInt();
+    } else {
+      // 首次加载/切换媒体源：按当前内核策略选默认音轨
+      // （ExoPlayer 兼容优先可解码，MPV 音质优先）。
+      _audioIndex =
+          audioMax < 0 ? 0 : _preferredAudioIndex(audioMax + 1);
+    }
     _subtitleIndex = subtitleMax < 0
         ? -1
         : _subtitleIndex.clamp(-1, subtitleMax).toInt();
+    // HDR/DV 片源 ExoPlayer 渲染/解码不理想（DV 需 gpu-next + 软解才能正确
+    // 映射 RPU，硬件 mediacodec 解 DV 会偏色）：资源加载后若仍是 ExoPlayer
+    // 内核则自动切到 MPV 原生（用户手动选过内核则不干预，尊重手动选择）。
+    if (!_coreTouched && _resourceHdrOrDv && _core == 'exoPlayer') {
+      _core = 'nativeMpv';
+    }
+  }
+
+  /// 当前内核策略下应默认选中的音频轨索引：
+  /// ExoPlayer 兼容优先（先选 Media3 必可解码的 AAC/Opus/…，DTS 系垫底），
+  /// MPV 音质优先（先选 TrueHD/DTS-HD/DTS 无损高清）。
+  int _preferredAudioIndex(int count) {
+    final audios = _resource?.audios ?? const <Map<String, dynamic>>[];
+    if (audios.isEmpty || count <= 1) return 0;
+    final sorted = sortAudioIndexes(
+      count,
+      (i) => audioCodecOf(audios[i]),
+      preferQuality: _core != 'exoPlayer',
+    );
+    return sorted.first;
+  }
+
+  /// 音频选择列表的展示顺序（按当前内核策略排序，与默认选中一致）。
+  List<int> _sortedAudioIndexes() {
+    final audios = _resource?.audios ?? const <Map<String, dynamic>>[];
+    return sortAudioIndexes(
+      audios.length,
+      (i) => audioCodecOf(audios[i]),
+      preferQuality: _core != 'exoPlayer',
+    );
+  }
+
+  /// 当前资源是否为 HDR / Dolby Vision（含 HLG/PQ/ST.2084/BT.2020 色彩信号）。
+  bool get _resourceHdrOrDv {
+    final video = _resource?.video ?? const <String, dynamic>{};
+    final text = [
+      video['video_range_type'],
+      video['video_range'],
+      video['hdr_type'],
+      video['color_transfer'],
+      video['color_primaries'],
+    ].where((e) => e != null).join(' ').toLowerCase();
+    if (text.isEmpty) return false;
+    // 明确 SDR 色彩信号直接排除，不冒充 HDR。
+    if (text.contains('sdr') ||
+        text.contains('bt709') ||
+        text.contains('smpte170m') ||
+        text.contains('bt601') ||
+        text.contains('bt470')) {
+      return false;
+    }
+    return text.contains('dolby') ||
+        text.contains('dovi') ||
+        text.contains('dvhe') ||
+        text.contains('hdr10+') ||
+        text.contains('hdr10') ||
+        text.contains('hlg') ||
+        text.contains('pq') ||
+        text.contains('st2084') ||
+        text.contains('bt2020');
   }
 
   void _updateResume(UnifiedMediaEntry entry) {
@@ -956,6 +1036,12 @@ class _UnifiedMediaDetailScreenState
     }
     final detail = _detail!;
     final entry = detail.entry;
+    // 跨服检索关键词：优先外部详情标题（与影视 A 页同源：干净无后缀，命中率高），
+    // 缺失时回退服务器条目名（可能带年份/分辨率等后缀，服务器顶层搜索易落空）。
+    final externalTitle = _externalDetail?.title?.trim();
+    final resourceQuery = (externalTitle != null && externalTitle.isNotEmpty)
+        ? externalTitle
+        : entry.name;
     final background = _backgroundColor ?? Theme.of(context).scaffoldBackgroundColor;
     return Scaffold(
       backgroundColor: background,
@@ -1073,12 +1159,12 @@ class _UnifiedMediaDetailScreenState
                 _sectionTitle(
                   '播放资源',
                   trailing: TextButton(
-                    onPressed: () => _showAllCrossServerResources(entry.name),
+                    onPressed: () => _showAllCrossServerResources(resourceQuery),
                     child: const Text('查看更多  ›'),
                   ),
                 ),
                 const SizedBox(height: 14),
-                _buildCrossServerResourceList(entry.name),
+                _buildCrossServerResourceList(resourceQuery),
                 if (_peopleList.isNotEmpty) ...[
                   const SizedBox(height: 20),
                   _sectionTitle('演员'),
@@ -1321,45 +1407,69 @@ class _UnifiedMediaDetailScreenState
         },
       );
 
-  void _openCrossServerMatch(ServerMatchInfo match) {
-    final servers = ref.read(serverListProvider);
-    // 与影视（外部）详情页一致：优先 match.sourceServerId，缺失时回退
-    // match.item.sourceServerId（部分源只在 MediaItem 上打来源标记）。
-    final server = servers
-            .where((item) => item.id == match.sourceServerId)
-            .firstOrNull ??
-        (match.item.sourceServerId != null
-            ? servers
-                .where((s) => s.id == match.item.sourceServerId)
-                .firstOrNull
-            : null);
-    if (server == null) return;
-    ref.read(currentServerProvider.notifier).state = server;
-    if (!mounted) return;
-    if (match.sourceEntry != null) {
-      context.push('/source-player',
-          extra: SourcePlayback(server: server, entry: match.sourceEntry!));
-      return;
-    }
-    // 与影视（外部）详情页同路径：按 item 的源服务器同步可用服务器再进 /player/:id，
-    // 避免 currentServer 与资源归属不一致导致聚合资源无法播放。
-    if (match.item.type == 'Movie' || match.item.type == 'Episode') {
-      final origin = match.item.sourceServerId;
-      if (origin != null) {
-        ref.read(currentServerProvider.notifier).syncWithAvailableServers(
-            ref.read(serverListProvider),
-            preferredServerId: origin);
-      } else {
-        ref.read(currentServerProvider.notifier).state = server;
+  Future<void> _openCrossServerMatch(ServerMatchInfo match) async {
+    if (_navInFlight) return;
+    _navInFlight = true;
+    try {
+      final servers = ref.read(serverListProvider);
+      // 与影视（外部）详情页一致：优先 match.sourceServerId，缺失时回退
+      // match.item.sourceServerId（部分源只在 MediaItem 上打来源标记）。
+      final server = servers
+              .where((item) => item.id == match.sourceServerId)
+              .firstOrNull ??
+          (match.item.sourceServerId != null
+              ? servers
+                  .where((s) => s.id == match.item.sourceServerId)
+                  .firstOrNull
+              : null);
+      if (server == null) return;
+      ref.read(currentServerProvider.notifier).state = server;
+      // 顶层剧集（Emby Series / 飞牛 tv|series）没有可直接播放的媒体流：
+      // 直接 source-player/player 必然失败（飞牛 resolvePlay 拿不到 media_guid
+      // 抛「未获取到播放媒体」；Emby Series 无媒体源）。与双击一致，进该服务器
+      // 详情页选集播放，并 toast 说明去向，避免“点了没反应/跳回原页”的错觉。
+      final feiniuType = match.sourceEntry
+          ?.raw?['type']
+          ?.toString()
+          .trim()
+          .toLowerCase();
+      final isTopLevelTv = match.sourceEntry != null
+          ? (feiniuType == 'tv' || feiniuType == 'series')
+          : match.item.type == 'Series';
+      if (isTopLevelTv) {
+        AppToast.show(context, '整剧资源：已进入「${server.name}」详情页，请选择剧集播放',
+            position: AppToastPosition.topCenter);
+        _openServerDetail(match);
+        return;
       }
       if (!mounted) return;
-      context.push('/player/${match.item.id}');
-      return;
+      if (match.sourceEntry != null) {
+        await context.push('/source-player',
+            extra: SourcePlayback(server: server, entry: match.sourceEntry!));
+        return;
+      }
+      // 与影视（外部）详情页同路径：按 item 的源服务器同步可用服务器再进 /player/:id，
+      // 避免 currentServer 与资源归属不一致导致聚合资源无法播放。
+      if (match.item.type == 'Movie' || match.item.type == 'Episode') {
+        final origin = match.item.sourceServerId;
+        if (origin != null) {
+          ref.read(currentServerProvider.notifier).syncWithAvailableServers(
+              ref.read(serverListProvider),
+              preferredServerId: origin);
+        } else {
+          ref.read(currentServerProvider.notifier).state = server;
+        }
+        if (!mounted) return;
+        await context.push('/player/${match.item.id}');
+        return;
+      }
+      // 兜底：其它类型进该服务器媒体详情页（详情页内选集播放）。
+      if (!mounted) return;
+      openMediaItem(ref, context, match.item);
+    } finally {
+      // push 完成后释放防抖标志，允许后续再次进入播放。
+      _navInFlight = false;
     }
-    // Series 等顶层剧集：进入该服务器对应的媒体详情页（详情页内选集播放），
-    // 与 A 页聚合资源行为一致；不能直接 push /player（Series 无可播源）。
-    if (!mounted) return;
-    openMediaItem(ref, context, match.item);
   }
 
   /// 双击跨服务器资源卡：进入该服务器对应的媒体详情页（复用 UnifiedMediaDetailScreen）。
@@ -2171,6 +2281,7 @@ class _UnifiedMediaDetailScreenState
                 setState(() {
                   _resourceIndex = value;
                   _audioIndex = 0;
+                  _audioTouched = false;
                   _subtitleIndex = -1;
                   _normalizeTracks();
                 });
@@ -2181,6 +2292,15 @@ class _UnifiedMediaDetailScreenState
       );
 
   void _showCorePicker() => _showPicker(children: [
+        if (_resourceHdrOrDv)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 6, 16, 10),
+            child: Text(
+              '检测到 HDR/DV 片源，已推荐 MPV 内核渲染（DV 需软解 + gpu-next 才不偏色）',
+              style: TextStyle(
+                  fontSize: 12, color: Color(0xFFE8930C), height: 1.4),
+            ),
+          ),
         RadioListTile<String>(
           value: 'exoPlayer',
           groupValue: _core,
@@ -2188,7 +2308,10 @@ class _UnifiedMediaDetailScreenState
           subtitle: const Text('Android Media3，轻量硬解'),
           onChanged: (value) {
             if (value == null) return;
-            setState(() => _core = value);
+            setState(() {
+              _core = value;
+              _coreTouched = true;
+            });
             Navigator.pop(context);
           },
         ),
@@ -2199,7 +2322,10 @@ class _UnifiedMediaDetailScreenState
           subtitle: const Text('全格式、多音轨与高级字幕'),
           onChanged: (value) {
             if (value == null) return;
-            setState(() => _core = value);
+            setState(() {
+              _core = value;
+              _coreTouched = true;
+            });
             Navigator.pop(context);
           },
         ),
@@ -2207,14 +2333,17 @@ class _UnifiedMediaDetailScreenState
 
   void _showAudioPicker() => _showPicker(
         children: [
-          for (var index = 0; index < _resource!.audios.length; index++)
+          for (final index in _sortedAudioIndexes())
             RadioListTile<int>(
               value: index,
               groupValue: _audioIndex,
               title: Text(_trackLabel(_resource!.audios[index], index, '音轨')),
               onChanged: (value) {
                 if (value == null) return;
-                setState(() => _audioIndex = value);
+                setState(() {
+                  _audioIndex = value;
+                  _audioTouched = true;
+                });
                 Navigator.pop(context);
               },
             ),

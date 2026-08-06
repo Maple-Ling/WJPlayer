@@ -71,3 +71,64 @@ MediaStream? matchPreferredStream(List<MediaStream> streams, String? regex) {
   }
   return null;
 }
+
+/// 音频 codec 优先级（数值越小越优先）。
+///
+/// [preferQuality] = true（mpv 系内核，软解任意格式）：**音质优先**——
+/// 无损/高清（TrueHD、DTS-HD MA、DTS-HD、DTS）排前，压缩格式靠后；
+/// = false（ExoPlayer 内核）：**兼容优先**——手机 MediaCodec 通常没有
+/// DTS/TrueHD 解码器，Media3 内置软解（AAC/Opus/Vorbis/MP3/FLAC/PCM）必可
+/// 播排前，设备硬解（AC3/EAC3/WMA）次之，基本不可解的 DTS 系排最后
+/// （仅当整片没有任何可解音轨时才轮到它，配合自动切内核兜底）。
+///
+/// 注意：具体格式必须排在泛格式之前（contains 匹配），如
+/// `dts-hd ma` → `dts-hd` → `dts`。
+int audioCodecRank(String? codec, {required bool preferQuality}) {
+  final c = (codec ?? '').trim().toLowerCase();
+  const qualityOrder = <String>[
+    'truehd', 'dts-hd ma', 'dts-hd master audio', 'dts-hd', 'dts',
+    'eac3', 'ac3', 'flac', 'opus', 'vorbis', 'aac', 'mp3', 'pcm', 'wma',
+  ];
+  const compatOrder = <String>[
+    'aac', 'opus', 'vorbis', 'mp3', 'flac', 'pcm',
+    'ac3', 'eac3', 'wma',
+    'dts', 'truehd', 'dts-hd',
+  ];
+  final order = preferQuality ? qualityOrder : compatOrder;
+  for (var i = 0; i < order.length; i++) {
+    if (c.contains(order[i])) return i;
+  }
+  return order.length;
+}
+
+/// 提取任意音频轨道结构里的 codec 名：兼容详情页 audios Map
+/// （codec_name/codec/Codec）、unifiedResource.audios（codec_name）与
+/// [MediaStream]（codec）。取不到返回空串。
+String audioCodecOf(Object? track) {
+  if (track == null) return '';
+  if (track is MediaStream) return track.codec ?? '';
+  if (track is Map) {
+    for (final key in const ['codec_name', 'codec', 'Codec', 'audio_codec']) {
+      final v = track[key]?.toString();
+      if (v != null && v.trim().isNotEmpty) return v.trim();
+    }
+  }
+  return '';
+}
+
+/// 按内核策略对音频轨道排序：返回排序后的索引列表，**第一个即应默认选中**。
+/// 同优先级保持原顺序（稳定排序）。
+List<int> sortAudioIndexes(
+  int count,
+  String Function(int index) codecOf, {
+  required bool preferQuality,
+}) {
+  final indexes = List<int>.generate(count, (i) => i);
+  indexes.sort((a, b) {
+    final ra = audioCodecRank(codecOf(a), preferQuality: preferQuality);
+    final rb = audioCodecRank(codecOf(b), preferQuality: preferQuality);
+    if (ra != rb) return ra.compareTo(rb);
+    return a.compareTo(b);
+  });
+  return indexes;
+}

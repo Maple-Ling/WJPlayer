@@ -152,6 +152,10 @@ class VideoPlayerService extends ChangeNotifier {
   /// 一旦定向即锁死整段手势，避免竖向调亮度/音量时手指轻微横移误触发进度跳变。
   int _gestureAxis = 0;
 
+  /// 本次手势的音量/亮度基准是否已从系统校准完成；完成前竖向滑动不写系统，
+  /// 避免以初始 1.0 为基准导致音量瞬间顶满/亮度拉满的顿挫。
+  bool _dragBaselineReady = true;
+
   /// 交互区配置（由播放页从设置项注入，缺省维持旧行为：左亮度/右音量、横向可调进度）。
   String _leftVerticalAction = 'brightness';
   String _rightVerticalAction = 'volume';
@@ -1514,6 +1518,46 @@ class VideoPlayerService extends ChangeNotifier {
     await endPageSystemControls();
   }
 
+  /// App 进入后台（切任务栏/回桌面/切走）：播放器仍存活但离开播放界面，
+  /// 立即把系统亮度/音量恢复为进入播放器时的原始值，不让播放器内的调节
+  /// 值影响用户在桌面/其它 app 的观感。会话与快照保持不动，回前台由
+  /// [reapplyForForeground] 重新应用播放器内的调节值。
+  Future<void> restoreForBackground() async {
+    if (!Platform.isAndroid) return;
+    final snapshot = _pageSystemControlsSnapshot;
+    if (snapshot == null) return;
+    try {
+      if (snapshot.brightness != null) {
+        await _systemControls.invokeMethod<num>('setBrightness', {
+          'value': snapshot.brightness,
+        });
+      }
+      if (snapshot.volume != null) {
+        await _systemControls.invokeMethod<num>('setMediaVolume', {
+          'value': snapshot.volume,
+        });
+      }
+    } catch (_) {
+      // 单个通道失败不阻塞恢复。
+    }
+  }
+
+  /// App 回到前台（从任务栏/桌面返回播放界面）：把播放器内当前调节的
+  /// 音量/亮度重新应用到系统（与 [restoreForBackground] 配对）。
+  Future<void> reapplyForForeground() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _systemControls.invokeMethod<num>('setBrightness', {
+        'value': _currentBrightness,
+      });
+      await _systemControls.invokeMethod<num>('setMediaVolume', {
+        'value': _currentVolume,
+      });
+    } catch (_) {
+      // 通道不可用时忽略（保持内核内音量）。
+    }
+  }
+
   /// 设置系统窗口亮度。系统通道不可用时保留软件亮度值，保证其它平台不崩溃。
   Future<void> setBrightness(double brightness) async {
     _currentBrightness = brightness.clamp(0.01, 1.0).toDouble();
@@ -1595,9 +1639,48 @@ class VideoPlayerService extends ChangeNotifier {
     _dragPreviewPosition = position;
     _dragStartVolume = volume;
     _dragStartBrightness = _currentBrightness;
+    // 系统值 hydration（进入播放器时异步读取）可能尚未完成，此时 volume/
+    // brightness 仍是初始 1.0 —— 直接用作手势基准会把系统音量瞬间顶满/
+    // 亮度拉满（顿挫感来源）。手势开始即从系统重读真实值校准基准，校准
+    // 完成前（毫秒级）竖向手势暂不写系统。
+    _dragBaselineReady = false;
+    unawaited(_syncDragStartBaseline());
     _lastHapticPercent = -1;
     _cancelHideControlsTimer();
     notifyListeners();
+  }
+
+  /// 手势基准校准：从系统读取当前真实音量/亮度（不依赖异步 hydration 的
+  /// 完成时序），更新本次手势的滑动基准，保证「从系统当前值继续增减」。
+  /// 原生通道读取通常 <10ms；期间竖向手势暂不写系统，避免 hydration 未
+  /// 完成时以初始 1.0 为基准把系统音量瞬间顶满（顿挫感来源）。
+  Future<void> _syncDragStartBaseline() async {
+    if (!Platform.isAndroid) {
+      _dragBaselineReady = true;
+      return;
+    }
+    try {
+      final values = await Future.wait<num?>([
+        _systemControls.invokeMethod<num>('getBrightness'),
+        _systemControls.invokeMethod<num>('getMediaVolume'),
+      ]);
+      if (!_isDragging) return;
+      if (values[0] != null) {
+        final b = values[0]!.toDouble().clamp(0.01, 1.0).toDouble();
+        _dragStartBrightness = b;
+        _currentBrightness = b;
+      }
+      if (values[1] != null) {
+        final v = values[1]!.toDouble().clamp(0.0, 1.0).toDouble();
+        _dragStartVolume = v;
+        _currentVolume = v;
+      }
+    } catch (_) {
+      // 通道不可用时维持原基准（hydration 成功时即为系统值）。
+    } finally {
+      _dragBaselineReady = true;
+      if (_isDragging) notifyListeners();
+    }
   }
 
   void onDragUpdate(DragUpdateDetails details, BoxConstraints constraints) {
@@ -1646,7 +1729,9 @@ class VideoPlayerService extends ChangeNotifier {
       _dragPreviewPosition = Duration(milliseconds: newPositionMs);
       notifyListeners();
     } else if (_gestureAxis == 2) {
-      // 竖向滑动（亮度/音量）：一次从 0 滑到 100%（全屏高度 = 满值）
+      // 竖向滑动（亮度/音量）：一次从 0 滑到 100%（全屏高度 = 满值）。
+      // 基准未从系统校准完成前不写系统（毫秒级），避免起点跳变顿挫。
+      if (!_dragBaselineReady) return;
       _isScrubbingPosition = false;
       final delta = -dy / height;
       if (activeVerticalAction == 'brightness') {

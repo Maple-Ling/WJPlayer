@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/api/emby_api.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/providers/reveal_hidden_provider.dart';
@@ -39,7 +42,7 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
     });
   }
 
-  /// 连点三次顶部“服务器”标题：切换隐藏服务器显示/隐藏。
+  /// 连点三次顶部“服务器”标题：切换隐藏服务器显示/隐藏（纯功能，无提示）。
   void _onTitleTap() {
     final now = DateTime.now();
     if (_lastTitleTap != null &&
@@ -53,8 +56,33 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
       // 三击显隐是全局状态（聚合搜索也跟随：显示出来的隐藏服务器可被搜索）。
       final next = !ref.read(revealHiddenServersProvider);
       ref.read(revealHiddenServersProvider.notifier).state = next;
-      AppToast.show(context, next ? '已显示隐藏服务器' : '已隐藏服务器');
     }
+  }
+
+  /// 首次把服务器设为隐藏时，提示顶部三连击的找回方式（全局只提示一次）。
+  Future<void> _maybeShowHiddenTip(BuildContext context) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('wjplayer_hidden_tip_shown') ?? false) return;
+    await prefs.setBool('wjplayer_hidden_tip_shown', true);
+    if (!context.mounted) return;
+    AppToast.show(
+      context,
+      '小逼崽子，慌啥呢！顶部服务器三连击！',
+      duration: const Duration(seconds: 10),
+    );
+  }
+
+  /// 首次点「显示卡片」恢复隐藏服务器时的确认（全局只提示一次）。
+  Future<void> _maybeShowUnhideTip(BuildContext context) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('wjplayer_unhide_tip_shown') ?? false) return;
+    await prefs.setBool('wjplayer_unhide_tip_shown', true);
+    if (!context.mounted) return;
+    AppToast.show(
+      context,
+      '小逼崽子，可算不怂了！',
+      duration: const Duration(seconds: 10),
+    );
   }
 
   @override
@@ -167,30 +195,18 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
   }
 
   Widget _buildServerList(BuildContext context, List<ServerConfig> servers) {
-    if (_gridLayout) {
-      return GridView.builder(
-        padding: const EdgeInsets.all(12),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 10,
-          mainAxisSpacing: 10,
-          childAspectRatio: 1.12,
-        ),
-        itemCount: servers.length,
-        itemBuilder: (context, index) {
-          final server = servers[index];
-          return _ServerCard(
-            key: ValueKey(server.id),
-            server: server,
-            compact: true,
-            onTap: () => _openServer(context, server),
-            onMoreTap: () => _showServerMenu(context, ref, server),
-          );
-        },
-      );
-    }
+    // 双排（grid）与单排共用 ReorderableListView：长按卡片拖动排序，
+    // 排序结果经 serverListProvider.reorderServers 持久化。
     return ReorderableListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(_gridLayout ? 12 : 16),
+      gridDelegate: _gridLayout
+          ? const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              childAspectRatio: 1.12,
+            )
+          : null,
       itemCount: servers.length,
       onReorder: (oldIndex, newIndex) {
         ref.read(serverListProvider.notifier).reorderServers(oldIndex, newIndex);
@@ -200,6 +216,7 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
         return _ServerCard(
           key: ValueKey(server.id),
           server: server,
+          compact: _gridLayout,
           onTap: () => _openServer(context, server),
           onMoreTap: () => _showServerMenu(context, ref, server),
         );
@@ -250,9 +267,18 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
               title: Text(server.hidden ? '显示卡片' : '隐藏卡片'),
               onTap: () {
                 Navigator.pop(context);
+                final hiding = !server.hidden;
                 ref
                     .read(serverListProvider.notifier)
-                    .setHidden(server.id, !server.hidden);
+                    .setHidden(server.id, hiding);
+                if (hiding) {
+                  // 首次点「隐藏卡片」：提示顶部三连击找回方式（10s/点击取消，
+                  // 全局只提示一次）。
+                  unawaited(_maybeShowHiddenTip(context));
+                } else {
+                  // 首次点「显示卡片」恢复显示：确认一句（点击取消，只一次）。
+                  unawaited(_maybeShowUnhideTip(context));
+                }
               },
             ),
             ListTile(

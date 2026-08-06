@@ -44,7 +44,18 @@ class _EditServerScreenState extends ConsumerState<EditServerScreen> {
   Widget build(BuildContext context) {
     final server = _server;
     return Scaffold(
-      appBar: AppBar(title: const Text('编辑服务器')),
+      appBar: AppBar(
+        title: const Text('编辑服务器'),
+        actions: [
+          IconButton(
+            tooltip: '更换图标',
+            icon: const Icon(Icons.image_outlined),
+            onPressed: server == null
+                ? null
+                : () => context.push('/icons/${server.id}'),
+          ),
+        ],
+      ),
       body: server == null
           ? const SizedBox.shrink()
           : ServerEditorForm(

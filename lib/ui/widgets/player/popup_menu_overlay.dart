@@ -8,6 +8,7 @@ import '../../../core/providers/media_providers.dart';
 import '../../../core/providers/playback_providers.dart';
 import '../../../core/providers/unified_resource_provider.dart';
 import '../../../core/sources/unified_media_adapter.dart';
+import '../../../core/utils/track_preference.dart';
 import '../common/playback_resource_card.dart';
 
 const Color popupMenuBlue = Color(0xFF4A7BD0);
@@ -1207,6 +1208,7 @@ class PopupTrackMenu extends StatelessWidget {
     this.onExternalSubtitle,
     this.onOpenSettings,
     this.unifiedResource,
+    this.preferQualityAudio = false,
   });
 
   final String title;
@@ -1217,6 +1219,10 @@ class PopupTrackMenu extends StatelessWidget {
   final VoidCallback? onExternalSubtitle;
   final VoidCallback? onOpenSettings;
   final UnifiedMediaResource? unifiedResource;
+
+  /// 音频菜单排序策略：true = 音质优先（MPV 内核），false = 兼容优先（ExoPlayer）。
+  /// 与详情页音频按钮、播放器默认选轨同一套排序（track_preference.audioCodecRank）。
+  final bool preferQualityAudio;
 
   @override
   Widget build(BuildContext context) {
@@ -1274,7 +1280,16 @@ class PopupTrackMenu extends StatelessWidget {
       final isAudio = title == '音频轨道';
       final trackList = isAudio ? unified.audios : unified.subtitles;
       if (trackList.isNotEmpty) {
-        return trackList.map((t) => PopupTrackOption(
+        // 音频菜单按当前内核策略排序（兼容优先/音质优先），与详情页同步；
+        // 字幕保持原顺序。排序只影响展示顺序，选中态按 label 匹配不受影响。
+        final ordered = isAudio
+            ? sortAudioIndexes(
+                trackList.length,
+                (i) => audioCodecOf(trackList[i]),
+                preferQuality: preferQualityAudio,
+              ).map((i) => trackList[i]).toList()
+            : trackList;
+        return ordered.map((t) => PopupTrackOption(
           label: unifiedTrackLabel(t, unified.isFeiniu),
         )).toList();
       }
@@ -1942,6 +1957,7 @@ class PopupMenuOverlay extends ConsumerWidget {
           selectedTrack: selectedAudioTrack,
           onTrackSelected: onAudioTrackChanged,
           unifiedResource: unifiedResource,
+          preferQualityAudio: selectedCore != 'exoPlayer',
         );
       case PopupMenuId.subtitle:
         return PopupTrackMenu(

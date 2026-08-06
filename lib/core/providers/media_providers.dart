@@ -756,9 +756,9 @@ class ServerMatchInfo {
 /// 未隐藏**服务器，各自搜索并挑一条最佳，单台失败只记日志跳过，不拖垮其余。
 /// 过滤规则与首页状态栏聚合搜索一致：隐藏服务器（server.hidden == true）/
 /// 未登录 / 隐藏库一律排除。
-/// - Emby：仅保留 Movie/Series 顶层条目；query 含 S\d{1,2}E\d{1,3} 时额外
-///   保留 Episode（A 页 Discover 详情带「剧名 S01E02」精确匹配到集，纯标题
-///   的 BCD/播放器聚合不会误选单集）。精确同名优先，否则取第一条；
+/// - Emby：仅保留 Movie/Series 顶层条目（search API 的 IncludeItemTypes
+///   硬编码 Movie,Series，单集不可达，不做 Episode 分支）。精确同名优先，
+///   否则取第一条；
 /// - 飞牛：归一化评分（精确 3 分 > 互相包含 2 分，episode/season 降权、
 ///   tv/movie/series 加分），避免「名称近似但货不对板」的误匹配。
 /// 每台「搜索+匹配+详情」完成后即增量 emit（Stream.fromFutures，哪台先命中
@@ -819,15 +819,10 @@ final rankingCrossServerMatchProvider = StreamProvider.autoDispose
       final client = ref.read(serverApiClientProvider(server.id));
       if (client == null) return null;
       final items = await client.search.search(query, cancelToken: cancelToken);
+      // Emby search API 的 IncludeItemTypes 硬编码 Movie,Series，
+      // 返回里不可能有 Episode，只保留 Movie/Series 顶层条目即可。
       final topLevel = items.where((item) {
-        if (item.type == 'Movie' || item.type == 'Series') return true;
-        if (item.type != 'Episode') return false;
-        // A 页「剧名 S01E02」搜索时允许保留 Episode 让该集精确命中；
-        // 纯标题（BCD/播放器聚合）不会误选单集当整剧。
-        final hasEpisodeQuery = RegExp(r'\bS\d{1,2}E\d{1,3}\b',
-                caseSensitive: false)
-            .hasMatch(query);
-        return hasEpisodeQuery;
+        return item.type == 'Movie' || item.type == 'Series';
       }).where((item) {
         // 排除隐藏库（与搜索页聚合同规则）。
         if (item.parentId != null && hiddenLibraries.contains(item.parentId)) {

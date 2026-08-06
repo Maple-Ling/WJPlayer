@@ -18,6 +18,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   int _lastSourceProgressSecond = -1;
   bool _sourceCompletionReported = false;
   String? _sourceCoreOverride;
+  // ExoPlayer 解码器初始化失败（DTS 等硬件不支持）时自动切 MPV 重试，只切一次。
+  bool _autoCoreFallbackTried = false;
   double? _initialVideoAspectRatio;
   // 当前 Anime4K 超分档位（off/modeA/…/modeAC），供顶栏面板高亮选中项。
   String _anime4kMode = 'off';
@@ -323,6 +325,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   Future<void> _initializePlayer({Duration? startPositionOverride}) async {
+    // 每次（重新）初始化都允许再次自动内核降级（手动切回 ExoPlayer 后仍生效）。
+    _autoCoreFallbackTried = false;
     // 路由未显式指定时，先恢复该媒体上次手动选择的内核；没有覆盖才使用系统默认。
     if (_sourceCoreOverride == null && _activeSourcePlay == null) {
       final remembered =
@@ -905,6 +909,22 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       if (audioMatch != null) {
         selectedAudioIndex = audioMatch.index;
         ref.read(audioTrackProvider.notifier).state = audioMatch.index;
+      } else {
+        // 未配置正则/无命中：按内核策略默认选轨——ExoPlayer 兼容优先（先选
+        // Media3 必可解码的 AAC/Opus/…，DTS 系垫底），MPV 音质优先（先选
+        // TrueHD/DTS-HD/DTS）。与详情页音频按钮同一套排序（track_preference）。
+        final preferQuality = normalizePlayerCore(
+                _sourceCoreOverride ?? ref.read(playerCoreProvider)) !=
+            'exoPlayer';
+        final sorted = sortAudioIndexes(
+          audioStreams.length,
+          (i) => audioCodecOf(audioStreams[i]),
+          preferQuality: preferQuality,
+        );
+        if (sorted.isNotEmpty) {
+          selectedAudioIndex = audioStreams[sorted.first].index;
+          ref.read(audioTrackProvider.notifier).state = selectedAudioIndex;
+        }
       }
     }
     if (selectedAudioIndex != null) {
@@ -1732,6 +1752,39 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     }
   }
 
+  /// ExoPlayer 解码器初始化失败（DTS 等手机 MediaCodec 不支持）时自动切
+  /// MPV 内核重试一次。SDR 片源通常已由音轨兼容排序（track_preference）选中
+  /// 可解码音轨而不会走到这里；走到这里说明整片没有可解音轨（如全 DTS 蓝光
+  /// 原盘）或解码器初始化失败，切 MPV 软解兜底。HDR/DV 片源在详情页已默认
+  /// MPV 内核，也不会走到这里。
+  void _maybeAutoFallbackCore() {
+    if (_autoCoreFallbackTried) return;
+    final currentCore = normalizePlayerCore(
+        _sourceCoreOverride ?? ref.read(playerCoreProvider));
+    if (currentCore != 'exoPlayer') return;
+    final message = _playerService.errorMessage ?? '';
+    if (!_isDecoderInitFailure(message)) return;
+    _autoCoreFallbackTried = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      AppToast.show(context, '当前内核无法解码该媒体，已自动切换到 MPV 内核重试',
+          position: AppToastPosition.topCenter);
+      _switchCore('nativeMpv');
+    });
+  }
+
+  bool _isDecoderInitFailure(String message) {
+    final lower = message.toLowerCase();
+    return lower.contains('decoder_init_failed') ||
+        lower.contains('decoder init failed') ||
+        lower.contains('no decoder') ||
+        (lower.contains('codec') && lower.contains('unsupported')) ||
+        lower.contains('audio/vnd.dts') ||
+        lower.contains('audio/vnd.dts.hd') ||
+        lower.contains('audio/true-hd') ||
+        lower.contains('audio/eac3');
+  }
+
   /// 点按「跳过片头/片尾」：片尾且开启自动连播则切下一集，否则 seek 到段末。
   void _onIntroSkipPressed(SkipPrompt prompt) {
     if (prompt.kind == SkipKind.outro &&
@@ -1784,10 +1837,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused) {
+    // 离开播放界面（切任务栏/回桌面/切到其它 app）即恢复系统亮度与音量；
+    // 回到前台再重新应用播放器内调节的值。退出播放器页面由 dispose 的
+    // restoreSystemControls 负责（销毁会话并恢复）。
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
       final sp = _activeSourcePlay;
       if (sp != null) unawaited(_reportSourceProgress(sp, force: true));
       _playerService.pause();
+      unawaited(_playerService.restoreForBackground());
+    } else if (state == AppLifecycleState.resumed) {
+      unawaited(_playerService.reapplyForForeground());
     }
   }
 
@@ -1894,17 +1954,44 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   meta: _metaLabel(item, mediaSource),
                   serverName: server?.name ?? '',
                   serverLine: lineName,
-                  serverIcon: server?.iconUrl?.isNotEmpty == true
+                  serverIcon: server != null
                       ? ClipRRect(
                           borderRadius: BorderRadius.circular(5),
-                          child: MediaImage(
-                            imageUrl: server!.iconUrl,
+                          child: SizedBox(
                             width: 22,
                             height: 22,
-                            fit: BoxFit.contain,
-                            useDefaultUserAgent: true,
-                            errorWidget: const Icon(Icons.dns_outlined,
-                                size: 14, color: Colors.white70),
+                            child: server.iconUrl?.isNotEmpty == true
+                                ? MediaImage(
+                                    imageUrl: server.iconUrl,
+                                    width: 22,
+                                    height: 22,
+                                    fit: BoxFit.contain,
+                                    useDefaultUserAgent: true,
+                                    errorWidget: const Icon(
+                                        Icons.dns_outlined,
+                                        size: 14,
+                                        color: Colors.white70),
+                                  )
+                                // 未设置自定义图标：按服务器类型显示类型图标
+                                // （飞牛→fnico / Emby→emby_default），与
+                                // 服务器列表页同款，统一 22×22 缩放。
+                                : server.sourceKind == SourceKind.feiniu
+                                    ? Image.asset(
+                                        'assets/images/fnico.png',
+                                        fit: BoxFit.contain,
+                                        errorBuilder: (_, __, ___) =>
+                                            const Icon(Icons.movie,
+                                                size: 14,
+                                                color: Colors.white70),
+                                      )
+                                    : Image.asset(
+                                        EmbyDefaultIcon.asset,
+                                        fit: BoxFit.contain,
+                                        errorBuilder: (_, __, ___) =>
+                                            const Icon(Icons.dns_outlined,
+                                                size: 14,
+                                                color: Colors.white70),
+                                      ),
                           ),
                         )
                       : null,
@@ -2113,7 +2200,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             const Center(
               child: CircularProgressIndicator(color: Colors.white),
             ),
-          if (_playerService.hasError)
+          if (_playerService.hasError) {
+            _maybeAutoFallbackCore();
             Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 420),
@@ -4005,11 +4093,94 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     return item.name;
   }
 
+  /// 进度条上方 meta 信息行（用户指定的固定顺序）：
+  /// 内核 · 分辨率 · HDR · 编码 · 码率 · 帧率 · 封装 · 体积。
+  /// Emby 走 MediaSource.primaryVideoStream；飞牛/网盘 source-player 走
+  /// unifiedResource（normalizeMediaStream 归一化）兜底。
   String _metaLabel(MediaItem? item, MediaSource? source) {
     final parts = <String>[];
+
+    // 1. 内核
     final core = _currentCore == 'exoPlayer' ? 'exo' : 'mpv';
     parts.add(core);
+
+    // 2. 数据源：Emby 主视频流 vs 飞牛归一化 video map
+    final video = source?.primaryVideoStream;
+    final unified = _activeSourcePlay != null
+        ? ref.read(unifiedResourceProvider)
+        : null;
+    final uniVideo = unified?.video;
+    Object? uniPick(List<String> keys) {
+      if (uniVideo == null) return null;
+      for (final key in keys) {
+        final value = uniVideo[key];
+        if (value != null && value.toString().isNotEmpty) return value;
+      }
+      return null;
+    }
+
+    // 3. 分辨率（宽度为主分档，4K 宽屏电影不被裁切比例误判）
+    String resolution = '';
+    if (video != null && video.width != null && video.height != null) {
+      resolution = video.resolution;
+    } else if (uniVideo != null) {
+      final w = (uniPick(['width']) as num?)?.toInt() ?? 0;
+      final h = (uniPick(['height']) as num?)?.toInt() ?? 0;
+      if (w > 0 && h > 0) {
+        resolution = _resolutionLabelFromSize(w, h);
+      }
+    }
+    if (resolution.isNotEmpty) parts.add(resolution);
+
+    // 4. HDR（SDR 不显示，避免占位噪声）
+    String hdr = '';
+    if (video != null) {
+      final range = video.videoRangeType ?? video.videoRange;
+      if (range != null && range.toUpperCase() != 'SDR') {
+        hdr = video.isDolbyVision
+            ? 'DV'
+            : (range.toUpperCase() == 'HDR10+' ? 'HDR10+' : range);
+      }
+    } else {
+      final range =
+          uniPick(['video_range_type', 'video_range', 'hdr_type'])
+              ?.toString()
+              .trim();
+      if (range != null && range.isNotEmpty && range.toUpperCase() != 'SDR') {
+        hdr = range.toUpperCase() == 'DOVI' ? 'DV' : range;
+      }
+    }
+    if (hdr.isNotEmpty) parts.add(hdr);
+
+    // 5. 编码（HEVC / H.264 / AV1 …）
+    final enc = video?.videoCodecLabel ?? _unifiedCodecLabel(uniVideo);
+    if (enc.isNotEmpty) parts.add(enc);
+
+    // 6. 码率
+    final bitrateRaw = uniPick(['bitrate', 'bit_rate', 'BitRate']);
+    final bitrate = video?.bitRate ??
+        (bitrateRaw is num ? bitrateRaw.toInt() : int.tryParse('${bitrateRaw ?? ''}'));
+    if (bitrate != null && bitrate > 0) {
+      parts.add('${(bitrate / 1000000).toStringAsFixed(1)}Mbps');
+    }
+
+    // 7. 帧率
+    final fpsRaw = uniPick(['real_frame_rate', 'realFrameRate', 'fps']);
+    final avgRaw = uniPick(['average_frame_rate']);
+    final fps = video?.realFrameRate ??
+        video?.averageFrameRate ??
+        (fpsRaw is num
+            ? fpsRaw.toDouble()
+            : double.tryParse('${fpsRaw ?? ''}')) ??
+        (avgRaw is num ? avgRaw.toDouble() : double.tryParse('${avgRaw ?? ''}'));
+    if (fps != null && fps > 0) {
+      parts
+          .add('${fps.toStringAsFixed(fps == fps.roundToDouble() ? 0 : 1)}fps');
+    }
+
+    // 8. 封装格式
     final container = (source?.container ??
+            uniPick(['container', 'format', 'file_format'])?.toString() ??
             _pathExtension(source?.path ??
                 _activeSourcePlay?.entry.id ??
                 item?.path))
@@ -4017,16 +4188,58 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     if (container != null && container.isNotEmpty) {
       parts.add(container.toLowerCase());
     }
-    final video = source?.primaryVideoStream;
-    final bitrate = video?.bitRate;
-    if (bitrate != null && bitrate > 0) {
-      parts.add('${(bitrate / 1000000).toStringAsFixed(1)}Mbps');
+
+    // 9. 媒体体积
+    final sizeRaw = uniPick(['size', 'file_size', 'Size', 'length']);
+    final size = source?.size ??
+        (sizeRaw is num ? sizeRaw.toInt() : int.tryParse('${sizeRaw ?? ''}'));
+    if (size != null && size > 0) {
+      parts.add(_formatFileSize(size));
     }
-    final fps = video?.realFrameRate ?? video?.averageFrameRate;
-    if (fps != null && fps > 0) {
-      parts.add('${fps.toStringAsFixed(fps == fps.roundToDouble() ? 0 : 1)}fps');
-    }
+
     return parts.join(' · ');
+  }
+
+  /// 分辨率档位标签（宽度为主，高度兜底）——与 MediaStream.resolution 同规则，
+  /// 供飞牛 unifiedResource（无 resolution 字段，只有 width/height）使用。
+  String _resolutionLabelFromSize(int w, int h) {
+    if (w >= 7600 || h >= 4300) return '8K';
+    if (w >= 3600 || h >= 2000) return '4K';
+    if (w >= 1800 || h >= 1000) return '1080p';
+    if (w >= 1200 || h >= 700) return '720p';
+    if (w >= 640 || h >= 480) return '480p';
+    if (h > 0) return '${h}p';
+    return '';
+  }
+
+  /// 飞牛 codec_name 规范化标签（与 Emby videoCodecLabel 同一套映射）。
+  String _unifiedCodecLabel(Map<String, dynamic>? video) {
+    final c = (video?['codec_name']?.toString() ?? '').trim().toLowerCase();
+    if (c.isEmpty) return '';
+    if (c.contains('hevc') || c.contains('h265') || c.contains('h.265')) {
+      return 'HEVC';
+    }
+    if (c.contains('avc') || c.contains('h264') || c.contains('h.264')) {
+      return 'H.264';
+    }
+    if (c.contains('av1')) return 'AV1';
+    if (c.contains('vp9')) return 'VP9';
+    if (c.contains('vp8')) return 'VP8';
+    if (c.contains('mpeg4')) return 'MPEG-4';
+    return c.toUpperCase();
+  }
+
+  /// 字节数 → 人类可读体积（B/KB/MB/GB/TB）。
+  String _formatFileSize(int bytes) {
+    if (bytes <= 0) return '';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    var value = bytes.toDouble();
+    var unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit++;
+    }
+    return '${value.toStringAsFixed(value >= 100 ? 0 : 2)} ${units[unit]}';
   }
 
   String _logoText(MediaItem? item) =>
@@ -5374,6 +5587,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   Future<void> _switchCore(String core) async {
     final savedPosition = _playerService.position;
+    // 飞牛/网盘 source-player 路径：mpv↔exo 的轨道 id 不通用，切核后
+    // _applySourceTrackPreferences 只按 SourcePlayback 初始值重选（详情页
+    // 传入的列表索引），内核菜单里选的字幕会被覆盖成「关闭」。这里在内核
+    // 销毁前捕获当前实际选中轨道的身份（语言/标题），重建后在新内核轨道
+    // 里按身份匹配恢复。Emby 路径已有 provider（MediaStream index）机制，
+    // 身份恢复对其无副作用。
+    final subtitleIdentity = _selectedTrackIdentity('text');
+    final audioIdentity = _selectedTrackIdentity('audio');
     final normalizedCore = normalizePlayerCore(core);
     // 播放器界面修改只写当前媒体覆盖，不触碰系统默认内核。
     _sourceCoreOverride = normalizedCore;
@@ -5383,6 +5604,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _activePlayerService = _playerService;
     _playerService.addListener(_onPlayerUpdate);
     await _initializePlayer(startPositionOverride: savedPosition);
+    if (subtitleIdentity != null) {
+      unawaited(_restoreTrackByIdentity('text', subtitleIdentity));
+    }
+    if (audioIdentity != null) {
+      unawaited(_restoreTrackByIdentity('audio', audioIdentity));
+    }
     if (mounted) {
       final normalized = normalizePlayerCore(core);
       final label = switch (normalized) {
@@ -5392,6 +5619,72 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       };
       AppToast.show(context, '已切换到 $label',
           position: AppToastPosition.topCenter);
+    }
+  }
+
+  /// 当前内核中实际选中的轨道身份（language/title），用于内核切换后按身份
+  /// 在新内核轨道里恢复选择。无选中轨道返回 null。
+  Map<String, dynamic>? _selectedTrackIdentity(String type) {
+    for (final t in _playerService.tracksInfo) {
+      final ty = '${t['type']}'.toLowerCase();
+      final isTarget = type == 'text'
+          ? (ty == 'text' || ty == 'bitmap')
+          : ty == type;
+      if (!isTarget) continue;
+      if (t['isSelected'] == true || t['selected'] == true) {
+        final language = t['language']?.toString().trim();
+        final title = t['title']?.toString().trim();
+        if ((language == null || language.isEmpty) &&
+            (title == null || title.isEmpty)) {
+          return null;
+        }
+        return {'language': language, 'title': title};
+      }
+    }
+    return null;
+  }
+
+  bool _sameTrackIdentity(
+      Map<String, dynamic> track, Map<String, dynamic> identity) {
+    final lang = track['language']?.toString().trim().toLowerCase() ?? '';
+    final title = track['title']?.toString().trim().toLowerCase() ?? '';
+    final wantLang = (identity['language'] as String? ?? '').trim().toLowerCase();
+    final wantTitle = (identity['title'] as String? ?? '').trim().toLowerCase();
+    if (wantTitle.isNotEmpty && wantLang.isNotEmpty) {
+      return title == wantTitle && lang == wantLang;
+    }
+    if (wantTitle.isNotEmpty) return title == wantTitle;
+    if (wantLang.isNotEmpty) return lang == wantLang;
+    return false;
+  }
+
+  /// 内核切换后按轨道身份（语言/标题）在新内核轨道里恢复选择：轮询直到
+  /// 轨道就绪（mpv demux 大流可能要十几秒），匹配到就选中，就绪后仍未
+  /// 匹配到则保持现状（不强制关闭字幕）。
+  Future<void> _restoreTrackByIdentity(
+      String type, Map<String, dynamic> identity) async {
+    for (var attempt = 0; attempt < 100; attempt++) {
+      if (!mounted) return;
+      final tracks = _playerService.tracksInfo.where((t) {
+        final ty = '${t['type']}'.toLowerCase();
+        final isTarget =
+            type == 'text' ? (ty == 'text' || ty == 'bitmap') : ty == type;
+        return isTarget && t['id'] != 'auto' && t['id'] != 'no';
+      }).toList();
+      if (tracks.isNotEmpty) {
+        for (final t in tracks) {
+          if (_sameTrackIdentity(t, identity)) {
+            if (type == 'audio') {
+              await _playerService.selectAudioTrack(t['id'].toString());
+            } else {
+              await _playerService.selectSubtitleTrack(t['id'].toString());
+            }
+            return;
+          }
+        }
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 200));
     }
   }
 

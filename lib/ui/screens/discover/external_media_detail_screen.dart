@@ -15,6 +15,7 @@ import '../../widgets/common/collapsible_overview.dart';
 import '../../widgets/common/media_widgets.dart';
 import '../../widgets/common/adaptive_poster_blend.dart';
 import '../../widgets/common/playback_resource_card.dart';
+import '../../widgets/common/app_toast.dart';
 
 class ExternalMediaDetailScreen extends ConsumerStatefulWidget {
   const ExternalMediaDetailScreen({super.key, required this.entry});
@@ -33,12 +34,11 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
   bool _hasSelectedServer = false;
   Color? _backgroundColor;
 
-  String _matchQuery(ExternalMediaDetail detail) {
-    if (detail.mediaType != 'tv') return detail.title;
-    final season = _season.toString().padLeft(2, '0');
-    final episode = _episode?.number.toString().padLeft(2, '0');
-    return episode == null ? '${detail.title} S$season' : '${detail.title} S${season}E$episode';
-  }
+  /// 跨服务器搜索关键词：一律用纯标题（与 BCD 详情页/播放器聚合一致）。
+  /// 注意：不能拼接 SxxExx —— Emby search 的 IncludeItemTypes 硬编码
+  /// Movie,Series（单集永远搜不到），飞牛库内 contains 匹配也必空，
+  /// 带季集号只会让顶层剧集/电影全部落空。
+  String _matchQuery(ExternalMediaDetail detail) => detail.title;
 
   @override
   Widget build(BuildContext context) {
@@ -469,6 +469,16 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
     if (source != null && server != null) {
       ref.read(currentServerProvider.notifier).state = server;
       if (!context.mounted) return;
+      // 飞牛顶层剧集（tv/series）无直接媒体流：resolvePlay 拿不到 media_guid
+      // 必报「未获取到播放媒体」，与 BCD 一致改为进该服务器详情选集播放。
+      final feiniuType =
+          source.raw?['type']?.toString().trim().toLowerCase();
+      if (feiniuType == 'tv' || feiniuType == 'series') {
+        AppToast.show(context, '整剧资源：已进入「${server.name}」详情页，请选择剧集播放',
+            position: AppToastPosition.topCenter);
+        context.push('/detail/${Uri.encodeComponent(source.id)}');
+        return;
+      }
       context.push('/source-player', extra: SourcePlayback(server: server, entry: source));
       return;
     }
