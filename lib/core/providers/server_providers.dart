@@ -11,6 +11,7 @@ import '../services/secure_credential_store.dart';
 import '../services/server_icon_cache.dart';
 import '../sources/source_credentials.dart';
 import '../sources/source_kind.dart';
+import '../services/watch_history/watch_history_store.dart';
 import 'app_preferences.dart';
 import 'watch_history_store_provider.dart';
 
