@@ -9,6 +9,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:sensors_plus/sensors_plus.dart';
 import '../../../core/api/api_interfaces.dart';
 import '../../../core/network/prefetch_proxy/prefetch_proxy.dart';
 import '../../../core/providers/app_providers.dart';

@@ -456,9 +456,8 @@ class ServerListNotifier extends StateNotifier<List<ServerConfig>> {
       return server;
     }).toList();
     _saveServers();
-    if (hidden && !wasHidden) {
-      unawaited(watchHistoryStore?.deleteByScopePrefix(serverId));
-    }
+    // 隐藏不再删除观看历史：隐藏只是从列表/检索中隐藏，服务器卡片的
+    // 最近观影信息保留（播放器写入历史已有 hidden 拦截，不会新增记录）。
   }
 }
 

@@ -19,6 +19,7 @@ import '../../../core/providers/server_card_stats_provider.dart';
 import '../../../core/providers/server_providers.dart';
 import '../../../core/providers/watch_history_providers.dart';
 import '../../../core/services/watch_history/watch_history_models.dart';
+import '../../../core/services/home_data_cache.dart';
 import '../../../core/sources/media_source_backend.dart';
 import '../../../core/sources/source_playback.dart';
 import '../../../core/sources/unified_media_adapter.dart';
@@ -39,6 +40,37 @@ UnifiedMediaEntry unifiedEntryFromSource(SourceEntry source) => UnifiedMediaEntr
       posterUrl: source.thumbUrl,
       imageHeaders: source.thumbHeaders,
       sourceEntry: source,
+    );
+
+/// 首页缓存用的精简序列化（仅展示字段，不落 sourceEntry/headers 等重对象）。
+Map<String, dynamic> _entryToCacheJson(UnifiedMediaEntry e) => {
+      'id': e.id,
+      'name': e.name,
+      'type': e.type,
+      'posterUrl': e.posterUrl,
+      'backdropUrl': e.backdropUrl,
+      'year': e.year,
+      'rating': e.rating,
+      'overview': e.overview,
+      'progress': e.progress,
+      'indexNumber': e.indexNumber,
+      'runtime': e.runtime,
+      'airDate': e.airDate,
+    };
+
+UnifiedMediaEntry _entryFromCacheJson(dynamic j) => UnifiedMediaEntry(
+      id: '${j['id'] ?? ''}',
+      name: '${j['name'] ?? ''}',
+      type: '${j['type'] ?? 'Movie'}',
+      posterUrl: j['posterUrl']?.toString(),
+      backdropUrl: j['backdropUrl']?.toString(),
+      year: (j['year'] as num?)?.toInt(),
+      rating: (j['rating'] as num?)?.toDouble(),
+      overview: j['overview']?.toString(),
+      progress: (j['progress'] as num?)?.toDouble(),
+      indexNumber: (j['indexNumber'] as num?)?.toInt(),
+      runtime: (j['runtime'] as num?)?.toInt(),
+      airDate: j['airDate']?.toString(),
     );
 
 /// go_router /detail/:id 的扩展参数：携带真实服务器与完整 entry 打开详情页，
@@ -139,25 +171,58 @@ class _UnifiedMediaHomeScreenState
     });
     final adapter = _adapter(server);
     try {
-      final results = await Future.wait<dynamic>([
-        adapter.libraries(),
-        adapter.continueWatching().catchError(
-              (_) => const <UnifiedContinueItem>[],
-            ),
-      ]);
+      // 首页数据走本地缓存（24h）：首次/过期才请求网络，之后打开秒开，
+      // 避免每次启动都重新拉库列表/继续观看/预览（图标与媒体信息）。
+      final libraries = await HomeDataCache.load<List<UnifiedMediaLibrary>>(
+        serverId: server.id,
+        dataType: 'libraries',
+        decode: (json) => (json as List)
+            .map((j) => UnifiedMediaLibrary(
+                id: '${j['id']}', name: '${j['name'] ?? ''}'))
+            .toList(),
+        load: () => adapter.libraries(),
+        encode: (v) =>
+            v.map((e) => {'id': e.id, 'name': e.name}).toList(),
+      );
+      final continueItems = await HomeDataCache
+          .load<List<UnifiedContinueItem>>(
+        serverId: server.id,
+        dataType: 'resume',
+        decode: (json) => (json as List)
+            .map((j) => UnifiedContinueItem(
+                  entry: _entryFromCacheJson(j['entry']),
+                  progress:
+                      (j['progress'] as num?)?.toDouble() ?? 0,
+                ))
+            .toList(),
+        load: () => adapter.continueWatching(),
+        encode: (v) => v
+            .map((e) => {
+                  'entry': _entryToCacheJson(e.entry),
+                  'progress': e.progress,
+                })
+            .toList(),
+      );
       if (!mounted || server.id != _serverId) return;
       final hiddenLibraries = ref.read(hiddenLibrariesProvider);
-      final libraries = (results[0] as List<UnifiedMediaLibrary>)
+      final visibleLibraries = libraries
           .where((library) => !hiddenLibraries.contains(library.id))
           .toList();
       setState(() {
-        _libraries = libraries;
-        _continueItems = results[1] as List<UnifiedContinueItem>;
+        _libraries = visibleLibraries;
+        _continueItems = continueItems;
         _loading = false;
       });
-      await Future.wait(libraries.map((library) async {
+      await Future.wait(visibleLibraries.map((library) async {
         try {
-          final items = await adapter.preview(library.id);
+          final items = await HomeDataCache.load<List<UnifiedMediaEntry>>(
+            serverId: server.id,
+            dataType: 'latest:${library.id}',
+            decode: (json) =>
+                (json as List).map(_entryFromCacheJson).toList(),
+            load: () => adapter.preview(library.id),
+            encode: (v) => v.map(_entryToCacheJson).toList(),
+          );
           if (mounted && server.id == _serverId) {
             setState(() => _previews[library.id] = items);
           }

@@ -436,7 +436,6 @@ class _MainShellState extends ConsumerState<MainShell> {
     SystemNavigator.pop();
   }
 
-  bool get _isHomePage => widget.currentPath == '/home';
   bool get _isServerListPage => widget.currentPath == '/servers';
   bool get _supportsFloatingTabBar => switch (widget.currentPath) {
         '/discover' ||
@@ -450,10 +449,9 @@ class _MainShellState extends ConsumerState<MainShell> {
       };
 
   bool _onScrollNotification(ScrollNotification notification) {
-    if (!_isHomePage) return false;
-
-    // 按滚动方向控制底部栏：内容下滑（手指上滑浏览）→ 收缩成仅搜索按钮
-    // 并保持；内容上滑（回看）→ 展开完整 tab 栏。
+    // 按滚动方向控制底部栏（所有 tab 页面生效，不限 /home）：
+    // 内容下滑（手指上滑浏览）→ 收缩成仅搜索按钮并保持；
+    // 内容上滑（回看）→ 展开完整 tab 栏。
     if (notification is ScrollUpdateNotification) {
       final delta = notification.scrollDelta ?? 0;
       if (delta > 1.5) {
@@ -520,7 +518,7 @@ class _MainShellState extends ConsumerState<MainShell> {
                   valueListenable: _tabCollapsed,
                   builder: (context, collapsed, _) => _FloatingTabBar(
                     navigationShell: widget.navigationShell,
-                    collapsed: _isServerListPage ? false : collapsed,
+                    collapsed: collapsed,
                     onExpand: () => _tabCollapsed.value = false,
                   ),
                 )

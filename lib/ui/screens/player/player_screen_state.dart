@@ -14,6 +14,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   Offset _tapDownPosition = Offset.zero;
   DateTime _tapDownTime = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _pendingTapTimer;
+  // 陀螺仪画面翻转：手机上下颠倒（加速度计 y 轴符号翻转）→ 画面 180° 翻转。
+  bool _videoFlipped = false;
+  StreamSubscription<AccelerometerEvent>? _accelSub;
   bool _tapWasDoubleTap = false;
   bool _isSliderDragging = false;
   double? _sliderDragValue;
@@ -226,6 +229,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _playerService.addListener(_onPlayerUpdate);
     unawaited(VideoPlayerService.beginPageSystemControls());
     unawaited(_playerService.hydrateSystemControls());
+    _startAccelerometerFlipDetection();
 
     // Delay initialization when using nativeMpv to allow SurfaceView to be created
     // This ensures the AndroidView is rendered before we try to use the SurfaceView
@@ -1870,6 +1874,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     WidgetsBinding.instance.removeObserver(this);
     // 离开播放器恢复系统息屏策略。
     WakelockPlus.disable();
+    _accelSub?.cancel();
+    _accelSub = null;
     _pendingTapTimer?.cancel();
     _statusTimer?.cancel();
     SystemInfoService.instance.stop();
@@ -2153,19 +2159,30 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         child: Stack(
           fit: StackFit.expand,
           children: [
-            if (_playerService.coreType == PlayerCoreType.exoPlayer)
-            ClipRect(
-              child: Transform.scale(
-                scale: _videoZoom,
-                child: _buildVideoArea(),
+            // 陀螺仪翻转：手机上下颠倒时画面 180° 旋转（含字幕层一起翻）。
+            AnimatedRotation(
+              turns: _videoFlipped ? 0.5 : 0,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOutCubic,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (_playerService.coreType == PlayerCoreType.exoPlayer)
+                    ClipRect(
+                      child: Transform.scale(
+                        scale: _videoZoom,
+                        child: _buildVideoArea(),
+                      ),
+                    )
+                  else
+                    _buildVideoArea(),
+                  // Exo 字幕固定在播放器层，不参与视频比例/填充/裁剪。
+                  if (_playerService.coreType == PlayerCoreType.exoPlayer)
+                    _buildExoSubtitleOverlay(),
+                ],
               ),
-            )
-          else
-            _buildVideoArea(),
-          // Exo 字幕固定在播放器层，不参与视频比例/填充/裁剪。
-          if (_playerService.coreType == PlayerCoreType.exoPlayer)
-            _buildExoSubtitleOverlay(),
-          if (!Platform.isAndroid && _playerService.brightness < 1.0)
+            ),
+            if (!Platform.isAndroid && _playerService.brightness < 1.0)
             Positioned.fill(
               child: IgnorePointer(
                 child: ColoredBox(
@@ -2486,6 +2503,28 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   /// 全屏轻点按下：记录位置与时间（供抬起时判定轻点）。
+  /// 陀螺仪画面翻转：监听加速度计，手机上下颠倒（竖屏/横屏时 y 轴
+  /// 都是屏幕的"上下"方向，倒置时 y 符号翻转）→ 画面 180° 翻转。
+  /// 带死区（>4 m/s²）防抖动；传感器不可用/无权限时静默（画面不变）。
+  void _startAccelerometerFlipDetection() {
+    try {
+      _accelSub = accelerometerEventStream(
+        samplingPeriod: SensorInterval.normalInterval,
+      ).listen((event) {
+        if (!mounted) return;
+        final upsideDown = event.y > 4.0;
+        if (upsideDown != _videoFlipped) {
+          setState(() => _videoFlipped = upsideDown);
+        }
+      }, onError: (_) {
+        _accelSub?.cancel();
+        _accelSub = null;
+      });
+    } catch (_) {
+      // 传感器不可用：保持画面不变。
+    }
+  }
+
   void _onTapDown(PointerDownEvent event) {
     if (_playerService.isLocked) return;
     // 连点/双击的后续一击：取消上一次点击的 pending toggle（不触发 UI 切换），
