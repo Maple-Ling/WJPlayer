@@ -1381,13 +1381,21 @@ class _PopupEpisodesMenuState extends State<PopupEpisodesMenu> {
       );
     }
 
+    // 一页 5 集的精确高度：行高（Padding 7×2 + 12px 文本行 ≈ 31px）× 5 + 分隔线 4 ≈ 159px。
+    // 原固定 220px 底部冗余约 60px 空白、比例失调；现按内容量精算，并在极端矮屏
+    // （横屏）按视口比例收缩，最低保留 2 行高度，避免面板过高或溢出。
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final panelHeight = math.max(
+      66.0,
+      math.min(159.0, screenHeight * 0.26),
+    );
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const PopupMenuTitle(title: '选集'),
         SizedBox(
-          height: 220,
+          height: panelHeight,
           child: PageView.builder(
             controller: _pageController,
             itemCount: _pageCount,
@@ -1399,6 +1407,8 @@ class _PopupEpisodesMenuState extends State<PopupEpisodesMenu> {
                 episodes: widget.episodes.sublist(start, end),
                 selectedEpisode: widget.selectedEpisode,
                 onEpisodeSelected: widget.onEpisodeSelected,
+                // 容器被视口压缩（极端矮屏）时允许滚动查看被裁行。
+                scrollable: panelHeight < 159.0,
               );
             },
           ),
@@ -1448,17 +1458,24 @@ class _PopupEpisodePage extends StatelessWidget {
     required this.episodes,
     required this.selectedEpisode,
     required this.onEpisodeSelected,
+    this.scrollable = false,
   });
 
   final List<PopupEpisodeOption> episodes;
   final int selectedEpisode;
   final ValueChanged<int> onEpisodeSelected;
 
+  /// 容器高度被视口压缩（极端矮屏）时允许滚动查看被裁行；正常高度保持
+  /// 每页固定 5 集不可滚动，翻页即换一批。
+  final bool scrollable;
+
   @override
   Widget build(BuildContext context) {
     return ListView.separated(
       padding: const EdgeInsets.symmetric(horizontal: 8),
-      physics: const NeverScrollableScrollPhysics(),
+      physics: scrollable
+          ? const AlwaysScrollableScrollPhysics()
+          : const NeverScrollableScrollPhysics(),
       itemCount: episodes.length,
       separatorBuilder: (_, __) => Divider(
         height: 1,
@@ -1472,7 +1489,7 @@ class _PopupEpisodePage extends StatelessWidget {
           behavior: HitTestBehavior.opaque,
           onTap: () => onEpisodeSelected(episode.index),
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
+            padding: const EdgeInsets.symmetric(vertical: 7),
             child: Row(
               children: [
                 SizedBox(
@@ -1753,20 +1770,19 @@ class PopupMenuOverlay extends ConsumerWidget {
                         separatorBuilder: (_, __) => const SizedBox(width: 10),
                         itemBuilder: (_, index) {
                           final match = matches[index];
-                          final source = match.item.mediaSources?.firstOrNull;
+                          final info = matchPlaybackInfo(match);
                           return SizedBox(
                             width: 250,
                             child: PlaybackResourceCard(
                               serverName: match.serverName,
                               isBest: index == 0,
                               isSelected: index == crossSelectedIndex,
-                              resolution: source?.qualityLabel,
-                              dynamicRange:
-                                  source?.primaryVideoStream?.videoRangeLabel,
-                              codec:
-                                  source?.primaryVideoStream?.videoCodecLabel,
-                              size: source?.size,
-                              bitrate: source?.primaryVideoStream?.bitRate,
+                              resolution: info.resolution,
+                              dynamicRange: info.dynamicRange,
+                              codec: info.codec,
+                              frameRate: info.frameRate,
+                              size: info.size,
+                              bitrate: info.bitrate,
                               // 单击 = 直接播放该服务器资源（复用详情页播放链路）。
                               onTap: () {
                                 setState(() => crossSelectedIndex = index);

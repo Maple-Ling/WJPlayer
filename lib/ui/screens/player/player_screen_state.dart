@@ -9,9 +9,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   double? _sliderDragValue;
   bool _decoderSwitchInFlight = false;
   Timer? _longPressTimer;
-  Timer? _gestureHintTimer;
   Timer? _statusTimer;
-  String? _seekHint;
   Timer? _sleepTimer;
   Timer? _sourceProgressTimer;
   Map<String, dynamic>? _sourcePlayMetadata;
@@ -375,6 +373,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         : buildOfflinePlaybackSelection(itemId: widget.itemId);
     final mediaSource = selection.mediaSource;
     _sanitizeSelectionState(mediaSource);
+    // 媒体信息统一源头：无论从详情页还是其它入口（历史/搜索/继续观看/聚合
+    // 切换）进入播放器，都用当前实际播放的 MediaSource 兜底/刷新
+    // unifiedResource（转换逻辑与详情页 mediaResources 一致），保证右上角
+    // 媒体信息菜单显示与详情页底部同源的分辨率/帧率/码率/体积/HDR/编码。
+    if (mediaSource != null) {
+      ref.read(unifiedResourceProvider.notifier).state =
+          unifiedResourceFromMediaSource(mediaSource);
+    }
     final videoStream = mediaSource?.primaryVideoStream;
     _initialVideoAspectRatio = _streamDisplayAspectRatio(videoStream);
 
@@ -693,6 +699,20 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       ]);
       await _playerService.play();
       _startSourceProgressReporting(sp);
+      // 媒体信息统一源头：/source-player 路径（飞牛库页/播放器聚合切换等
+      // 非详情页入口）下 unifiedResource 可能为空或残留旧媒体值；异步拉
+      // mediaDetails 填充当前媒体的完整流信息（失败静默，不阻塞播放），
+      // 保证右上角媒体信息菜单与详情页底部同源。
+      unawaited(() async {
+        try {
+          final details = await FeiniuBackend().mediaDetails(sp.server, sp.entry);
+          if (!mounted) return;
+          ref.read(unifiedResourceProvider.notifier).state =
+              unifiedResourceFromFeiniuDetails(details);
+        } catch (_) {
+          // 流信息拉取失败不影响播放本身。
+        }
+      }());
       if (play.subtitles.isNotEmpty) {
         try {
           await _playerService.loadLibassSubtitle(play.subtitles.first.url);
@@ -1773,7 +1793,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     unawaited(_playerService.restoreSystemControls());
     _playerService.dispose();
     _longPressTimer?.cancel();
-    _gestureHintTimer?.cancel();
     _speedRampTimer?.cancel();
     _skipButtonTimer?.cancel();
     _sleepTimer?.cancel();
@@ -1844,8 +1863,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   isPlaying: _playerService.isPlaying,
                   position: _playerService.position,
                   duration: _playerService.duration,
-                  bufferedProgress: _playerService.bufferedProgress,
-                  title: item?.name ?? '',
+                  isScrubbingPosition: _playerService.isScrubbingPosition,
+                  dragPreviewProgress: _playerService.isScrubbingPosition
+                      ? _playerService.displayProgress
+                      : _playerService.isSeekSettling
+                          ? _playerService.displayProgress
+                          : null,
+                  isSeekSettling: _playerService.isSeekSettling,
                   episode: _episodeLabel(item),
                   meta: _metaLabel(item, mediaSource),
                   serverName: server?.name ?? '',
@@ -1917,8 +1941,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   onPrevious: _playPrevious,
                   onNext: _playNext,
                   onPlayPause: () => _playerService.togglePlay(),
-                  onSeek: (progress) =>
-                      _playerService.seekTo(_durationFromProgress(progress)),
+                  onSeek: (progress) {
+                    // 拖动过程中只由 Slider 本地状态和 Overlay 预览更新；
+                    // 不在每个 onChanged 帧向播放器发 seek。
+                  },
+                  onSeekChangeEnd: (progress) =>
+                      _playerService.commitSeek(_durationFromProgress(progress)),
                   onPlaybackRateChanged: (speed) =>
                       _playerService.setSpeed(speed),
                   onAspectRatioChanged: _setAspectRatioValue,
@@ -2129,11 +2157,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             ),
           if (_playerService.isAdjustingLevel)
             _buildGestureIndicator(),
-          if (_seekHint != null) _buildSeekHint(),
           if (_isLongPressing) _buildLongPressIndicator(),
-          if (_playerService.isDragging &&
-              _playerService.isScrubbingPosition)
-            _buildDragIndicator(),
           if (_showSkipButton)
             Positioned(
               top: 100,
@@ -2341,26 +2365,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     }
     final screenWidth = MediaQuery.of(context).size.width;
     final tapX = details.globalPosition.dx;
-
     final step = ref.read(skipForwardStepProvider);
     // 四等分手势：左 1/4 快退，中间 1/2 播放/暂停，右 1/4 快进。
     if (tapX < screenWidth / 4) {
       _playerService.seekBy(Duration(seconds: -step));
-      _showSeekHint('«  -${step}s');
     } else if (tapX > screenWidth * 3 / 4) {
       _playerService.seekBy(Duration(seconds: step));
-      _showSeekHint('+${step}s  »');
     } else {
       _playerService.togglePlay();
     }
-  }
-
-  void _showSeekHint(String text) {
-    _gestureHintTimer?.cancel();
-    setState(() => _seekHint = text);
-    _gestureHintTimer = Timer(const Duration(milliseconds: 900), () {
-      if (mounted) setState(() => _seekHint = null);
-    });
   }
 
   void _onLongPressStart() {
@@ -2420,43 +2433,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     );
   }
 
-  // HUD uses a transparent horizontal bar without a background panel.
-  Widget _hintBar(String text, {IconData? icon}) {
-    return Align(
-      // 拖动提示无底色并靠近上半区，避免遮挡视频主体。
-      alignment: const Alignment(0, -0.5),
-      child: IgnorePointer(
-        child: Container(
-          constraints: const BoxConstraints(minWidth: 100, maxWidth: 280),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (icon != null) ...[
-                Icon(icon, color: Colors.white, size: 17),
-                const SizedBox(width: 6),
-              ],
-              Flexible(
-                child: Text(
-                  text,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildLongPressIndicator() => Align(
         alignment: const Alignment(0, -0.72),
         child: IgnorePointer(
@@ -2471,8 +2447,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           ),
         ),
       );
-
-  Widget _buildSeekHint() => _hintBar(_seekHint ?? '');
 
   Widget _buildControlsOverlay(MediaItem? item) {
     // 上下渐变蒙版：让顶/底栏文字在任意画面上都清晰，中间画面不被遮。
@@ -3280,9 +3254,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 itemBuilder: (context, index) {
                   final match = matches[index];
                   final server = ref
-                      .read(serverListProvider)
-                      .where((s) => s.id == match.sourceServerId)
-                      .firstOrNull;
+                          .read(serverListProvider)
+                          .where((s) => s.id == match.sourceServerId)
+                          .firstOrNull ??
+                      (match.item.sourceServerId != null
+                          ? ref
+                              .read(serverListProvider)
+                              .where(
+                                  (s) => s.id == match.item.sourceServerId)
+                              .firstOrNull
+                          : null);
                   return ActionChip(
                     avatar: const Icon(Icons.cloud_done_rounded, size: 17),
                     label: Text(server?.name ?? '未知服务器'),
@@ -3305,10 +3286,18 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   void _switchToCrossServerMatch(ServerMatchInfo match) {
     if (_playerNavInFlight) return;
     // 切换聚合资源：播放进度与内核保持不变，仅换源起播。
+    // 与详情页一致：优先 match.sourceServerId（飞牛打标），
+    // 缺失时回退 match.item.sourceServerId（Emby 由公共链路在 item 上打标）。
     final server = ref
-        .read(serverListProvider)
-        .where((s) => s.id == match.sourceServerId)
-        .firstOrNull;
+            .read(serverListProvider)
+            .where((s) => s.id == match.sourceServerId)
+            .firstOrNull ??
+        (match.item.sourceServerId != null
+            ? ref
+                .read(serverListProvider)
+                .where((s) => s.id == match.item.sourceServerId)
+                .firstOrNull
+            : null);
     if (server == null) return;
     _playerNavInFlight = true;
     if (match.sourceEntry != null) {
@@ -3340,21 +3329,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     // 保留在栈中，从详情页返回可继续播放。push 不销毁当前 State，恢复防抖。
     openMediaItem(ref, context, match.item);
     _playerNavInFlight = false;
-  }
-
-  Widget _buildDragIndicator() {
-    final preview = _playerService.isScrubbingPosition
-        ? _playerService.dragPreviewPosition
-        : _playerService.position;
-    final delta = preview - _playerService.position;
-    final sign = delta.isNegative ? '-' : '+';
-    final magnitude = delta.isNegative ? -delta : delta;
-    return _hintBar(
-      '${_formatDuration(_playerService.position)} $sign${_formatDuration(magnitude)} / ${_formatDuration(_playerService.duration)}',
-      icon: delta.isNegative
-          ? Icons.fast_rewind_rounded
-          : Icons.fast_forward_rounded,
-    );
   }
 
   String _formatDuration(Duration duration) {

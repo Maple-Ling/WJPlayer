@@ -127,8 +127,11 @@ final episodeAggregationProvider = StreamProvider.autoDispose
   // 且排除用户在设置里关闭了「参与聚合」的服务器。
   final disabled = ref.watch(aggregationDisabledServersProvider);
   final servers = ref.watch(serverListProvider).where((s) {
+    // 隐藏属性的服务器（server.hidden）严禁参与任何聚合展示：与聚合搜索
+    // 公共链路（aggregateSearchByQueryProvider）同规则，杜绝隐私服务器暴露。
     return !s.isFileBrowse &&
         (s.authToken ?? '').isNotEmpty &&
+        s.hidden != true &&
         s.id != homeServerId &&
         !disabled.contains(s.id);
   }).toList();

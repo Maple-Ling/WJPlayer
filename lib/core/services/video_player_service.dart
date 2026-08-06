@@ -128,6 +128,7 @@ class VideoPlayerService extends ChangeNotifier {
   Timer? _hideControlsTimer;
   bool _autoHidePaused = false;
   Timer? _pendingPlaybackTimer;
+  Timer? _seekSettleTimer;
   bool? _pendingPlayingState;
 
   // 手势状态
@@ -139,6 +140,8 @@ class VideoPlayerService extends ChangeNotifier {
   double _dragStartY = 0;
   Duration _dragStartPosition = Duration.zero;
   Duration _dragPreviewPosition = Duration.zero;
+  Duration? _committedSeekPosition;
+  int _seekGeneration = 0;
   double _dragStartVolume = 1.0;
   double _currentVolume = 1.0;
   double _currentBrightness = 1.0;
@@ -193,6 +196,17 @@ class VideoPlayerService extends ChangeNotifier {
   bool get lastInitializationUsedFallback => _lastInitializationUsedFallback;
   String? get lastFallbackReason => _lastFallbackReason;
   Duration get dragPreviewPosition => _dragPreviewPosition;
+  Duration? get committedSeekPosition => _committedSeekPosition;
+  bool get isSeekSettling => _committedSeekPosition != null;
+  /// 给进度条/UI使用的稳定位置：拖动预览和松手目标优先于底层回调位置。
+  Duration get displayPosition =>
+      _committedSeekPosition ??
+      (_isScrubbingPosition ? _dragPreviewPosition : position);
+  double get displayProgress {
+    final d = duration.inMilliseconds;
+    if (d <= 0) return 0.0;
+    return (displayPosition.inMilliseconds / d).clamp(0.0, 1.0).toDouble();
+  }
   bool get isPlaybackActionPending => _pendingPlayingState != null;
 
   /// 当前播放器适配器（用于内核特定操作）
@@ -1110,13 +1124,90 @@ class VideoPlayerService extends ChangeNotifier {
     }
   }
 
-  /// 跳转到指定位置
+  /// 跳转到指定位置（非进度条拖动提交）。
+  /// 拖动提交使用 [_commitDraggedSeek]，以便在底层回调回到旧位置时，
+  /// 继续向 UI 暴露松手时的目标位置，直到 seek 稳定。
   Future<void> seekTo(Duration position) async {
-    await _adapter?.seekTo(position);
-    _dragPreviewPosition = Duration.zero;
+    _clearCommittedSeek();
+    final durationMs = duration.inMilliseconds;
+    final clamped = Duration(
+      milliseconds: durationMs > 0
+          ? position.inMilliseconds.clamp(0, durationMs)
+          : max(0, position.inMilliseconds),
+    );
+    await _adapter?.seekTo(clamped);
+    _dragPreviewPosition = clamped;
     _isScrubbingPosition = false;
     _reportProgress();
     notifyListeners();
+  }
+
+  Future<void> commitSeek(Duration position) => _commitDraggedSeek(
+        Duration(
+          milliseconds: duration.inMilliseconds > 0
+              ? position.inMilliseconds.clamp(0, duration.inMilliseconds)
+              : max(0, position.inMilliseconds),
+        ),
+      );
+
+  void _clearCommittedSeek() {
+    _seekSettleTimer?.cancel();
+    _seekSettleTimer = null;
+    _committedSeekPosition = null;
+    _seekGeneration++;
+  }
+
+  Future<void> _commitDraggedSeek(Duration target) async {
+    final generation = ++_seekGeneration;
+    _seekSettleTimer?.cancel();
+    _committedSeekPosition = target;
+    _dragPreviewPosition = target;
+    _isScrubbingPosition = false;
+    notifyListeners();
+    try {
+      await _adapter?.seekTo(target);
+      _reportProgress();
+    } catch (_) {
+      // seek 失败不立刻回弹：目标值仍短暂锁定，随后由收敛探测自然解锁，
+      // 避免松手瞬间 UI 跳回旧位置造成「闪烁回弹」。
+    }
+    if (generation != _seekGeneration) return;
+    // 探测式收敛（替代固定时长窗口）：
+    // ① 底层 position 回到目标 ±1s 内 → seek 已稳定落地，立即解锁；
+    // ② position 明显偏离目标且连续停滞 2s（seek 缓冲/失败，播放器停住）
+    //    → 解锁避免进度条长期锁死（缓冲完成后底层会自行跳到目标）；
+    // ③ 总时长 8s 硬超时兜底（seek 失败但播放继续走旧位置时）。
+    // 每 200ms 探测一次：seek 完成后底层回调先报旧值再报新值时，
+    // 只要新值在窗口期内到达，UI 全程不会闪回旧进度。
+    var elapsedMs = 0;
+    var stalledMs = 0;
+    Duration? lastProbePosition;
+    _seekSettleTimer = Timer.periodic(
+        const Duration(milliseconds: 200), (timer) {
+      if (generation != _seekGeneration) {
+        timer.cancel();
+        return;
+      }
+      elapsedMs += 200;
+      final cur = position;
+      final deltaMs =
+          (cur.inMilliseconds - target.inMilliseconds).abs();
+      if (lastProbePosition != null && deltaMs > 1000) {
+        if ((cur.inMilliseconds - lastProbePosition!.inMilliseconds).abs() <
+            300) {
+          stalledMs += 200;
+        } else {
+          stalledMs = 0;
+        }
+      }
+      lastProbePosition = cur;
+      if (deltaMs <= 1000 || stalledMs >= 2000 || elapsedMs >= 8000) {
+        timer.cancel();
+        _committedSeekPosition = null;
+        _seekSettleTimer = null;
+        notifyListeners();
+      }
+    });
   }
 
   /// 快进/快退
@@ -1490,6 +1581,9 @@ class VideoPlayerService extends ChangeNotifier {
 
   void onDragStart(DragStartDetails details, BoxConstraints constraints) {
     if (_isLocked || !isInitialized) return;
+    _seekSettleTimer?.cancel();
+    _seekSettleTimer = null;
+    _clearCommittedSeek();
     _isDragging = true;
     _isScrubbingPosition = false;
     _gestureAxis = 0;
@@ -1585,13 +1679,19 @@ class VideoPlayerService extends ChangeNotifier {
   void onDragEnd(DragEndDetails details) {
     if (!_isDragging) return;
     _isDragging = false;
-    // 仅在确实处于进度拖动时才 seek；竖向/无效手势保持原位，避免松手误跳。
+    // 只在水平进度拖动时提交预览目标；提交前不清空预览，避免松手瞬间
+    // 回到旧 position。_commitDraggedSeek 会锁定目标，直到 seek 稳定。
     final wasScrubbing = _gestureAxis == 1 && _isScrubbingPosition;
+    final targetPosition = wasScrubbing
+        ? _dragPreviewPosition
+        : _dragStartPosition;
     _gestureAxis = 0;
-    final targetPosition =
-        wasScrubbing ? _dragPreviewPosition : _dragStartPosition;
     _isScrubbingPosition = false;
-    if (wasScrubbing) seekTo(targetPosition);
+    if (wasScrubbing) {
+      unawaited(_commitDraggedSeek(targetPosition));
+    } else {
+      _dragPreviewPosition = _dragStartPosition;
+    }
     _startHideControlsTimer();
     notifyListeners();
   }

@@ -19,6 +19,8 @@ class UnifiedMediaEntry {
     this.mediaItem,
     this.sourceEntry,
     this.indexNumber,
+    this.runtime,
+    this.airDate,
   });
 
   final String id;
@@ -35,6 +37,12 @@ class UnifiedMediaEntry {
   final MediaItem? mediaItem;
   final SourceEntry? sourceEntry;
   final int? indexNumber;
+
+  /// 时长（分钟，分集/电影；飞牛从 duration 秒转来，Emby 不填）。
+  final int? runtime;
+
+  /// 上映/播出日期（如 '2023-01-01'；飞牛填充，Emby 不填）。
+  final String? airDate;
 
   bool get isSeries =>
       type.toLowerCase() == 'series' || type.toLowerCase() == 'tv';
@@ -66,6 +74,8 @@ class UnifiedMediaEntry {
         mediaItem: mediaItem,
         sourceEntry: sourceEntry,
         indexNumber: indexNumber ?? this.indexNumber,
+        runtime: runtime,
+        airDate: airDate,
       );
 }
 
@@ -452,10 +462,14 @@ class FeiniuUnifiedMediaAdapter implements UnifiedMediaAdapter {
       final entry = _entry(source);
       // 飞牛分集的集号在 raw['episode_number']，必须显式带上，
       // 否则详情页只能靠名称正则兜底（"S1E2 标题"），解析不稳。
+      // 兼容 num / '01' / '1.0' / '1' 等不同 fnOS 版本字段形态。
       final rawNumber = source.raw?['episode_number'];
       final index = rawNumber is num
           ? rawNumber.toInt()
-          : int.tryParse('${rawNumber ?? ''}');
+          : rawNumber is String
+              ? (int.tryParse(rawNumber) ??
+                  double.tryParse(rawNumber)?.toInt())
+              : null;
       return index == null ? entry : entry.copyWith(indexNumber: index);
     }).toList();
   }
@@ -466,9 +480,9 @@ class FeiniuUnifiedMediaAdapter implements UnifiedMediaAdapter {
     final media =
         await backend.mediaDetails(server, entry.sourceEntry ?? _source(entry));
     final file = media.file;
-    final video = _normalizeStream(media.video);
-    final audios = media.audios.map(_normalizeStream).toList();
-    final subtitles = media.subtitles.map(_normalizeStream).toList();
+    final video = normalizeMediaStream(media.video);
+    final audios = media.audios.map(normalizeMediaStream).toList();
+    final subtitles = media.subtitles.map(normalizeMediaStream).toList();
     return [
       UnifiedMediaResource(
         id: entry.id,
@@ -481,46 +495,6 @@ class FeiniuUnifiedMediaAdapter implements UnifiedMediaAdapter {
         isFeiniu: true,
       ),
     ];
-  }
-
-  Map<String, dynamic> _normalizeStream(Map<String, dynamic>? source) {
-    final raw = source ?? const <String, dynamic>{};
-    dynamic first(List<String> keys) {
-      for (final key in keys) {
-        final value = raw[key];
-        if (value != null && value.toString().isNotEmpty) return value;
-      }
-      return null;
-    }
-    return {
-      ...raw,
-      'codec_name': first(['codec_name', 'codec', 'Codec', 'video_codec']),
-      'container': first(['container', 'format', 'file_format']),
-      'language': first(['language', 'lang', 'Language']),
-      'title': first(['title', 'name', 'display_title', 'displayName']),
-      'displayName': first(['displayName', 'display_name', 'title', 'name']),
-      'bitrate': first(['bitrate', 'bit_rate', 'BitRate']),
-      'width': first(['width', 'Width']),
-      'height': first(['height', 'Height']),
-      'sample_rate': first(['sample_rate', 'sampleRate', 'samplerate']),
-      'bit_depth': first(['bit_depth', 'bitDepth', 'bits_per_sample']),
-      'channels': first(['channels', 'channel_count', 'channelCount']),
-      'channel_layout': first(['channel_layout', 'channelLayout', 'layout']),
-      'aspect_ratio': first(['aspect_ratio', 'display_aspect_ratio', 'dar']),
-      'sample_aspect_ratio': first(['sample_aspect_ratio', 'sar']),
-      'pixel_format': first(['pixel_format', 'pix_fmt', 'pixelFormat']),
-      'color_range': first(['color_range', 'colorRange', 'range']),
-      'color_space': first(['color_space', 'colorSpace']),
-      'color_matrix': first(['color_matrix', 'colorMatrix']),
-      'color_transfer': first(['color_transfer', 'colorTransfer', 'transfer']),
-      'video_range': first(['video_range', 'videoRange', 'dynamic_range']),
-      'video_range_type': first(['video_range_type', 'videoRangeType', 'hdr_type']),
-      'real_frame_rate': first(['real_frame_rate', 'realFrameRate', 'fps']),
-      'average_frame_rate': first(['average_frame_rate', 'averageFrameRate']),
-      'gop_size': first(['gop_size', 'gopSize', 'gop']),
-      'time_base': first(['time_base', 'timeBase']),
-      'is_external': first(['is_external', 'isExternal']) ?? false,
-    };
   }
 
   UnifiedMediaEntry _entry(SourceEntry source, [Map<String, dynamic>? detail]) {
@@ -542,6 +516,19 @@ class FeiniuUnifiedMediaAdapter implements UnifiedMediaAdapter {
         : double.tryParse('${raw['vote_average'] ?? ''}');
     final year = int.tryParse('${raw['year'] ?? ''}') ??
         int.tryParse('${raw['release_date'] ?? ''}'.split('-').first);
+    // 飞牛分集时长（duration 秒 → 分钟）与播出日期：剧集卡直接展示，
+    // 缺失/非法时为 null（卡片对应字段自动隐藏，不显示错误值）。
+    final rawDuration = raw['duration'] ?? raw['runtime'];
+    int? runtime;
+    if (rawDuration is num) {
+      runtime = rawDuration ~/ 60;
+    } else {
+      final parsed = int.tryParse('${rawDuration ?? ''}');
+      runtime = parsed == null ? null : parsed ~/ 60;
+    }
+    if (runtime != null && runtime <= 0) runtime = null;
+    final rawAirDate = (raw['air_date'] ?? raw['release_date'])?.toString().trim();
+    final airDate = (rawAirDate == null || rawAirDate.isEmpty) ? null : rawAirDate;
     return UnifiedMediaEntry(
       id: source.id,
       name: source.name,
@@ -555,6 +542,8 @@ class FeiniuUnifiedMediaAdapter implements UnifiedMediaAdapter {
       providerIds: providerIds,
       progress: null,
       sourceEntry: source,
+      runtime: runtime,
+      airDate: airDate,
     );
   }
 
@@ -579,4 +568,133 @@ class FeiniuUnifiedMediaAdapter implements UnifiedMediaAdapter {
     if (value is List && value.isNotEmpty) return value.first?.toString();
     return null;
   }
+}
+
+/// 媒体流字段归一化（公共）：把 Emby MediaStream / 飞牛 video_stream /
+/// 其它协议的字段名统一到同一套 key（codec_name/bitrate/width/height/
+/// video_range_type/real_frame_rate…）。
+///
+/// 详情页底部媒体信息（_buildStreamInfoCards）、播放器媒体信息菜单
+/// （PopupMenuOverlay._pages）与跨服资源卡胶囊（matchPlaybackInfo）
+/// **必须全部经过本函数**，保证任何一处显示的分辨率/帧率/码率/HDR 等
+/// 都来自同一个归一化源头，避免同一数据因 key 命名差异而显示不一致。
+Map<String, dynamic> normalizeMediaStream(Map<String, dynamic>? source) {
+  final raw = source ?? const <String, dynamic>{};
+  dynamic first(List<String> keys) {
+    for (final key in keys) {
+      final value = raw[key];
+      if (value != null && value.toString().isNotEmpty) return value;
+    }
+    return null;
+  }
+
+  return {
+    ...raw,
+    'codec_name': first(['codec_name', 'codec', 'Codec', 'video_codec']),
+    'container': first(['container', 'format', 'file_format']),
+    'language': first(['language', 'lang', 'Language']),
+    'title': first(['title', 'name', 'display_title', 'displayName']),
+    'displayName': first(['displayName', 'display_name', 'title', 'name']),
+    'bitrate': first(['bitrate', 'bit_rate', 'BitRate']),
+    'width': first(['width', 'Width']),
+    'height': first(['height', 'Height']),
+    'size': first(['size', 'file_size', 'FileSize', 'Size', 'length']),
+    'sample_rate': first(['sample_rate', 'sampleRate', 'samplerate']),
+    'bit_depth': first(['bit_depth', 'bitDepth', 'bits_per_sample']),
+    'channels': first(['channels', 'channel_count', 'channelCount']),
+    'channel_layout': first(['channel_layout', 'channelLayout', 'layout']),
+    'aspect_ratio': first(['aspect_ratio', 'display_aspect_ratio', 'dar']),
+    'sample_aspect_ratio': first(['sample_aspect_ratio', 'sar']),
+    'pixel_format': first(['pixel_format', 'pix_fmt', 'pixelFormat']),
+    'color_range': first(['color_range', 'colorRange', 'range']),
+    'color_space': first(['color_space', 'colorSpace']),
+    'color_matrix': first(['color_matrix', 'colorMatrix']),
+    'color_transfer': first(['color_transfer', 'colorTransfer', 'transfer']),
+    'video_range': first(['video_range', 'videoRange', 'dynamic_range']),
+    'video_range_type':
+        first(['video_range_type', 'videoRangeType', 'hdr_type']),
+    'real_frame_rate': first(['real_frame_rate', 'realFrameRate', 'fps']),
+    'average_frame_rate':
+        first(['average_frame_rate', 'averageFrameRate']),
+    'gop_size': first(['gop_size', 'gopSize', 'gop']),
+    'time_base': first(['time_base', 'timeBase']),
+    'is_external': first(['is_external', 'isExternal']) ?? false,
+  };
+}
+
+/// 顶层工厂：Emby [MediaSource] → [UnifiedMediaResource]。
+/// 播放器在非详情页路径（历史/搜索/继续观看/聚合切换直接进播放器）下，
+/// 用当前实际播放的 MediaSource 兜底/刷新 unifiedResource，保证右上角
+/// 媒体信息菜单与详情页底部、资源卡胶囊显示同一套数据。
+/// 转换逻辑与 [FeiniuUnifiedMediaAdapter.mediaResources] 完全一致。
+UnifiedMediaResource unifiedResourceFromMediaSource(MediaSource source) {
+  Map<String, dynamic> stream(MediaStream value) => {
+        'codec_name': value.codec,
+        'container': source.container,
+        'language': value.language,
+        'title': value.displayTitle ?? value.title,
+        'is_external': value.isExternal,
+        'width': value.width,
+        'height': value.height,
+        'channels': value.channels,
+        'bitrate': value.bitRate,
+        'video_range': value.videoRange,
+        'video_range_type': value.videoRangeType,
+        'profile': value.profile,
+        'level': value.level,
+        'pixel_format': value.pixelFormat,
+        'real_frame_rate': value.realFrameRate,
+        'average_frame_rate': value.averageFrameRate,
+        'color_space': value.colorSpace,
+        'color_transfer': value.colorTransfer,
+        'color_range': value.colorRange,
+        'color_primaries': value.colorPrimaries,
+        'color_matrix': value.colorMatrix,
+        'aspect_ratio': value.aspectRatio,
+        'sample_aspect_ratio': value.sampleAspectRatio,
+        'sample_rate': value.sampleRate,
+        'bit_depth': value.bitDepth,
+        'channel_layout': value.channelLayout,
+        'time_base': value.timeBase,
+        'ref_frames': value.refFrames,
+        'gop_size': value.gopSize,
+        'frame_type': value.frameType,
+      };
+  final videos = source.mediaStreams.where((item) => item.isVideo).toList();
+  final audios = source.mediaStreams.where((item) => item.isAudio).toList();
+  final subtitles =
+      source.mediaStreams.where((item) => item.isSubtitle).toList();
+  return UnifiedMediaResource(
+    id: source.id,
+    name: source.name?.trim().isNotEmpty == true
+        ? source.name!
+        : (source.container?.toUpperCase() ?? '默认资源'),
+    path: source.path,
+    size: source.size,
+    video: videos.isEmpty
+        ? null
+        : normalizeMediaStream(
+            stream(source.primaryVideoStream ?? videos.first)),
+    audios: audios.map((s) => normalizeMediaStream(stream(s))).toList(),
+    subtitles: subtitles.map((s) => normalizeMediaStream(stream(s))).toList(),
+  );
+}
+
+/// 顶层工厂：飞牛 [FeiniuMediaDetails] → [UnifiedMediaResource]。
+/// 播放器 /source-player 路径（飞牛库页/播放器聚合切换等非详情页入口）下
+/// 异步拉取 mediaDetails 后填充 unifiedResource；转换逻辑与
+/// [FeiniuUnifiedMediaAdapter.mediaResources] 完全一致。
+UnifiedMediaResource unifiedResourceFromFeiniuDetails(
+    FeiniuMediaDetails details) {
+  final file = normalizeMediaStream(details.file);
+  return UnifiedMediaResource(
+    id: '',
+    name: (file['file_name'] ?? '默认资源').toString(),
+    path: file['path']?.toString(),
+    size: (file['size'] as num?)?.toInt(),
+    video: normalizeMediaStream(details.video),
+    audios: details.audios.map(normalizeMediaStream).toList(),
+    subtitles: details.subtitles.map(normalizeMediaStream).toList(),
+    isFeiniu: true,
+  );
 }

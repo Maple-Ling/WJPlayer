@@ -352,6 +352,7 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
               separatorBuilder: (_, __) => const SizedBox(width: 8),
               itemBuilder: (_, index) {
                 final match = matches[index];
+                final info = matchPlaybackInfo(match);
                 return SizedBox(
                   width: 250,
                   child: PlaybackResourceCard(
@@ -359,11 +360,12 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
                     isBest: index == 0,
                     isSelected: _latestMatches.isNotEmpty &&
                         _selectedServerIndex == index,
-                    resolution: match.item.mediaSources?.firstOrNull?.qualityLabel,
-                    dynamicRange: match.item.mediaSources?.firstOrNull?.primaryVideoStream?.videoRangeLabel,
-                    codec: match.item.mediaSources?.firstOrNull?.primaryVideoStream?.videoCodecLabel,
-                    size: match.item.mediaSources?.firstOrNull?.size,
-                    bitrate: match.item.mediaSources?.firstOrNull?.primaryVideoStream?.bitRate,
+                    resolution: info.resolution,
+                    dynamicRange: info.dynamicRange,
+                    codec: info.codec,
+                    frameRate: info.frameRate,
+                    size: info.size,
+                    bitrate: info.bitrate,
                     onTap: () {
                       setState(() {
                         _latestMatches = matches;

@@ -1,5 +1,171 @@
 import 'package:flutter/material.dart';
 
+import '../../core/api/api_interfaces.dart';
+import '../../core/providers/media_providers.dart';
+import '../../core/sources/feiniu_backend.dart';
+import '../../core/sources/unified_media_adapter.dart';
+
+/// 跨服匹配胶囊信息（统一解析入口）。
+///
+/// 数据源优先级（与详情页底部媒体信息同源，保证「能识别的一定显示」）：
+/// - Emby：完整媒体详情（ServerMatchInfo.mediaSource ← getItemMediaSources），
+///   缺失回退搜索摘要（item.mediaSources）；
+/// - 飞牛：完整媒体详情（ServerMatchInfo.feiniuDetails ← mediaDetails，
+///   video/file 为归一化 key，与详情页底部 _buildStreamInfoCards 完全一致），
+///   缺失回退搜索摘要。
+class MatchPlaybackInfo {
+  const MatchPlaybackInfo({
+    this.resolution,
+    this.dynamicRange,
+    this.codec,
+    this.size,
+    this.bitrate,
+    this.frameRate,
+  });
+
+  final String? resolution;
+  final String? dynamicRange;
+  final String? codec;
+  final int? size;
+  final int? bitrate;
+  final String? frameRate;
+}
+
+MatchPlaybackInfo matchPlaybackInfo(ServerMatchInfo match) {
+  // ① Emby 完整媒体详情（或任意 MediaSource 摘要）。
+  final ms = match.mediaSource ?? match.item.mediaSources?.firstOrNull;
+  if (ms != null) {
+    final v = ms.primaryVideoStream;
+    return MatchPlaybackInfo(
+      resolution: ms.qualityLabel,
+      dynamicRange: v?.videoRangeLabel,
+      codec: v?.videoCodecLabel,
+      size: ms.size,
+      bitrate: v?.bitRate,
+      frameRate: v?.realFrameRate == null ? null : _frameRateLabel(v!.realFrameRate!),
+    );
+  }
+  // ② 飞牛完整媒体详情：一律先经 normalizeMediaStream 归一化，与详情页底部
+  // 媒体信息（_buildStreamInfoCards）、播放器媒体信息菜单完全同一套 key，
+  // 保证 bit_rate/hdr_type/fps/file_size 等协议变体字段不因命名差异而漏显；
+  // HDR 判定叠加 color_transfer 线索（bt2020/smpte2084/arib-std-b67 → HDR，
+  // bt709 → SDR），编码识别覆盖 HEVC/H.264/AV1/VP9/MPEG 等。
+  final details = match.feiniuDetails;
+  if (details != null) {
+    final v = normalizeMediaStream(details.video);
+    final f = normalizeMediaStream(details.file);
+    return MatchPlaybackInfo(
+      resolution: _qualityFromSize(v['width'], v['height']),
+      dynamicRange: _hdrFromValue(v['video_range_type'] ??
+          v['video_range'] ??
+          v['color_transfer']),
+      codec: _codecFromValue(v['codec_name']),
+      size: _intOf(f['size']),
+      bitrate: _intOf(v['bitrate']),
+      frameRate: _frameRateLabel(
+          _intOf(v['real_frame_rate'] ?? v['average_frame_rate'])
+              ?.toDouble()),
+    );
+  }
+  // ③ 搜索摘要也未携带：全部占位（组件显示「未知」）。
+  return const MatchPlaybackInfo();
+}
+
+/// 帧率格式化（与详情页底部 / 播放器媒体信息菜单同款）：常见帧率归一为
+/// "23.976 fps" / "24 fps" / "60 fps"，其余保留两位小数去尾零。
+String? _frameRateLabel(double? rate) {
+  if (rate == null || rate <= 0) return null;
+  const common = <double, String>{
+    23.976: '23.976 fps',
+    24: '24 fps',
+    25: '25 fps',
+    30: '30 fps',
+    48: '48 fps',
+    50: '50 fps',
+    59.94: '59.94 fps',
+    60: '60 fps',
+    120: '120 fps',
+  };
+  for (final entry in common.entries) {
+    if ((rate - entry.key).abs() < 0.001) return entry.value;
+  }
+  final value = double.parse(rate.toStringAsFixed(2));
+  return '$value fps';
+}
+
+/// 宽度/高度主导分档（与 Emby MediaStream.resolution 同款逻辑）。
+String? _qualityFromSize(Object? width, Object? height) {
+  final w = _intOf(width) ?? 0;
+  final h = _intOf(height) ?? 0;
+  if (w <= 0 && h <= 0) return null;
+  if (w >= 7600 || h >= 4300) return '8K';
+  if (w >= 3600 || h >= 2000) return '4K';
+  if (w >= 1800 || h >= 1000) return '1080p';
+  if (w >= 1200 || h >= 700) return '720p';
+  if (w >= 640 || h >= 480) return '480p';
+  if (h > 0) return '${h}p';
+  return null;
+}
+
+/// 编码规范化（与 Emby MediaStream.videoCodecLabel 同款映射）。
+String? _codecFromValue(Object? codec) {
+  final c = (codec?.toString() ?? '').toLowerCase();
+  if (c.isEmpty) return null;
+  if (c.contains('hevc') || c.contains('h265') || c.contains('h.265')) {
+    return 'HEVC';
+  }
+  if (c.contains('avc') || c.contains('h264') || c.contains('h.264')) {
+    return 'H.264';
+  }
+  if (c.contains('av1')) return 'AV1';
+  if (c.contains('vp9')) return 'VP9';
+  if (c.contains('vp8')) return 'VP8';
+  if (c.contains('mpeg4')) return 'MPEG-4';
+  if (c.contains('mpeg2')) return 'MPEG-2';
+  if (c.contains('vc1') || c.contains('vc-1')) return 'VC-1';
+  return c.toUpperCase();
+}
+
+/// HDR/动态范围规范化（与 Emby MediaStream.videoRangeLabel 同款映射）。
+/// 输入统一为 normalizeMediaStream 之后的 key（video_range_type/video_range/
+/// color_transfer），覆盖：Dolby Vision / HDR10+ / HDR10 / HLG / PQ / HDR，
+/// 并把 bt709 等 SDR 色彩传输排除（返回 null → 组件显示「SDR」）。
+String? _hdrFromValue(Object? range) {
+  final raw = (range?.toString() ?? '').toLowerCase();
+  if (raw.isEmpty) return null;
+  // SDR 色彩传输/范围：明确排除，不显示为伪 HDR。
+  if (raw.contains('bt709') ||
+      raw.contains('smpte170') ||
+      raw.contains('bt601') ||
+      raw.contains('bt470') ||
+      raw == 'sdr' ||
+      raw == 'none' ||
+      raw == 'n/a') {
+    return null;
+  }
+  // 杜比视界：dv / dovi / dvhe / dvav（含 color_transfer='dovi' 形态）。
+  if (raw.contains('dovi') || raw.contains('dvhe') || raw.contains('dvav') ||
+      raw == 'dv') {
+    return 'Dolby Vision';
+  }
+  if (raw.contains('hdr10plus') || raw.contains('hdr10+')) return 'HDR10+';
+  if (raw.contains('hdr10')) return 'HDR10';
+  if (raw.contains('hlg') || raw.contains('arib-std-b67')) return 'HLG';
+  // PQ / ST.2084（HDR 传递函数）与 BT.2020（HDR 广色域）→ 泛 HDR。
+  if (raw.contains('pq') || raw.contains('smpte2084') ||
+      raw.contains('smpte2086') || raw.contains('bt2020')) {
+    return 'HDR';
+  }
+  if (raw.contains('hdr')) return 'HDR';
+  return null; // 未知色彩传输一律不冒充 HDR
+}
+
+int? _intOf(Object? value) {
+  if (value == null) return null;
+  if (value is num) return value.toInt();
+  return int.tryParse('$value');
+}
+
 class PlaybackResourceCard extends StatelessWidget {
   const PlaybackResourceCard({
     super.key,
@@ -11,6 +177,7 @@ class PlaybackResourceCard extends StatelessWidget {
     this.resolution,
     this.dynamicRange,
     this.codec,
+    this.frameRate,
     this.size,
     this.bitrate,
     this.onTap,
@@ -25,6 +192,7 @@ class PlaybackResourceCard extends StatelessWidget {
   final String? resolution;
   final String? dynamicRange;
   final String? codec;
+  final String? frameRate;
   final int? size;
   final int? bitrate;
   final VoidCallback? onTap;
@@ -84,6 +252,7 @@ class PlaybackResourceCard extends StatelessWidget {
               tag(_text(resolution, '分辨率未知')),
               tag(_text(dynamicRange, 'SDR')),
               tag(_text(codec, '编码未知')),
+              if (frameRate?.isNotEmpty == true) tag(frameRate!),
             ]),
             const SizedBox(height: 10),
             Row(children: [

@@ -566,6 +566,10 @@ class _UnifiedMediaDetailScreenState
       setState(() => _loading = false);
       if (cached.seasons.isNotEmpty) {
         await _selectSeason(_selectedSeasonId ?? cached.initialSeasonId ?? cached.seasons.first.id);
+      } else if (cached.initialSeasonId?.isNotEmpty == true) {
+        // 飞牛部分资源 /season/list 为空（fnOS 版本差异），但 play/info 提供
+        // parent_guid（季）：直接用该季拉分集，避免分集区整体不渲染。
+        await _selectSeason(cached.initialSeasonId!);
       } else {
         _selectedEntry = cached.entry;
         _updateResume(cached.entry);
@@ -614,6 +618,10 @@ class _UnifiedMediaDetailScreenState
                 _seasonNumber(season.id) == latestSeason).firstOrNull;
         await _selectSeason(
             (historySeason ?? preferred ?? detail.seasons.first).id);
+      } else if (detail.initialSeasonId?.isNotEmpty == true) {
+        // 飞牛部分资源 /season/list 为空但 play/info 提供 parent_guid（季）：
+        // 直接用该季拉分集，保证详情页仍能展示与播放器一致的分集列表。
+        await _selectSeason(detail.initialSeasonId!);
       } else {
         _selectedEntry = detail.entry;
         await _loadResources(detail.entry);
@@ -688,13 +696,20 @@ class _UnifiedMediaDetailScreenState
           ? null
           : (historyEpisode.mediaItem?.indexNumber ??
               historyEpisode.indexNumber);
+      // 分段起点必须落在 [1, 最后一组起始] 内：历史记录集号可能超出当前季
+      // 总集数（剧集被删减/季数据变化），直接越界会让 _buildEpisodeCards
+      // 的 clamp(下限>上限) 抛 ArgumentError 导致分集区崩溃。
+      final maxStart = episodes.isEmpty
+          ? 1
+          : (((episodes.length - 1) ~/ 10) * 10 + 1);
+      final requested = targetNumber == null || targetNumber <= 0
+          ? 1
+          : (((targetNumber - 1) ~/ 10) * 10 + 1);
       setState(() {
         _episodes = episodes;
         _selectedEntry = selected;
         _loadingMedia = selected != null;
-        _episodeRangeStart = targetNumber == null || targetNumber <= 0
-            ? 1
-            : (((targetNumber - 1) ~/ 10) * 10 + 1);
+        _episodeRangeStart = requested > maxStart ? maxStart : requested;
       });
       if (selected != null) {
         await _loadResources(selected);
@@ -817,13 +832,36 @@ class _UnifiedMediaDetailScreenState
   /// 否则会把 ID/guid 误判为季号导致季识别错误。
   int? _seasonNumber(String? seasonId) {
     if (seasonId == null) return null;
+    // 只认明确的季格式：中文"第 N 季"（含中文数字）、"season:N"（1-4 位，
+    // 防止飞牛 'season:'+guid 长串数字被误判为巨大季号）、"Season N"、"S1"。
     final match = RegExp(
-            r'第\s*(\d+)\s*季|^season[:\s]*(\d+)$|[Ss](\d+)\b',
+            r'第\s*(\d+)\s*季|第\s*([一二三四五六七八九十]+)\s*季|'
+            r'^season[:\s]*(\d{1,4})$|[Ss]eason\s*(\d+)|[Ss](\d+)\b',
             caseSensitive: false)
         .firstMatch(seasonId);
     if (match == null) return null;
-    final group = match.group(1) ?? match.group(2) ?? match.group(3);
-    return int.tryParse(group ?? '');
+    final arabic = match.group(1) ?? match.group(3) ?? match.group(4) ??
+        match.group(5);
+    if (arabic != null) return int.tryParse(arabic);
+    return _chineseSeasonToInt(match.group(2));
+  }
+
+  /// 中文数字季号 → 阿拉伯数字（十/十一/二十/二十一…）。
+  int? _chineseSeasonToInt(String? s) {
+    if (s == null || s.isEmpty) return null;
+    const digits = {
+      '一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
+      '六': 6, '七': 7, '八': 8, '九': 9,
+    };
+    if (s == '十') return 10;
+    if (s.length == 2 && s[0] == '十') {
+      return 10 + (digits[s[1]] ?? 0);
+    }
+    if (s.length == 2 && s[1] == '十') {
+      return (digits[s[0]] ?? 0) * 10;
+    }
+    if (s.length == 1) return digits[s];
+    return null;
   }
 
   /// 最近播放的季/集：按 lastPlayedAt 取最新记录（_scopeRecords 顺序不保证按时间）。
@@ -1044,7 +1082,7 @@ class _UnifiedMediaDetailScreenState
                 const SizedBox(height: 14),
                 if (entry.overview?.isNotEmpty == true)
                   CollapsibleOverview(text: entry.overview!),
-                if (detail.seasons.isNotEmpty) ...[
+                if (detail.seasons.isNotEmpty || _episodes.isNotEmpty) ...[
                   const SizedBox(height: 18),
                   _seasonSelector(detail.seasons),
                   const SizedBox(height: 18),
@@ -1196,10 +1234,30 @@ class _UnifiedMediaDetailScreenState
         stillUrl: episode.backdropUrl?.isNotEmpty == true
             ? episode.backdropUrl
             : episode.posterUrl,
-        airDate: null,
-        runtime: null,
+        airDate: episode.airDate,
+        runtime: episode.runtime,
         entry: episode,
       ));
+    }
+    // 集号解析失败（0）的条目按列表顺序兜底：第一集→1、第二集→2…
+    // 否则多个无号条目会被渲染层全部当成“第 1 集”，无法区分/选择。
+    var cursor = 0;
+    for (var i = 0; i < result.length; i++) {
+      final ui = result[i];
+      if (ui.number <= 0) {
+        cursor += 1;
+        result[i] = _UiEpisode(
+          number: cursor,
+          name: ui.name,
+          overview: ui.overview,
+          stillUrl: ui.stillUrl,
+          airDate: ui.airDate,
+          runtime: ui.runtime,
+          entry: ui.entry,
+        );
+      } else {
+        cursor = ui.number;
+      }
     }
     result.sort((a, b) => a.number.compareTo(b.number));
     return result;
@@ -1208,20 +1266,29 @@ class _UnifiedMediaDetailScreenState
   /// UI 展示用的季号解析：与 [_seasonNumber] 口径一致，仅识别明确的季格式。
   int? _uiSeasonNumber(String? value) {
     if (value == null) return null;
+    // 与 [_seasonNumber] 同口径：'season:'+guid 长串不算季号，
+    // 支持 "第 N 季"/"第一季"/"Season N"/"S1"。
     final match = RegExp(
-            r'第\s*(\d+)\s*季|^season[:\s]*(\d+)$|[Ss](\d+)\b',
+            r'第\s*(\d+)\s*季|第\s*([一二三四五六七八九十]+)\s*季|'
+            r'^season[:\s]*(\d{1,4})$|[Ss]eason\s*(\d+)|[Ss](\d+)\b',
             caseSensitive: false)
         .firstMatch(value);
     if (match == null) return null;
-    final group = match.group(1) ?? match.group(2) ?? match.group(3);
-    return int.tryParse(group ?? '');
+    final arabic = match.group(1) ?? match.group(3) ?? match.group(4) ??
+        match.group(5);
+    if (arabic != null) return int.tryParse(arabic);
+    return _chineseSeasonToInt(match.group(2));
   }
 
   int? _episodeNumberFromName(String name) {
-    final match = RegExp(r'第\s*(\d+)\s*集|E(\d+)', caseSensitive: false)
+    // 覆盖飞牛常见命名：第1集 / 第 1 话 / S1E2 / EP02 / E12 / "01. 标题" / "1 - 标题"
+    final match = RegExp(
+            r'第\s*(\d+)\s*[集话]|[Ee][Pp]?\s*(\d+)|^0*(\d+)\s*[\.、\s-]',
+            caseSensitive: false)
         .firstMatch(name);
     if (match != null) {
-      return int.tryParse(match.group(1) ?? match.group(2) ?? '');
+      final raw = match.group(1) ?? match.group(2) ?? match.group(3);
+      return int.tryParse(raw ?? '');
     }
     return null;
   }
@@ -1363,11 +1430,12 @@ class _UnifiedMediaDetailScreenState
       return const SizedBox(
           height: 220, child: Center(child: Text('本季暂无剧集')));
     }
-    final end = (_episodeRangeStart + 9).clamp(_episodeRangeStart, episodes.length);
+    final start = _episodeRangeStart.clamp(1, episodes.length);
+    final end = start + 9 > episodes.length ? episodes.length : start + 9;
     final visible = episodes
         .where((episode) {
           final n = episode.number <= 0 ? 1 : episode.number;
-          return n >= _episodeRangeStart && n <= end;
+          return n >= start && n <= end;
         })
         .toList();
     return SizedBox(
@@ -1480,7 +1548,7 @@ class _UnifiedMediaDetailScreenState
                   separatorBuilder: (_, __) => const SizedBox(width: 8),
                   itemBuilder: (_, index) {
                     final match = matches[index];
-                    final source = match.item.mediaSources?.firstOrNull;
+                    final info = matchPlaybackInfo(match);
                     return SizedBox(
                       width: 250,
                       child: PlaybackResourceCard(
@@ -1488,11 +1556,12 @@ class _UnifiedMediaDetailScreenState
                         isBest: index == 0,
                         // 单击选中高亮当前点选的跨服务器资源；默认高亮命中排第一的
                         isSelected: index == _selectedCrossServerIndex,
-                        resolution: source?.qualityLabel,
-                        dynamicRange: source?.primaryVideoStream?.videoRangeLabel,
-                        codec: source?.primaryVideoStream?.videoCodecLabel,
-                        size: source?.size,
-                        bitrate: source?.primaryVideoStream?.bitRate,
+                        resolution: info.resolution,
+                        dynamicRange: info.dynamicRange,
+                        codec: info.codec,
+                        frameRate: info.frameRate,
+                        size: info.size,
+                        bitrate: info.bitrate,
                         // 单击 = 选择该服务器资源（高亮 + 记录，播放由顶部播放键触发）
                         onTap: () => setState(() {
                           _selectedCrossServerIndex = index;
@@ -1553,10 +1622,18 @@ class _UnifiedMediaDetailScreenState
 
   /// 双击跨服务器资源卡：进入该服务器对应的媒体详情页（复用 UnifiedMediaDetailScreen）。
   void _openServerDetail(ServerMatchInfo match) {
+    // 与 A 页一致：优先 match.sourceServerId（飞牛打标），缺失回退
+    // match.item.sourceServerId（Emby 由公共链路在 item 上打标）。
     final server = ref
-        .read(serverListProvider)
-        .where((item) => item.id == match.sourceServerId)
-        .firstOrNull;
+            .read(serverListProvider)
+            .where((item) => item.id == match.sourceServerId)
+            .firstOrNull ??
+        (match.item.sourceServerId != null
+            ? ref
+                .read(serverListProvider)
+                .where((s) => s.id == match.item.sourceServerId)
+                .firstOrNull
+            : null);
     if (server == null) return;
     ref.read(currentServerProvider.notifier).state = server;
     // Emby/飞牛的媒体详情统一入口：先切服务器再 push /detail/:id。

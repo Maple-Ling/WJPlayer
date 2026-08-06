@@ -13,7 +13,7 @@ import '../../../core/api/api_interfaces.dart';
 import '../../../core/network/prefetch_proxy/prefetch_proxy.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/providers/unified_resource_provider.dart';
-import '../../../core/providers/playback_prefs_store.dart';
+import '../../../core/sources/unified_media_adapter.dart';import '../../../core/providers/playback_prefs_store.dart';
 import '../../../core/services/cache_service.dart';
 import '../../../core/services/system_info_service.dart';
 import '../../../core/providers/media_providers.dart';

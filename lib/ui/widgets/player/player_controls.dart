@@ -540,6 +540,9 @@ class BottomBar extends StatelessWidget {
     required this.duration,
     required this.bufferedProgress,
     required this.isPlaying,
+    this.dragTargetPosition,
+    this.isDraggingProgress = false,
+    this.progressOverride,
     required this.bottomActions,
     required this.selectedActions,
     this.onProgressChanged,
@@ -557,6 +560,9 @@ class BottomBar extends StatelessWidget {
   final Duration duration;
   final double bufferedProgress;
   final bool isPlaying;
+  final Duration? dragTargetPosition;
+  final bool isDraggingProgress;
+  final double? progressOverride;
 
   final List<PlayerBottomAction> bottomActions;
   final Set<PlayerBottomAction> selectedActions;
@@ -653,10 +659,9 @@ class BottomBar extends StatelessWidget {
   }
 
   Widget _buildProgress(BuildContext context) {
-    final enabled = onProgressChanged != null ||
-        onProgressChangeEnd != null;
-
-    return Row(
+    final enabled = onProgressChanged != null || onProgressChangeEnd != null;
+    final target = dragTargetPosition;
+    final progressRow = Row(
       children: [
         SizedBox(
           width: 42,
@@ -677,15 +682,11 @@ class BottomBar extends StatelessWidget {
               secondaryActiveTrackColor: Colors.white.withOpacity(0.35),
               thumbColor: Colors.white,
               overlayColor: Colors.white.withOpacity(0.12),
-              thumbShape: const RoundSliderThumbShape(
-                enabledThumbRadius: 6.5,
-              ),
-              overlayShape: const RoundSliderOverlayShape(
-                overlayRadius: 13,
-              ),
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6.5),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 13),
             ),
             child: Slider(
-              value: progress,
+              value: progressOverride ?? progress,
               secondaryTrackValue: bufferedProgress.clamp(0.0, 1.0),
               min: 0,
               max: 1,
@@ -705,6 +706,29 @@ class BottomBar extends StatelessWidget {
             ),
           ),
         ),
+      ],
+    );
+    if (target == null) return progressRow;
+    // 拖动/seek 稳定期：目标绝对时间紧贴进度条上方、水平居中，
+    // 向上偏移约两字符高度；position 已由上层传入拖动预览值，跟手不回弹。
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Center(
+            child: Text(
+              _formatDuration(target),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                shadows: [Shadow(color: Colors.black87, blurRadius: 4)],
+              ),
+            ),
+          ),
+        ),
+        progressRow,
       ],
     );
   }

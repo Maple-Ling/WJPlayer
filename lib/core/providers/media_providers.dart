@@ -446,78 +446,75 @@ class FeiniuSearchGroup {
 }
 
 /// 聚合搜索中的飞牛分组。与 Emby 查询并行，任一飞牛服务器失败仅跳过该组。
-final aggregateFeiniuSearchProvider = FutureProvider.autoDispose
-    .family<List<FeiniuSearchGroup>, String>((ref, rawQuery) async {
-  final query = rawQuery.trim();
-  if (query.isEmpty) return const [];
-  final servers = ref
-      .watch(serverListProvider)
-      .where((server) =>
-          (server.sourceKind == SourceKind.feiniu &&
-              (server.authToken ?? '').isNotEmpty ||
-              server.sourceKind == SourceKind.feiniu &&
-              (server.username ?? '').isNotEmpty))
-      .toList();
-  final groups = await Future.wait(servers.map((server) async {
-    try {
-      final entries = await ref.read(feiniuSearchResultsProvider(
-        (serverId: server.id, query: query),
-      ).future);
-      return FeiniuSearchGroup(server: server, entries: entries);
-    } catch (error) {
-      AppLogger().w('AggregateSearch', '服务器「${server.name}」飞牛搜索失败: $error');
-      return FeiniuSearchGroup(server: server, entries: const []);
-    }
-  }));
-  return groups.where((group) => group.entries.isNotEmpty).toList();
-});
-
-/// 聚合搜索结果（按服务器分组）。
-///
-/// 真正的跨服务器搜索：遍历 [serverListProvider] 里**每一台已登录**服务器，
-/// 各自用缓存的只读 client **并行**查询并合并；任一服务器失败只记日志并
-/// 跳过，不拖垮其余。返回「服务器名 → 命中列表」，供需要分组展示的端使用
-/// （移动端按服务器分组、桌面/TV 可平铺）。
-///
-/// 注：旧实现把聚合委托给 `api.search.searchAggregate()`，但那只查当前 client
-/// 指向的单台服务器（等价于普通搜索），是聚合搜索"看似开了却没效果"的根因。
-/// **逐台增量**：用 [StreamProvider] + [Stream.fromFutures]，哪台服务器先返回就先 emit
-/// 一版累积结果，一台慢/掉线不阻塞其它台（不再 `Future.wait` 等齐才出）。
-/// 只保留电影/剧集——聚合搜索面向剧、电影，过滤掉分集/人物等非顶层条目。
-final aggregateSearchResultsProvider =
-    StreamProvider.autoDispose<Map<String, List<MediaItem>>>((ref) async* {
-  final query = ref.watch(searchQueryProvider).trim();
-  final servers = ref.watch(serverListProvider);
-  final hiddenLibraries = ref.watch(hiddenLibrariesProvider);
-
-  if (query.isEmpty) {
-    yield const <String, List<MediaItem>>{};
-    return;
-  }
-
-  // Emby 与飞牛使用不同协议；这里仅处理 Emby，飞牛由
-  // aggregateFeiniuSearchProvider 并行查询并在 UI 合并。
-  final targets = servers
-      .where((s) =>
-          s.sourceKind == SourceKind.emby &&
-          (s.authToken ?? '').isNotEmpty)
-      .toList();
-  if (targets.isEmpty) {
-    yield const <String, List<MediaItem>>{};
-    return;
-  }
-
-  // 离开搜索页即杀掉在飞的搜索请求，别让服务器继续白算。
-  final cancelToken = CancelToken();
-  ref.onDispose(() {
-    if (!cancelToken.isCancelled) cancelToken.cancel('search-disposed');
+/// 聚合搜索公共链路的输出：Emby 分组 + 飞牛分组。
+class AggregateSearchOutcome {
+  const AggregateSearchOutcome({
+    this.embyGroups = const {},
+    this.feiniuGroups = const [],
   });
 
-  // 每台一条：查询 → 只留电影/剧集 → 排除隐藏库。单台异常被隔离为空结果 + 日志。
-  Future<MapEntry<String, List<MediaItem>>> queryOne(
-      ServerConfig server) async {
+  /// 「服务器名 → 命中列表」（Emby，已过滤隐藏服务器/隐藏库/顶层类型）。
+  final Map<String, List<MediaItem>> embyGroups;
+
+  /// 飞牛分组（已过滤隐藏服务器/顶层条目）。
+  final List<FeiniuSearchGroup> feiniuGroups;
+}
+
+/// 聚合搜索**公共链路**（参数化 query）。
+///
+/// 首页状态栏聚合搜索、ABCD 详情页「播放资源」搜索统一从这里取数，
+/// 所有安全过滤规则只维护一份：
+/// 1. 隐藏属性的服务器（server.hidden == true）一律排除，不出现在任何结果里；
+/// 2. 未登录服务器（Emby 无 authToken / 飞牛无凭据）排除；
+/// 3. Emby 仅保留 Movie/Series 顶层条目，并排除隐藏库（hiddenLibraries）；
+/// 4. 飞牛仅保留顶层条目（feiniuSearchResultsProvider 内部已过滤）；
+/// 5. 命中项打 sourceServerId 标记，供封面/点击解析回正确服务器；
+/// 6. 单台失败只记日志跳过，不拖垮其余；页面销毁即取消在途 Emby 请求。
+///
+/// **逐台增量**：用 StreamProvider + Stream.fromFutures，哪台服务器先返回
+/// 就先 emit 一版累积结果，一台慢/掉线不阻塞其它台（不再 Future.wait 等齐才出）。
+final aggregateSearchByQueryProvider = StreamProvider.autoDispose
+    .family<AggregateSearchOutcome, String>((ref, rawQuery) async* {
+  final query = rawQuery.trim();
+  if (query.isEmpty) {
+    yield const AggregateSearchOutcome();
+    return;
+  }
+  final servers = ref.watch(serverListProvider);
+  final hiddenLibraries = ref.watch(hiddenLibrariesProvider);
+  // 安全过滤：隐藏属性的服务器不参与任何聚合搜索。
+  final visibleServers =
+      servers.where((server) => server.hidden != true).toList();
+  final embyTargets = visibleServers
+      .where((server) =>
+          server.sourceKind == SourceKind.emby &&
+          (server.authToken ?? '').isNotEmpty)
+      .toList();
+  final feiniuTargets = visibleServers
+      .where((server) =>
+          server.sourceKind == SourceKind.feiniu &&
+          ((server.authToken ?? '').isNotEmpty ||
+              (server.username ?? '').isNotEmpty))
+      .toList();
+  if (embyTargets.isEmpty && feiniuTargets.isEmpty) {
+    yield const AggregateSearchOutcome();
+    return;
+  }
+
+  // 离开页面即杀掉在飞的搜索请求，别让服务器继续白算。
+  final cancelToken = CancelToken();
+  ref.onDispose(() {
+    if (!cancelToken.isCancelled) {
+      cancelToken.cancel('aggregate-search-disposed');
+    }
+  });
+
+  // Emby：逐台并行，只留电影/剧集，排除隐藏库，打来源标记。
+  Future<MapEntry<String, List<MediaItem>>> embyOne(ServerConfig server) async {
     final client = ref.read(serverApiClientProvider(server.id));
-    if (client == null) return MapEntry(server.name, const <MediaItem>[]);
+    if (client == null) {
+      return MapEntry(server.name, const <MediaItem>[]);
+    }
     try {
       final items = await client.search.search(query, cancelToken: cancelToken);
       final filtered = items.where((item) {
@@ -527,7 +524,6 @@ final aggregateSearchResultsProvider =
         }
         return true;
       }).toList();
-      // 打来源标记：让封面/点击解析到正确的服务器（见 MediaItem.sourceServerId）。
       for (final item in filtered) {
         item.sourceServerId = server.id;
       }
@@ -538,21 +534,83 @@ final aggregateSearchResultsProvider =
     }
   }
 
-  // 哪台先返回就先显示：Stream.fromFutures 按完成顺序吐结果。每次都按 serverListProvider
-  // 原顺序重排后 emit（完成顺序 ≠ 展示顺序），一台掉线不拖累其它台。
-  final acc = <String, List<MediaItem>>{};
+  // 飞牛：逐台并行（feiniuSearchResultsProvider 内部已过滤顶层条目）。
+  Future<FeiniuSearchGroup> feiniuOne(ServerConfig server) async {
+    try {
+      final entries = await ref.read(feiniuSearchResultsProvider(
+        (serverId: server.id, query: query),
+      ).future);
+      return FeiniuSearchGroup(server: server, entries: entries);
+    } catch (error) {
+      AppLogger().w('AggregateSearch', '服务器「${server.name}」飞牛搜索失败: $error');
+      return FeiniuSearchGroup(server: server, entries: const []);
+    }
+  }
+
+  final futures = <Future<Object>>[
+    ...embyTargets.map(embyOne),
+    ...feiniuTargets.map(feiniuOne),
+  ];
+  final accEmby = <String, List<MediaItem>>{};
+  final accFeiniu = <FeiniuSearchGroup>[];
   var emitted = false;
-  await for (final e in Stream.fromFutures(targets.map(queryOne))) {
-    if (e.value.isEmpty) continue;
-    acc[e.key] = e.value;
+  // 哪台先返回就先显示：完成顺序 ≠ 展示顺序，每次按服务器原顺序重排后 emit。
+  await for (final e in Stream.fromFutures(futures)) {
+    if (e is MapEntry<String, List<MediaItem>>) {
+      if (e.value.isEmpty) continue;
+      accEmby[e.key] = e.value;
+    } else if (e is FeiniuSearchGroup) {
+      if (e.entries.isEmpty) continue;
+      accFeiniu.add(e);
+    }
     emitted = true;
-    yield <String, List<MediaItem>>{
-      for (final s in targets)
-        if (acc[s.name]?.isNotEmpty ?? false) s.name: acc[s.name]!,
-    };
+    // 结果组装层的防御性校验：targets 在请求开始时就已滤除隐藏服务器，
+    // 这里在 emit 前再次拦截（server.hidden != true），双保险杜绝任何
+    // 隐藏/隐私服务器被展示——即使请求期间服务器属性发生变化也不放行。
+    yield AggregateSearchOutcome(
+      embyGroups: {
+        for (final s in embyTargets)
+          if (s.hidden != true && (accEmby[s.name]?.isNotEmpty ?? false))
+            s.name: accEmby[s.name]!,
+      },
+      feiniuGroups: [
+        for (final s in feiniuTargets)
+          if (s.hidden != true && accFeiniu.any((g) => g.server.id == s.id))
+            accFeiniu.firstWhere((g) => g.server.id == s.id),
+      ],
+    );
   }
   // 全部服务器都无命中：emit 一次空，让 UI 从 loading 落到「没有找到结果」而非一直转圈。
-  if (!emitted) yield const <String, List<MediaItem>>{};
+  if (!emitted) yield const AggregateSearchOutcome();
+});
+
+/// 飞牛分组搜索结果——转调聚合搜索公共链路，取增量流的最后一个完整快照
+/// （流结束时即全量结果）。过滤规则与首页聚合完全一致，只维护一份。
+final aggregateFeiniuSearchProvider = FutureProvider.autoDispose
+    .family<List<FeiniuSearchGroup>, String>((ref, rawQuery) async {
+  final outcome =
+      await ref.watch(aggregateSearchByQueryProvider(rawQuery).stream.last);
+  return outcome.feiniuGroups;
+});
+
+/// 聚合搜索结果（按服务器分组）——转调聚合搜索公共链路，仅取 Emby 分组。
+///
+/// 真正的跨服务器搜索：公共链路遍历 serverListProvider 里每一台**已登录且
+/// 未隐藏**服务器，各自用缓存的只读 client **并行**查询并合并；任一服务器
+/// 失败只记日志并跳过，不拖垮其余。返回「服务器名 → 命中列表」，供需要
+/// 分组展示的端使用（移动端按服务器分组、桌面/TV 可平铺）。
+///
+/// 注：旧实现把聚合委托给 `api.search.searchAggregate()`，但那只查当前 client
+/// 指向的单台服务器（等价于普通搜索），是聚合搜索"看似开了却没效果"的根因。
+/// **逐台增量**：哪台服务器先返回就先 emit 一版累积结果，一台慢/掉线不阻塞其它台。
+/// 只保留电影/剧集——聚合搜索面向剧、电影，过滤掉分集/人物等非顶层条目。
+final aggregateSearchResultsProvider =
+    StreamProvider.autoDispose<Map<String, List<MediaItem>>>((ref) async* {
+  final query = ref.watch(searchQueryProvider).trim();
+  await for (final outcome
+      in ref.watch(aggregateSearchByQueryProvider(query).stream)) {
+    yield outcome.embyGroups;
+  }
 });
 
 /// 排行榜条目在某台服务器上的最佳命中。
@@ -569,12 +627,24 @@ class ServerMatchInfo {
   /// 总集数（剧集用 recursiveItemCount/childCount；电影为 null）。
   final int? episodeCount;
 
+  /// Emby 服务器资源的**完整媒体流详情**（getItemMediaSources；Movie 才有，
+  /// Series 需逐集拉流，为 null）。资源卡/聚合胶囊显示分辨率/编码/HDR/码率/
+  /// 大小，与详情页底部媒体信息同源；缺失时 UI 回退 [item] 的搜索摘要。
+  final MediaSource? mediaSource;
+
+  /// 飞牛服务器资源的**完整媒体流详情**（mediaDetails：play/info + /stream；
+  /// movie/episode 才有，tv 需逐集拉流，为 null）。video/file 为归一化 key，
+  /// 与详情页底部媒体信息（_buildStreamInfoCards）完全一致。
+  final FeiniuMediaDetails? feiniuDetails;
+
   const ServerMatchInfo({
     required this.serverName,
     required this.item,
     this.sourceEntry,
     this.sourceServerId,
     this.episodeCount,
+    this.mediaSource,
+    this.feiniuDetails,
   });
 }
 
@@ -587,6 +657,16 @@ class ServerMatchInfo {
 ///
 /// **逐台增量**：StreamProvider + [Stream.fromFutures]，哪台先命中就先 emit，一台
 /// 慢/掉线不阻塞其它台（不再 `Future.wait` 等齐才出）。
+/// 跨服务器最佳匹配（ABCD 详情页「播放资源」区、播放器聚合菜单共用）。
+///
+/// **直接消费首页聚合搜索公共链路（[aggregateSearchByQueryProvider]）**：
+/// 隐藏服务器 / 隐藏库 / 未登录 / 顶层类型 / 来源标记等安全过滤规则与首页
+/// 状态栏聚合搜索完全一致，只维护一份，不再各自发请求。
+/// 此处只做「每台服务器挑一条最佳」的视图转换：
+/// - Emby：分组内精确同名优先，否则取第一条（公共链路已保证都是顶层条目）；
+/// - 飞牛：归一化评分（精确 3 分 > 互相包含 2 分，episode/season 降权、
+///   tv/movie/series 加分），避免「名称近似但货不对板」的误匹配
+///   （严格匹配不可靠：服务器间标题可能带年份/后缀/大小写差异）。
 final rankingCrossServerMatchProvider = StreamProvider.autoDispose
     .family<List<ServerMatchInfo>, String>((ref, title) async* {
   final query = title.trim();
@@ -594,144 +674,190 @@ final rankingCrossServerMatchProvider = StreamProvider.autoDispose
     yield const <ServerMatchInfo>[];
     return;
   }
+  // serverId → 媒体详情 future：公共链路逐台增量会 emit 多版，
+  // 详情只在首次出现时拉取，后续版本复用，避免重复请求。
+  final detailFutures = <String, Future<Object?>>{};
 
-  final servers = ref.watch(serverListProvider);
-  final targets = servers
-      .where((s) =>
-          (s.sourceKind == SourceKind.emby ||
-              s.sourceKind == SourceKind.feiniu) &&
-          ((s.authToken ?? '').isNotEmpty ||
-              (s.sourceKind == SourceKind.feiniu &&
-                  (s.username ?? '').isNotEmpty)))
-      .toList();
-  if (targets.isEmpty) {
-    yield const <ServerMatchInfo>[];
-    return;
-  }
-
-  // 关掉排行榜弹窗即杀掉在飞的跨服搜索请求。
-  final cancelToken = CancelToken();
-  ref.onDispose(() {
-    if (!cancelToken.isCancelled) cancelToken.cancel('ranking-match-disposed');
-  });
-
-  Future<ServerMatchInfo?> matchOne(ServerConfig server) async {
-    try {
-      if (server.sourceKind == SourceKind.feiniu) {
-        final entries = await ref.read(feiniuSearchResultsProvider(
-          (serverId: server.id, query: query),
-        ).future);
-        final playable = entries;
-        if (playable.isEmpty) return null;
-        // 严格匹配不可靠（服务器间标题可能带年份/后缀/大小写差异），
-        // 归一化（去空白/标点/小写）后优先精确相等，其次互相包含，
-        // 都失败才取第一条。避免命中无关条目导致 /play/info 404（Not Found）。
-        String norm(String s) => s
-            .toLowerCase()
-            .replaceAll(RegExp(r"[\s\-_.:()（）【】'\x22]+"), '');
-        final target = norm(query);
-        var best = playable.first;
-        var bestScore = -1;
-        for (final entry in playable) {
-          final name = norm(entry.name);
-          final type = (entry.raw?['type']?.toString() ?? '').toLowerCase();
-          int score;
-          if (name.isNotEmpty && name == target) {
-            score = 3;
-          } else if (name.isNotEmpty &&
-              (name.contains(target) || target.contains(name))) {
-            score = 2;
-          } else {
-            continue;
-          }
-          // 顶层剧集/电影优先；明确的分集降权（避免选中单集当整剧）。
-          if (type == 'episode' || type == 'season') score -= 2;
-          if (type == 'tv' || type == 'series' || type == 'movie') score += 1;
-          if (score > bestScore) {
-            bestScore = score;
-            best = entry;
-          }
-        }
-        final raw = best.raw ?? const <String, dynamic>{};
-        final rawType = '${raw['type'] ?? ''}'.toLowerCase();
-        final type = rawType == 'episode'
-            ? 'Episode'
-            : rawType == 'tv' || rawType == 'series'
-                ? 'Series'
-                : 'Movie';
-        final item = MediaItem(
-          id: best.id,
-          name: best.name,
-          type: type,
-          providerIds: {
-            for (final pair in [
-              ('tmdb', raw['tmdb_id'] ?? raw['tmdb']),
-              ('imdb', raw['imdb_id'] ?? raw['imdb']),
-              ('douban', raw['douban_id'] ?? raw['douban']),
-            ])
-              if (pair.$2?.toString().trim().isNotEmpty == true)
-                pair.$1: pair.$2.toString(),
-        })
-          ..sourceServerId = server.id;
-        return ServerMatchInfo(
-          serverName: server.name,
-          item: item,
-          sourceEntry: best,
-          sourceServerId: server.id,
-          episodeCount: (raw['episode_count'] as num?)?.toInt(),
-        );
-      }
-      final client = ref.read(serverApiClientProvider(server.id));
-      if (client == null) return null;
-      final items = await client.search.search(query, cancelToken: cancelToken);
-      final topLevel = items
-          .where((item) {
-            if (item.type == 'Movie' || item.type == 'Series') return true;
-            if (item.type != 'Episode') return false;
-            final hasEpisodeQuery = RegExp(r'\bS\d{1,2}E\d{1,3}\b', caseSensitive: false)
-                .hasMatch(query);
-            return hasEpisodeQuery;
-          })
-          .toList();
-      if (topLevel.isEmpty) return null;
-      // 打来源标记：让封面/点击解析到正确的服务器。
-      for (final item in topLevel) {
-        item.sourceServerId = server.id;
-      }
-      // 只在电影/整剧中挑最佳匹配，禁止误选 Episode 导致全集只显示一集。
-      final lower = query.toLowerCase();
-      final best = topLevel.firstWhere(
-        (i) => i.name.toLowerCase() == lower,
-        orElse: () => topLevel.first,
-      );
-
-      final episodeCount = best.recursiveItemCount ?? best.childCount;
-
-      return ServerMatchInfo(
-        serverName: server.name,
+  await for (final outcome
+      in ref.watch(aggregateSearchByQueryProvider(query).stream)) {
+    // 每台服务器的 best（Emby + 飞牛），统一描述供详情拉取。
+    final picks = <
+        ({
+          String serverName,
+          String serverId,
+          MediaItem item,
+          SourceEntry? entry,
+          String kind,
+          int? episodeCount,
+        })>[];
+    for (final group in outcome.embyGroups.entries) {
+      final best = _pickBestEmbyMatch(group.value, query);
+      if (best == null) continue;
+      picks.add((
+        serverName: group.key,
+        serverId: best.sourceServerId ?? group.key,
         item: best,
-        episodeCount: episodeCount,
+        entry: null,
+        kind: 'emby',
+        episodeCount: best.recursiveItemCount ?? best.childCount,
+      ));
+    }
+    for (final group in outcome.feiniuGroups) {
+      final picked = _pickBestFeiniuMatch(group.entries, query);
+      if (picked == null) continue;
+      // 补来源标记：让封面/点击解析回正确服务器（见 MediaItem.sourceServerId）。
+      picked.item.sourceServerId = group.server.id;
+      picks.add((
+        serverName: group.server.name,
+        serverId: group.server.id,
+        item: picked.item,
+        entry: picked.entry,
+        kind: 'feiniu',
+        episodeCount: picked.episodeCount,
+      ));
+    }
+    if (picks.isEmpty) {
+      yield const <ServerMatchInfo>[];
+      continue;
+    }
+
+    // 每台并行拉媒体详情（Emby: getItemMediaSources / 飞牛: mediaDetails，
+    // 与详情页底部媒体信息同源），完成一台出一次增量结果；
+    // 单台详情失败只丢详情不丢匹配（胶囊回退搜索摘要）。
+    final acc = <String, ServerMatchInfo>{};
+    final futures = picks.map((p) async {
+      final detail = await (detailFutures[p.serverId] ??= p.kind == 'emby'
+          ? _loadEmbyMediaSource(ref, p.serverId, p.item)
+          : _loadFeiniuMediaDetails(ref, p.serverId, p.entry!));
+      return (p: p, detail: detail);
+    });
+    var emitted = false;
+    await for (final r in Stream.fromFutures(futures)) {
+      final p = r.p;
+      acc[p.serverId] = ServerMatchInfo(
+        serverName: p.serverName,
+        item: p.item,
+        sourceEntry: p.entry,
+        sourceServerId: p.kind == 'feiniu' ? p.serverId : null,
+        episodeCount: p.episodeCount,
+        mediaSource: p.kind == 'emby' ? r.detail as MediaSource? : null,
+        feiniuDetails:
+            p.kind == 'feiniu' ? r.detail as FeiniuMediaDetails? : null,
       );
-    } catch (e) {
-      AppLogger().w('RankingMatch', '服务器「${server.name}」搜索失败: $e');
-      return null;
+      emitted = true;
+      // 按服务器原顺序重排后输出（完成顺序 ≠ 展示顺序）。
+      yield <ServerMatchInfo>[
+        for (final p2 in picks)
+          if (acc[p2.serverId] != null) acc[p2.serverId]!,
+      ];
+    }
+    if (!emitted) yield const <ServerMatchInfo>[];
+  }
+});
+
+/// 拉取 Emby 服务器资源的完整媒体流详情（仅 Movie；Series 需逐集拉流，
+/// 返回 null 让胶囊回退搜索摘要）。
+Future<MediaSource?> _loadEmbyMediaSource(
+    Ref ref, String serverId, MediaItem item) async {
+  if (item.type != 'Movie') return null;
+  final client = ref.read(serverApiClientProvider(serverId));
+  if (client == null) return null;
+  try {
+    final sources = await client.media.getItemMediaSources(item.id);
+    return sources.isEmpty ? null : sources.first;
+  } catch (_) {
+    return null; // 单台详情失败不影响匹配结果本身
+  }
+}
+
+/// 拉取飞牛服务器资源的完整媒体流详情（仅 movie/episode；tv 需逐集拉流）。
+/// 返回的 FeiniuMediaDetails.video/file 为归一化 key，与详情页底部一致。
+Future<FeiniuMediaDetails?> _loadFeiniuMediaDetails(
+    Ref ref, String serverId, SourceEntry entry) async {
+  final rawType = (entry.raw?['type']?.toString() ?? '').toLowerCase();
+  if (rawType == 'tv') return null;
+  ServerConfig? server;
+  for (final s in ref.read(serverListProvider)) {
+    if (s.id == serverId) {
+      server = s;
+      break;
     }
   }
-
-  // 哪台先命中就先显示：按完成顺序累积，每次按 serverListProvider 原顺序重排后 emit。
-  final acc = <String, ServerMatchInfo>{};
-  var emitted = false;
-  await for (final r in Stream.fromFutures(targets.map(matchOne))) {
-    if (r == null) continue;
-    acc[r.serverName] = r;
-    emitted = true;
-    yield <ServerMatchInfo>[
-      for (final s in targets)
-        if (acc[s.name] != null) acc[s.name]!,
-    ];
+  if (server == null) return null;
+  try {
+    return await FeiniuBackend().mediaDetails(server, entry);
+  } catch (_) {
+    return null;
   }
-  if (!emitted) yield const <ServerMatchInfo>[];
-});
+}
+
+/// 从 Emby 分组结果挑一条最佳：精确同名优先，否则取第一条。
+MediaItem? _pickBestEmbyMatch(List<MediaItem> items, String query) {
+  if (items.isEmpty) return null;
+  final lower = query.toLowerCase();
+  return items.firstWhere(
+    (i) => i.name.toLowerCase() == lower,
+    orElse: () => items.first,
+  );
+}
+
+/// 飞牛最佳匹配：归一化评分。返回命中的 SourceEntry 与合成 MediaItem。
+({SourceEntry entry, MediaItem item, int? episodeCount})?
+    _pickBestFeiniuMatch(List<SourceEntry> playable, String query) {
+  if (playable.isEmpty) return null;
+  String norm(String s) => s
+      .toLowerCase()
+      .replaceAll(RegExp(r"[\s\-_.:()（）【】'\x22]+"), '');
+  final target = norm(query);
+  var best = playable.first;
+  var bestScore = -1;
+  for (final entry in playable) {
+    final name = norm(entry.name);
+    final type = (entry.raw?['type']?.toString() ?? '').toLowerCase();
+    int score;
+    if (name.isNotEmpty && name == target) {
+      score = 3;
+    } else if (name.isNotEmpty &&
+        (name.contains(target) || target.contains(name))) {
+      score = 2;
+    } else {
+      continue;
+    }
+    // 顶层剧集/电影优先；明确的分集降权（避免选中单集当整剧）。
+    if (type == 'episode' || type == 'season') score -= 2;
+    if (type == 'tv' || type == 'series' || type == 'movie') score += 1;
+    if (score > bestScore) {
+      bestScore = score;
+      best = entry;
+    }
+  }
+  final raw = best.raw ?? const <String, dynamic>{};
+  final rawType = '${raw['type'] ?? ''}'.toLowerCase();
+  final type = rawType == 'episode'
+      ? 'Episode'
+      : rawType == 'tv' || rawType == 'series'
+          ? 'Series'
+          : 'Movie';
+  final item = MediaItem(
+    id: best.id,
+    name: best.name,
+    type: type,
+    providerIds: {
+      for (final pair in [
+        ('tmdb', raw['tmdb_id'] ?? raw['tmdb']),
+        ('imdb', raw['imdb_id'] ?? raw['imdb']),
+        ('douban', raw['douban_id'] ?? raw['douban']),
+      ])
+        if (pair.$2?.toString().trim().isNotEmpty == true)
+          pair.$1: pair.$2.toString(),
+    },
+  );
+  return (
+    entry: best,
+    item: item,
+    episodeCount: (raw['episode_count'] as num?)?.toInt(),
+  );
+}
 
 /// 搜索结果（平铺）。聚合开关打开时跨所有服务器搜索并合并，否则只搜当前服务器。
 final searchResultsProvider =

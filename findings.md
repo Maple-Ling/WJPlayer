@@ -41,3 +41,10 @@
 - `git diff --check` 通过。
 - 未下载 Dart/Flutter SDK，未执行本地构建；按用户要求留给 GitHub CI。
 - 当前工作区修改集中在播放器系统控制、播放器状态接线、播放器覆盖层、弹层菜单及规划记录。
+
+## 2026-08-06 进度拖动重构发现
+- 根因1：BottomBar Slider 的 onChanged 与 onChangeEnd 都绑定同一个 seek 回调，拖动每帧并发发 seek，旧原生 position 回调覆盖新目标造成回弹。
+- 根因2：VideoPlayerService.onDragEnd 先清 isScrubbingPosition 再异步 seek，UI 会瞬间读取旧 position。
+- 根因3：屏幕水平手势预览未完整传入 PlayerOverlay/BottomBar；隐藏与显示 UI 使用不同状态源。
+- 根因4：player_screen_state 旧 `_seekHint` 与 `_buildDragIndicator` 在屏幕中央显示相对时间，和新需求冲突。
+- 当前方向：服务层 committed seek 稳定窗口；Slider 本地预览、松手单次 commit；目标绝对时间统一挂在进度条上方；旧中央提示彻底删除。

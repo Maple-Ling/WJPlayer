@@ -26,6 +26,7 @@ class PlayerOverlay extends StatefulWidget {
     required this.bufferedProgress,
     this.isScrubbingPosition = false,
     this.dragPreviewProgress,
+    this.isSeekSettling = false,
     this.isBuffering = false,
     this.rxSpeed = 0,
     required this.title,
@@ -76,6 +77,7 @@ class PlayerOverlay extends StatefulWidget {
     this.onNext,
     this.onPlayPause,
     this.onSeek,
+    this.onSeekChangeEnd,
     this.onPlaybackRateChanged,
     this.onAspectRatioChanged,
     this.onSourceChanged,
@@ -114,6 +116,7 @@ class PlayerOverlay extends StatefulWidget {
   final double bufferedProgress;
   final bool isScrubbingPosition;
   final double? dragPreviewProgress;
+  final bool isSeekSettling;
   final bool isBuffering;
   final double rxSpeed;
 
@@ -169,6 +172,7 @@ class PlayerOverlay extends StatefulWidget {
   final VoidCallback? onNext;
   final VoidCallback? onPlayPause;
   final ValueChanged<double>? onSeek;
+  final ValueChanged<double>? onSeekChangeEnd;
   final ValueChanged<double>? onPlaybackRateChanged;
   final ValueChanged<String>? onAspectRatioChanged;
   final ValueChanged<String>? onSourceChanged;
@@ -227,6 +231,10 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
   late int _selectedEpisode;
   late String? _introTime;
   late String? _outroTime;
+  double? _sliderPreviewProgress;
+  /// 本地 Slider 拖动进行中标记：拖动期间禁止 didUpdateWidget 清除预览值，
+  /// 否则播放器 position 回调触发 parent rebuild 会让进度条瞬间跳回旧进度。
+  bool _sliderDragActive = false;
 
   DateTime _now = DateTime.now();
   Timer? _clockTimer;
@@ -312,6 +320,16 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
     if (widget.initialSpeed != oldWidget.initialSpeed) {
       _speed = widget.initialSpeed;
     }
+    // seek 已经稳定落地后清除本地滑块预览；在服务层仍处于提交锁定时，
+    // 即使底层 position 暂时回到旧值也不能清掉预览。
+    // 本地 Slider 拖动进行中（_sliderDragActive）同样禁止清除，
+    // 否则 position 回调触发 rebuild 会让进度条跳回旧进度（拖动不跟手/回弹）。
+    if (!_sliderDragActive &&
+        !widget.isScrubbingPosition &&
+        widget.dragPreviewProgress == null &&
+        _sliderPreviewProgress != null) {
+      _sliderPreviewProgress = null;
+    }
   }
 
   @override
@@ -320,6 +338,34 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
     _clockTimer?.cancel();
     _toastTimer?.cancel();
     super.dispose();
+  }
+
+  void _handleProgressChanged(double value) {
+    final next = value.clamp(0.0, 1.0).toDouble();
+    _sliderDragActive = true;
+    if (_sliderPreviewProgress == next) return;
+    setState(() => _sliderPreviewProgress = next);
+  }
+
+  void _handleProgressChangeEnd(double value) {
+    final next = value.clamp(0.0, 1.0).toDouble();
+    _sliderDragActive = false;
+    // 松手：保留预览值直到服务层 seek 稳定落地（由 didUpdateWidget 在
+    // settle 完成后清除），期间进度条与左侧时间始终显示松手目标，绝不回弹。
+    setState(() => _sliderPreviewProgress = next);
+    widget.onSeekChangeEnd?.call(next);
+  }
+
+  double _currentProgress() {
+    final local = _sliderPreviewProgress;
+    if (local != null) return local;
+    final external = widget.dragPreviewProgress;
+    if (external != null) return external.clamp(0.0, 1.0).toDouble();
+    final durationMs = widget.duration.inMilliseconds;
+    if (durationMs <= 0) return 0.0;
+    return (widget.position.inMilliseconds / durationMs)
+        .clamp(0.0, 1.0)
+        .toDouble();
   }
 
   void _openMenu(
@@ -636,44 +682,43 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
     );
   }
 
-  /// 手势拖动进度时的极简进度条（仅 UI 隐藏时显示；UI 显式时由控制栏
-  /// 进度条直接联动，不重复弹出）。拖动实时跟随手指，松手后 seekTo 精确落地不回弹。
-  Widget _buildScrubbingProgress(BuildContext context, Size size) {
-    final dragProgress = (widget.dragPreviewProgress ?? 0).clamp(0.0, 1.0);
+  /// 拖动进度时的极简进度条。仅在控制 UI 隐藏时显示（情况 A），
+  /// 结构自下而上：左右时间行（左=拖动预览、右=总时长）→ 进度条 → 目标绝对时间。
+  /// 目标绝对时间水平居中、紧贴进度条上方（向上偏移约两字符高度），
+  /// 由本组件统一渲染，保证 UI 隐藏时仍强制可见；不再存在屏幕中央提示。
+  Widget _buildScrubbingProgress(BuildContext context) {
+    final dragProgress = _currentProgress();
     final duration = widget.duration;
-    // 目标播放时间的绝对时间点（hh:mm:ss / mm:ss），显示在进度条上方一点。
-    final target = _posFromProg(dragProgress, duration);
+    final mediaPadding = MediaQuery.of(context).padding;
+    final preview = _posFromProg(dragProgress, duration);
     return Positioned(
       left: 0,
       right: 0,
-      top: size.height * 0.5 - 48,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 40),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              _formatDuration(target),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                shadows: [
-                  Shadow(color: Colors.black87, blurRadius: 4),
-                ],
-              ),
+      bottom: mediaPadding.bottom + 18,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 目标绝对时间：进度条上方水平居中（跟随拖动预览值）。
+          Text(
+            _formatDuration(preview),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              shadows: [Shadow(color: Colors.black87, blurRadius: 4)],
             ),
-            const SizedBox(height: 8),
-            Row(
+          ),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 40),
+            child: Row(
               children: [
                 Text(
-                  _formatDuration(widget.position),
+                  _formatDuration(preview),
                   style: const TextStyle(
                     color: Colors.white70,
                     fontSize: 11,
-                    shadows: [
-                      Shadow(color: Colors.black87, blurRadius: 3),
-                    ],
+                    shadows: [Shadow(color: Colors.black87, blurRadius: 3)],
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -695,15 +740,13 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                   style: const TextStyle(
                     color: Colors.white70,
                     fontSize: 11,
-                    shadows: [
-                      Shadow(color: Colors.black87, blurRadius: 3),
-                    ],
+                    shadows: [Shadow(color: Colors.black87, blurRadius: 3)],
                   ),
                 ),
               ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -837,12 +880,18 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                           meta: widget.meta,
                           // UI 显式状态下的屏幕拖动：进度条实时跟随手指预览值，
                           // 松手后 seekTo 精确落地（不回弹）。
-                          position: widget.isScrubbingPosition
+                          position: widget.isSeekSettling ||
+                                  widget.isScrubbingPosition
                               ? _posFromProg(
-                                  widget.dragPreviewProgress ?? 0,
-                                  widget.duration,
-                                )
+                                  _currentProgress(), widget.duration)
                               : widget.position,
+                          dragTargetPosition: widget.isScrubbingPosition ||
+                                  widget.isSeekSettling
+                              ? _posFromProg(
+                                  _currentProgress(), widget.duration)
+                              : null,
+                          isDraggingProgress: widget.isScrubbingPosition,
+                          progressOverride: _currentProgress(),
                           duration: widget.duration,
                           bufferedProgress: widget.bufferedProgress,
                           isPlaying: widget.isPlaying,
@@ -855,8 +904,8 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                             PlayerBottomAction.episodes,
                           ],
                           selectedActions: _selectedBottomActions,
-                          onProgressChanged: widget.onSeek,
-                          onProgressChangeEnd: widget.onSeek,
+                          onProgressChanged: _handleProgressChanged,
+                          onProgressChangeEnd: _handleProgressChangeEnd,
                           onPrevious: widget.onPrevious,
                           onPlayPause: widget.onPlayPause,
                           onNext: widget.onNext,
@@ -994,10 +1043,16 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                   ),
                 ),
               if (_toastMessage != null) _buildToast(size),
-              // 手势拖动进度：仅 UI 隐藏时单独渲染极简进度条；
-              // UI 显式时控制栏进度条本身实时联动，不重复弹出。
-              if (widget.isScrubbingPosition && !isUiVisible)
-                _buildScrubbingProgress(context, size),
+              // 拖动/seek 稳定期（情况 A：当前 UI 隐藏）：
+              // 屏幕上仅显示极简进度条（含左右时间 + 目标绝对时间），
+              // 标题栏/控制按钮/返回键等全部保持隐藏（AnimatedOpacity 已遮挡）。
+              // 情况 B（UI 显示）：BottomBar 进度条正常跟随并在其内部渲染
+              // 目标时间（见 BottomBar._buildProgress 的 dragTargetPosition 分支），
+              // 此处不再重复渲染，杜绝双份目标时间。
+              if ((widget.isScrubbingPosition || widget.isSeekSettling) &&
+                  !isUiVisible)
+                _buildScrubbingProgress(context),
+
               // 卡顿缓冲时，中央显示网速 + 转圈。
               if (widget.isBuffering && !isUiVisible) _buildBufferingSpeed(context),
             ],
