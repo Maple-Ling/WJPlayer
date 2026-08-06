@@ -828,34 +828,6 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                         ),
                       ),
                       Positioned(
-                        left: 16,
-                        top: 72,
-                        child: IgnorePointer(
-                          child: Text(
-                            [
-                              if (widget.initialCore.isNotEmpty)
-                                widget.initialCore == 'exoPlayer'
-                                    ? 'EXO'
-                                    : 'MPV',
-                              if (widget.encoder.isNotEmpty) widget.encoder,
-                              if (widget.bitrate.isNotEmpty) widget.bitrate,
-                              if (widget.frameRate.isNotEmpty)
-                                widget.frameRate,
-                              if (widget.mediaSize.isNotEmpty)
-                                widget.mediaSize,
-                            ].join(' · '),
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 11,
-                              shadows: [
-                                Shadow(
-                                    color: Colors.black87, blurRadius: 4),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                      Positioned(
                         left: 0,
                         right: 0,
                         bottom: 0,

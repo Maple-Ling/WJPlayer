@@ -379,11 +379,11 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
           ),
   );
 
-  Widget _people(List<ExternalPerson> people) => SizedBox(height: 105, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: people.length, separatorBuilder: (_, __) => const SizedBox(width: 9), itemBuilder: (_, index) { final person = people[index]; return InkWell(onTap: () => _showPerson(person), child: SizedBox(width: 78, child: Column(children: [ClipOval(child: SizedBox(width: 58, height: 58, child: MediaImage(imageUrl: person.profileUrl, fit: BoxFit.cover))), const SizedBox(height: 8), Text(person.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)), Text(person.character ?? person.originalName ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.black54))]))); }));
+  Widget _people(List<ExternalPerson> people) => SizedBox(height: 105, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: people.length, separatorBuilder: (_, __) => const SizedBox(width: 9), itemBuilder: (_, index) { final person = people[index]; return InkWell(onTap: () => _showPerson(person), child: SizedBox(width: 78, child: Column(children: [ClipOval(child: SizedBox(width: 58, height: 58, child: MediaImage(imageUrl: person.profileUrl, fit: BoxFit.cover, cacheWidth: 120))), const SizedBox(height: 8), Text(person.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)), Text(person.character ?? person.originalName ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.black54))]))); }));
 
-  Widget _gallery(List<String> images) => SizedBox(height: 150, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: images.length, separatorBuilder: (_, __) => const SizedBox(width: 9), itemBuilder: (_, index) => InkWell(onTap: () => _showImage(images, index), child: AspectRatio(aspectRatio: 16 / 9, child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaImage(imageUrl: images[index], fit: BoxFit.cover))))));
+  Widget _gallery(List<String> images) => SizedBox(height: 150, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: images.length, separatorBuilder: (_, __) => const SizedBox(width: 9), itemBuilder: (_, index) => InkWell(onTap: () => _showImage(images, index), child: AspectRatio(aspectRatio: 16 / 9, child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaImage(imageUrl: images[index], fit: BoxFit.cover, cacheWidth: 320))))));
 
-  Widget _recommendations(List<DiscoverEntry> items) => SizedBox(height: 180, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: items.length, separatorBuilder: (_, __) => const SizedBox(width: 8), itemBuilder: (_, index) { final item = items[index]; return InkWell(onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ExternalMediaDetailScreen(entry: item))), child: SizedBox(width: 100, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaImage(imageUrl: item.posterUrl, fit: BoxFit.cover))), const SizedBox(height: 8), Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)), Text(item.year ?? '', style: const TextStyle(color: Colors.black54))]))); }));
+  Widget _recommendations(List<DiscoverEntry> items) => SizedBox(height: 180, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: items.length, separatorBuilder: (_, __) => const SizedBox(width: 8), itemBuilder: (_, index) { final item = items[index]; return InkWell(onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ExternalMediaDetailScreen(entry: item))), child: SizedBox(width: 100, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaImage(imageUrl: item.posterUrl, fit: BoxFit.cover, cacheWidth: 200))), const SizedBox(height: 8), Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)), Text(item.year ?? '', style: const TextStyle(color: Colors.black54))]))); }));
 
   Widget _mediaInfo(ExternalMediaDetail detail) {
     final values = <(String, String)>[
@@ -466,6 +466,7 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
     }
     if (source != null && server != null) {
       ref.read(currentServerProvider.notifier).state = server;
+      if (!context.mounted) return;
       context.push('/source-player', extra: SourcePlayback(server: server, entry: source));
       return;
     }
@@ -475,6 +476,7 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
         ref.read(currentServerProvider.notifier).syncWithAvailableServers(
             ref.read(serverListProvider), preferredServerId: origin);
       }
+      if (!context.mounted) return;
       context.push('/player/${match.item.id}');
     } else {
       openMediaItem(ref, context, match.item);

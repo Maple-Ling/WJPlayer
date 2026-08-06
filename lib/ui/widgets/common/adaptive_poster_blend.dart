@@ -74,6 +74,10 @@ class _AdaptivePosterBlendState extends State<AdaptivePosterBlend> {
               httpHeaders: widget.httpHeaders,
               fit: BoxFit.cover,
               alignment: Alignment.topCenter,
+              // 头图降采样：按屏宽解码（2x），避免 w1400 大图在主线程
+              // 全尺寸解码造成进入详情页卡顿。
+              cacheWidth:
+                  (MediaQuery.sizeOf(context).width * 2).round().clamp(320, 1440),
             ),
           ),
         ),

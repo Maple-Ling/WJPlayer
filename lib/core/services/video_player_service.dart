@@ -1561,10 +1561,14 @@ class VideoPlayerService extends ChangeNotifier {
           _hapticTick(target);
         }
       } else {
-        final target = (_dragStartVolume + delta).clamp(0.0, 1.0).toDouble();
-        if ((target - volume).abs() >= 0.01) {
-          unawaited(setVolume(target));
-          _hapticTick(target);
+        // 音量：低灵敏度（全屏高度 = 25% 音量）+ 1% 量化递进，
+        // 避免一次小幅滑动直接跳 7~8%（系统音量通道为离散档位）。
+        final target =
+            (_dragStartVolume + delta * 0.25).clamp(0.0, 1.0).toDouble();
+        final quantized = (target * 100).round() / 100;
+        if ((quantized - volume).abs() >= 0.005) {
+          unawaited(setVolume(quantized));
+          _hapticTick(quantized);
         }
       }
     }

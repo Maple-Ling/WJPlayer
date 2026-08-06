@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -25,6 +27,7 @@ import '../../widgets/common/media_metadata_badges.dart';
 import '../../widgets/common/media_widgets.dart';
 import '../../widgets/common/adaptive_poster_blend.dart';
 import '../../widgets/common/playback_resource_card.dart';
+import '../../utils/media_helpers.dart';
 import '../discover/external_media_detail_screen.dart';
 
 UnifiedMediaEntry unifiedEntryFromSource(SourceEntry source) => UnifiedMediaEntry(
@@ -479,6 +482,8 @@ class _UnifiedMediaDetailScreenState
   int _audioIndex = 0;
   int _subtitleIndex = -1;
   int _selectedCrossServerIndex = 0;
+  // 单击跨服务器资源卡选中的匹配（用于顶部播放按钮直接播放该服务器资源）。
+  ServerMatchInfo? _selectedCrossServerMatch;
   int _episodeRangeStart = 1;
   String _core = 'nativeMpv';
   bool _loading = true;
@@ -562,7 +567,9 @@ class _UnifiedMediaDetailScreenState
       if (!mounted) return;
       _detailCache[cacheKey] = detail;
       _detail = detail;
-      await _loadExternalDetail(detail.entry);
+      // 外部详情（TMDB/豆瓣演员、剧照、推荐等）与季/集加载并行，
+      // 避免外部接口慢时详情页长时间停在 loading（进入卡顿感）。
+      unawaited(_loadExternalDetail(detail.entry));
       final scopeKey = buildWatchHistoryScopeKey(widget.server);
       if (scopeKey != null) {
         _scopeRecords = await ref.read(watchHistoryProvider).loadScope(scopeKey);
@@ -636,6 +643,8 @@ class _UnifiedMediaDetailScreenState
     } catch (_) {
       _externalDetail = null;
     }
+    // 并行加载完成后刷新界面（进入时不再被 await 阻塞）。
+    if (mounted) setState(() {});
   }
 
   Future<void> _selectSeason(String seasonId) async {
@@ -789,12 +798,13 @@ class _UnifiedMediaDetailScreenState
   }
 
   /// 解析季号：仅识别明确的季格式（第 X 季 / Season X / S1 / season:X）。
-  /// 注意：Emby 的 season.id 是纯数字内部 ID（如 "123456"），不代表季号，
-  /// 因此不能对任意数字兜底，否则会把 ID 误判为季号导致季识别错误。
+  /// 注意：Emby 的 season.id 是纯数字内部 ID、飞牛的 season.id 是
+  /// "season:<guid>"（guid 可能以数字开头），都不能作为季号兜底，
+  /// 否则会把 ID/guid 误判为季号导致季识别错误。
   int? _seasonNumber(String? seasonId) {
     if (seasonId == null) return null;
     final match = RegExp(
-            r'第\s*(\d+)\s*季|season[:\s]*(\d+)|[Ss](\d+)\b',
+            r'第\s*(\d+)\s*季|^season[:\s]*(\d+)$|[Ss](\d+)\b',
             caseSensitive: false)
         .firstMatch(seasonId);
     if (match == null) return null;
@@ -1100,17 +1110,31 @@ class _UnifiedMediaDetailScreenState
               shape: const StadiumBorder(),
               elevation: 0,
             ),
-            onPressed:
-                _selectedEntry == null || _loadingMedia ? null : _play,
+            // 优先播放单击选中的跨服务器资源；无选择时播放本地资源。
+            onPressed: _selectedCrossServerMatch != null
+                ? _playSelectedOrLocal
+                : (_selectedEntry == null || _loadingMedia ? null : _play),
             icon: const Icon(Icons.play_arrow_rounded, size: 23),
             label: Text(
-              _selectedEntry == null ? '搜索中' : _resumeLabel(),
+              _selectedEntry == null && _selectedCrossServerMatch == null
+                  ? '搜索中'
+                  : (_selectedEntry == null ? '播放' : _resumeLabel()),
               style: const TextStyle(
                   fontSize: 12, fontWeight: FontWeight.w800),
             ),
           ),
         ),
       );
+
+  /// 播放所选：有跨服务器选择时播放该服务器资源，否则走本地资源播放。
+  void _playSelectedOrLocal() {
+    final match = _selectedCrossServerMatch;
+    if (match != null) {
+      _openCrossServerMatch(match);
+      return;
+    }
+    _play();
+  }
 
   /// 自动滚动到指定分集的最左侧位置。
   /// 仅滚动视口，不修改数组/顺序/位置。列表尚未挂载时逐帧重试（最多 8 次），
@@ -1171,7 +1195,7 @@ class _UnifiedMediaDetailScreenState
   int? _uiSeasonNumber(String? value) {
     if (value == null) return null;
     final match = RegExp(
-            r'第\s*(\d+)\s*季|season[:\s]*(\d+)|[Ss](\d+)\b',
+            r'第\s*(\d+)\s*季|^season[:\s]*(\d+)$|[Ss](\d+)\b',
             caseSensitive: false)
         .firstMatch(value);
     if (match == null) return null;
@@ -1361,6 +1385,19 @@ class _UnifiedMediaDetailScreenState
                             imageUrl: episode.stillUrl,
                             httpHeaders: episode.entry.imageHeaders,
                             fit: BoxFit.cover,
+                            cacheWidth: 440,
+                            // 飞牛分集常缺海报/剧照：加载失败时显示占位图标而非空白。
+                            errorWidget: Container(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest,
+                              alignment: Alignment.center,
+                              child: const Icon(
+                                Icons.tv_rounded,
+                                size: 30,
+                                color: Colors.black26,
+                              ),
+                            ),
                           ),
                           if (selected)
                             DecoratedBox(
@@ -1442,13 +1479,11 @@ class _UnifiedMediaDetailScreenState
                         codec: source?.primaryVideoStream?.videoCodecLabel,
                         size: source?.size,
                         bitrate: source?.primaryVideoStream?.bitRate,
-                        // 单击 = 识别服务器并直接开始播放
-                        onTap: () {
-                          setState(() {
-                            _selectedCrossServerIndex = index;
-                          });
-                          _openCrossServerMatch(match);
-                        },
+                        // 单击 = 选择该服务器资源（高亮 + 记录，播放由顶部播放键触发）
+                        onTap: () => setState(() {
+                          _selectedCrossServerIndex = index;
+                          _selectedCrossServerMatch = match;
+                        }),
                         // 双击 = 进入该服务器对应的媒体详情页
                         onDoubleTap: () => _openServerDetail(match),
                       ),
@@ -1468,6 +1503,7 @@ class _UnifiedMediaDetailScreenState
         .firstOrNull;
     if (server == null) return;
     ref.read(currentServerProvider.notifier).state = server;
+    if (!mounted) return;
     if (match.sourceEntry != null) {
       context.push('/source-player',
           extra: SourcePlayback(server: server, entry: match.sourceEntry!));
@@ -1484,11 +1520,14 @@ class _UnifiedMediaDetailScreenState
       } else {
         ref.read(currentServerProvider.notifier).state = server;
       }
+      if (!mounted) return;
       context.push('/player/${match.item.id}');
       return;
     }
-    ref.read(currentServerProvider.notifier).state = server;
-    context.push('/player/${match.item.id}');
+    // Series 等顶层剧集：进入该服务器对应的媒体详情页（详情页内选集播放），
+    // 与 A 页聚合资源行为一致；不能直接 push /player（Series 无可播源）。
+    if (!mounted) return;
+    openMediaItem(ref, context, match.item);
   }
 
   /// 双击跨服务器资源卡：进入该服务器对应的媒体详情页（复用 UnifiedMediaDetailScreen）。
@@ -1607,7 +1646,10 @@ class _UnifiedMediaDetailScreenState
               aspectRatio: 16 / 9,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(18),
-                child: MediaImage(imageUrl: images[index], fit: BoxFit.cover),
+                child: MediaImage(
+                    imageUrl: images[index],
+                    fit: BoxFit.cover,
+                    cacheWidth: 320),
               ),
             ),
           ),
@@ -1634,7 +1676,9 @@ class _UnifiedMediaDetailScreenState
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(18),
                         child: MediaImage(
-                            imageUrl: item.posterUrl, fit: BoxFit.cover),
+                            imageUrl: item.posterUrl,
+                            fit: BoxFit.cover,
+                            cacheWidth: 200),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -1754,6 +1798,7 @@ class _UnifiedMediaDetailScreenState
                       child: MediaImage(
                         imageUrl: person.profileUrl,
                         fit: BoxFit.cover,
+                        cacheWidth: 120,
                       ),
                     ),
                   ),

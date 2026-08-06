@@ -446,8 +446,19 @@ class FeiniuUnifiedMediaAdapter implements UnifiedMediaAdapter {
 
   @override
   Future<List<UnifiedMediaEntry>> episodes(
-          String seriesId, String seasonId) async =>
-      (await backend.episodes(server, seasonId)).map(_entry).toList();
+          String seriesId, String seasonId) async {
+    final list = await backend.episodes(server, seasonId);
+    return list.map((source) {
+      final entry = _entry(source);
+      // 飞牛分集的集号在 raw['episode_number']，必须显式带上，
+      // 否则详情页只能靠名称正则兜底（"S1E2 标题"），解析不稳。
+      final rawNumber = source.raw?['episode_number'];
+      final index = rawNumber is num
+          ? rawNumber.toInt()
+          : int.tryParse('${rawNumber ?? ''}');
+      return index == null ? entry : entry.copyWith(indexNumber: index);
+    }).toList();
+  }
 
   @override
   Future<List<UnifiedMediaResource>> mediaResources(

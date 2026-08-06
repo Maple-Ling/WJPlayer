@@ -3312,7 +3312,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     if (server == null) return;
     _playerNavInFlight = true;
     if (match.sourceEntry != null) {
-      // 切源：完整重建播放器（保证服务/纹理/轨道都正确初始化）。
+      // 飞牛/直链源：完整重建播放器（保证服务/纹理/轨道都正确初始化）。
       context.pushReplacement('/source-player',
           extra: SourcePlayback(
             server: server,
@@ -3333,7 +3333,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       }
       context.pushReplacement(
           '/player/${match.item.id}?core=${Uri.encodeQueryComponent(_currentCore)}');
+      return;
     }
+    // Series 等其它类型（Emby 聚合检索的顶层剧集）：切到归属服务器并进入
+    // 其媒体详情页（详情页内选集播放，与 A 页聚合资源行为一致）；播放器
+    // 保留在栈中，从详情页返回可继续播放。push 不销毁当前 State，恢复防抖。
+    openMediaItem(ref, context, match.item);
+    _playerNavInFlight = false;
   }
 
   Widget _buildDragIndicator() {

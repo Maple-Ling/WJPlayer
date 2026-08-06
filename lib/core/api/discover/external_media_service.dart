@@ -56,7 +56,9 @@ class ExternalMediaService {
   }
 
   Future<({int id, String type})> resolve(DiscoverEntry entry) async {
-    final direct = int.tryParse(entry.tmdbId ?? (entry.source == ReviewSource.tmdb ? entry.id : ''));
+    // 只认真实的 TMDB id：BCD 详情页在 providerIds 缺失时会把 Emby 内部 id
+    // 放进 entry.id，绝不能把它当 TMDB id 用（"货不对板"根因之一）。
+    final direct = int.tryParse(entry.tmdbId ?? '');
     if (direct != null) return (id: direct, type: entry.mediaType == 'tv' ? 'tv' : 'movie');
     final cacheKey = 'tmdb-resolve:${entry.source.name}:${entry.id}:${entry.title}:${entry.year}';
     return PersistentJsonCache.networkFirst(
@@ -79,11 +81,30 @@ class ExternalMediaService {
         }));
         final results = (response.data as Map)['results'] as List? ?? const [];
         final wanted = entry.mediaType == 'tv' ? 'tv' : 'movie';
-        final row = results.whereType<Map>().firstWhere(
-          (item) => item['media_type'] == wanted,
-          orElse: () => results.whereType<Map>().first,
-        );
-        return (id: (row['id'] as num).toInt(), type: '${row['media_type'] ?? wanted}');
+        // 严格匹配：标题归一化一致 + 年份一致，绝不"取第一条"。
+        // 防止 Emby 无 providerIds 时按标题搜索命中同名不同媒体（货不对板）。
+        String norm(String s) => s
+            .toLowerCase()
+            .replaceAll(RegExp(r'[\s\-_.:()（）【】\'"]+'), '');
+        final targetNorm = norm(entry.originalTitle ?? entry.title);
+        final year = int.tryParse(entry.year ?? '');
+        ({int id, String type})? best;
+        for (final raw in results.whereType<Map>()) {
+          if ('${raw['media_type']}' != wanted) continue;
+          final nameNorm = norm('${raw['name'] ?? raw['title'] ?? ''}');
+          if (nameNorm.isEmpty || nameNorm != targetNorm) continue;
+          if (year != null) {
+            final itemYear =
+                int.tryParse('${raw['release_date'] ?? raw['first_air_date'] ?? ''}'.split('-').first);
+            // 结果无年份信息时放行；有年份则必须一致。
+            if (itemYear != null && itemYear != year) continue;
+          }
+          best = (id: (raw['id'] as num).toInt(), type: wanted);
+          break;
+        }
+        if (best != null) return best;
+        // 找不到严格吻合的媒体：宁可无外部详情，也不取错误的第一条。
+        throw StateError('TMDB 未找到与「${entry.title}」匹配的媒体（标题/年份不一致）');
       },
       encode: (value) => {'id': value.id, 'type': value.type},
       decode: (value) {

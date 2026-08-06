@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_interfaces.dart';
 import '../../../core/providers/app_providers.dart';
+import '../../../core/providers/discover_providers.dart';
 import '../../../core/providers/server_providers.dart';
 import '../../../core/sources/feiniu_backend.dart';
 import '../../../core/sources/media_source_backend.dart';
@@ -248,6 +249,11 @@ class _FeiniuLibraryScreenState extends State<FeiniuLibraryScreen> {
 
   List<SourceEntry> get _sortedItems {
     final items = [..._items];
+    // 与影视栏"查看更多"排序逻辑完全一致：
+    // create_time 保持入库顺序（倒序时反转）；标题 A-Z；年份升序；评分降序；再按方向反转。
+    if (_sortKey == 'create_time') {
+      return _sortDescending ? items : items.reversed.toList();
+    }
     Object value(SourceEntry entry) {
       final raw = entry.raw ?? const <String, dynamic>{};
       return switch (_sortKey) {
@@ -295,26 +301,18 @@ class _FeiniuLibraryScreenState extends State<FeiniuLibraryScreen> {
             tooltip: '排序',
             icon: const Icon(Icons.sort_rounded),
             onSelected: _toggleSort,
+            // 复用影视栏"查看更多"的排序选项与展示（kDiscoverSortOptions + 勾选态）。
             itemBuilder: (context) => [
-              for (final option in const [
-                (key: 'create_time', label: '入库时间'),
-                (key: 'title', label: '标题排序'),
-                (key: 'year', label: '出品年份'),
-                (key: 'rating', label: '评分'),
-              ])
+              for (final option in kDiscoverSortOptions)
                 PopupMenuItem(
                   value: option.key,
                   child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Expanded(child: Text(option.label)),
+                      Text(option.label),
                       if (_sortKey == option.key)
-                        Icon(
-                          _sortDescending
-                              ? Icons.arrow_downward_rounded
-                              : Icons.arrow_upward_rounded,
-                          size: 18,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
+                        const Icon(Icons.check_rounded,
+                            size: 18, color: Color(0xFF34C759)),
                     ],
                   ),
                 ),

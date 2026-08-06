@@ -462,10 +462,13 @@ class _MainShellState extends ConsumerState<MainShell> {
     final isKeyboardVisible = mediaQuery.viewInsets.bottom > 0;
     final showFloatingTabBar = _supportsFloatingTabBar && !isKeyboardVisible;
     final bottomPadding = mediaQuery.padding.bottom;
-    // 底部 tab 栏下方再间隔一个“同状态栏高度”的悬停空隙。
+    // 底部 tab 栏下方原本间隔一个“同状态栏高度”的悬停空隙。
+    // 需求：整体**向下**移动两倍胶囊高度（胶囊高 44），即把悬停空隙缩小
+    // 2×44，让 tab 栏 + 搜索图标更贴近屏幕底部（clamp 防负）。
     final statusGap = showFloatingTabBar ? mediaQuery.padding.top : 0.0;
     final tabHeight = showFloatingTabBar
-        ? 64.0 + bottomPadding + statusGap + 44.0
+        ? (64.0 + bottomPadding + statusGap - 2 * 44.0)
+            .clamp(0.0, double.infinity)
         : 0.0;
     final shellBody = isKeyboardVisible
         ? widget.navigationShell
@@ -593,7 +596,12 @@ class _FloatingTabBar extends ConsumerWidget {
 
     return Container(
       alignment: Alignment.center,
-      margin: EdgeInsets.only(top: 8, bottom: statusGap + 8 + capsuleHeight),
+      margin: EdgeInsets.only(
+        top: 8,
+        // 向下移动两倍胶囊高度（相对原悬停空隙 statusGap+8 减 2×44）。
+        bottom: (statusGap + 8 - 2 * capsuleHeight)
+            .clamp(0.0, double.infinity),
+      ),
       child: SafeArea(
         top: false,
         child: Row(
