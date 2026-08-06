@@ -1871,6 +1871,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                           ? _playerService.displayProgress
                           : null,
                   isSeekSettling: _playerService.isSeekSettling,
+                  title: item?.name ?? '',
                   episode: _episodeLabel(item),
                   meta: _metaLabel(item, mediaSource),
                   serverName: server?.name ?? '',
