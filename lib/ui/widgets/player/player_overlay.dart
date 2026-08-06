@@ -271,7 +271,8 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
     _clockTimer = Timer.periodic(
       const Duration(seconds: 1),
       (_) {
-        if (!mounted) return;
+        // 控件隐藏时不刷新时钟（UI 不可见，避免隐藏态每秒多余重建）。
+        if (!mounted || !isUiVisible) return;
         setState(() => _now = DateTime.now());
       },
     );

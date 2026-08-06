@@ -5,6 +5,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   late VideoPlayerService _playerService;
   bool _showRemaining = false;
   bool _isLongPressing = false;
+  // 轻点判定（全屏点击切换控制栏，无手势竞技场延迟）：记录按下位置/时间与
+  // 上次轻点时间（双击第二击跳过，双击功能由 onDoubleTapDown 承担）。
+  Offset _tapDownPosition = Offset.zero;
+  DateTime _tapDownTime = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime? _lastTapTime;
   bool _isSliderDragging = false;
   double? _sliderDragValue;
   bool _decoderSwitchInFlight = false;
@@ -2120,9 +2125,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   Widget _buildPlayerBody(MediaItem? item, BoxConstraints constraints) {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: _playerService.isLocked
-          ? null
-          : _playerService.toggleControls,
+      // 注意：不再注册 onTap 切换控制栏 —— onTap 与 onDoubleTapDown 共存时
+      // 单击需等双击超时（~300ms），且手指微动>slop 会被 scale 抢走，表现为
+      // "点了没反应"。改为 child 最底层 Listener 用原始指针事件做轻点判定：
+      // 立即响应、无竞技场延迟；按钮区由上层处理，双击/长按/拖动照常走手势。
       onDoubleTapDown: _onDoubleTapDown,
       onLongPressStart: (_) => _onLongPressStart(),
       onLongPressEnd: (_) => _onLongPressEnd(),
@@ -2135,6 +2141,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       child: Stack(
         fit: StackFit.expand,
         children: [
+          // 最底层：全屏轻点判定层（Listener 透传，不抢上层按钮/手势）。
+          Positioned.fill(
+            child: Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: _onTapDown,
+              onPointerUp: _onTapUp,
+              child: const SizedBox.expand(),
+            ),
+          ),
           if (_playerService.coreType == PlayerCoreType.exoPlayer)
             ClipRect(
               child: Transform.scale(
@@ -2464,6 +2479,31 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       }
     }
     _gestureIsZoom = false;
+  }
+
+  /// 全屏轻点按下：记录位置与时间（供抬起时判定轻点）。
+  void _onTapDown(PointerDownEvent event) {
+    if (_playerService.isLocked) return;
+    _tapDownPosition = event.position;
+    _tapDownTime = DateTime.now();
+  }
+
+  /// 全屏轻点抬起：位移 <20px 且时长 <300ms（非拖动/长按）→ 切换控制栏。
+  /// 双击第二击（300ms 内再次抬起）跳过，避免 toggle 两次抵消——
+  /// 双击的播放/暂停/快进功能仍由 onDoubleTapDown 承担。
+  void _onTapUp(PointerUpEvent event) {
+    if (_playerService.isLocked || _isLongPressing) return;
+    final now = DateTime.now();
+    final dt = now.difference(_tapDownTime);
+    final dist = (event.position - _tapDownPosition).distance;
+    if (dt > const Duration(milliseconds: 300) || dist > 20) return;
+    if (_lastTapTime != null &&
+        now.difference(_lastTapTime!) < const Duration(milliseconds: 300)) {
+      _lastTapTime = null;
+      return;
+    }
+    _lastTapTime = now;
+    _playerService.toggleControls();
   }
 
   void _onDoubleTapDown(TapDownDetails details) {
