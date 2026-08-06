@@ -4814,6 +4814,40 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   /// 新播放器控制层：按显示名称切换音轨（名称来自 PopupMenuOverlay 音频菜单）。
+  /// 轨道身份键：title/label 优先（同语言多轨靠标题消歧），缺失时退到
+  /// language+规范化 codec。兼容 mpv/exo 的 tracksInfo 与 unified 归一化
+  /// 数据（codec 与 codec_name 双命名、exo 的 mp4a.40.2/dts 与 ffmpeg 的
+  /// aac/dca 命名差异），供跨数据源按身份匹配轨道。
+  String _trackIdentity(Map<String, dynamic> track) {
+    final title = (track['title'] ??
+            track['label'] ??
+            track['displayName'] ??
+            track['display_title'] ??
+            '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (title.isNotEmpty) return 'title:$title';
+    final lang =
+        (track['language'] ?? track['lang'] ?? '').toString().trim().toLowerCase();
+    final codec = _normCodec(
+        (track['codec'] ?? track['codec_name'] ?? '').toString());
+    return 'lang:$lang|codec:$codec';
+  }
+
+  String _normCodec(String codec) {
+    final c = codec.toLowerCase();
+    if (c.contains('mp4a') || c == 'aac') return 'aac';
+    if (c.contains('ac-3') || c == 'ac3' || c == 'eac3' || c == 'ec-3') {
+      return 'ac3';
+    }
+    if (c.contains('dts') || c == 'dca') return 'dca';
+    if (c.contains('opus')) return 'opus';
+    if (c.contains('flac')) return 'flac';
+    if (c.contains('truehd') || c == 'mlp') return 'truehd';
+    return c;
+  }
+
   Future<void> _switchAudioTrackByName(String trackName) async {
     final audioTracks = _playerService.tracksInfo
         .where((t) => t['type'] == 'audio')
@@ -4828,19 +4862,37 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         return;
       }
     }
-    // 2) unified 轨道标签（菜单显示格式）→ 按索引映射到播放器轨道，
-    //    保证点击菜单项能选中对应轨道（与点亮高亮同一套标签）。
+    // 2) unified 轨道标签（菜单显示格式）→ 按**轨道身份**匹配到播放器
+    //    实际轨道（title / language+codec），再取其 id 切换。
+    //    不能用索引一一对应：unified.audios 来自媒体流信息（mediaDetails/
+    //    MediaSource），audioTracks 来自播放器实际轨道（mpv track-list/
+    //    ExoPlayer groups），两者顺序可能不一致——索引错位会切错轨道
+    //    （如点 DTS 实际又切回 AAC，表现为"切换无感"）。
     final unified = ref.read(unifiedResourceProvider);
     if (unified != null) {
-      for (var i = 0; i < unified.audios.length && i < audioTracks.length; i++) {
-        if (unifiedTrackLabel(unified.audios[i], unified.isFeiniu) ==
+      for (var i = 0; i < unified.audios.length; i++) {
+        if (unifiedTrackLabel(unified.audios[i], unified.isFeiniu) !=
             trackName) {
+          continue;
+        }
+        final wanted = _trackIdentity(unified.audios[i]);
+        for (final track in audioTracks) {
+          if (_trackIdentity(track) == wanted) {
+            final trackId = track['id']?.toString() ?? '';
+            if (trackId.isNotEmpty) {
+              await _playerService.selectAudioTrack(trackId);
+            }
+            return;
+          }
+        }
+        // 身份未命中（字段缺失/命名差异）：回退同索引（顺序一致时仍正确）。
+        if (i < audioTracks.length) {
           final trackId = audioTracks[i]['id']?.toString() ?? '';
           if (trackId.isNotEmpty) {
             await _playerService.selectAudioTrack(trackId);
           }
-          return;
         }
+        return;
       }
     }
   }
@@ -4864,20 +4916,33 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         return;
       }
     }
-    // 2) unified 轨道标签 → 索引映射到播放器轨道。
+    // 2) unified 轨道标签 → 按轨道身份匹配到播放器实际轨道（同音频，
+    //    避免 unified.subtitles 与 tracksInfo 顺序不一致切错字幕）。
     final unified = ref.read(unifiedResourceProvider);
     if (unified != null) {
-      for (var i = 0;
-          i < unified.subtitles.length && i < subtitleTracks.length;
-          i++) {
-        if (unifiedTrackLabel(unified.subtitles[i], unified.isFeiniu) ==
+      for (var i = 0; i < unified.subtitles.length; i++) {
+        if (unifiedTrackLabel(unified.subtitles[i], unified.isFeiniu) !=
             trackName) {
+          continue;
+        }
+        final wanted = _trackIdentity(unified.subtitles[i]);
+        for (final track in subtitleTracks) {
+          if (_trackIdentity(track) == wanted) {
+            final trackId = track['id']?.toString() ?? '';
+            if (trackId.isNotEmpty) {
+              await _playerService.selectSubtitleTrack(trackId);
+            }
+            return;
+          }
+        }
+        // 身份未命中：回退同索引（顺序一致时仍正确）。
+        if (i < subtitleTracks.length) {
           final trackId = subtitleTracks[i]['id']?.toString() ?? '';
           if (trackId.isNotEmpty) {
             await _playerService.selectSubtitleTrack(trackId);
           }
-          return;
         }
+        return;
       }
     }
   }

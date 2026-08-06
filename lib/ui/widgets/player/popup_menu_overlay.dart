@@ -1273,7 +1273,8 @@ String unifiedTrackLabel(Map<String, dynamic> track, bool isFeiniu) {
       final index = (track['index'] as int? ?? 0) + 1;
       return 'Track $index';
     }
-    final codec = track['codec'] as String?;
+    // codec 兼容归一化 key（normalizeMediaStream 输出 codec_name）。
+    final codec = (track['codec'] ?? track['codec_name']) as String?;
     final codecLabel = codec != null ? ' ($codec)' : '';
     final channels = track['channels'] as int?;
     final channelLabel = channels != null ? ', $channels CH' : '';
@@ -1282,7 +1283,7 @@ String unifiedTrackLabel(Map<String, dynamic> track, bool isFeiniu) {
     final index = (track['index'] as int? ?? 0) + 1;
     final displayName = track['displayName'] as String? ??
         track['language'] as String?;
-    final codec = track['codec'] as String?;
+    final codec = (track['codec'] ?? track['codec_name']) as String?;
     final channels = track['channels'] as int?;
     final bitrate = track['bitrate'] as int?;
     final parts = <String>[
