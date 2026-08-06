@@ -85,7 +85,7 @@ class ExternalMediaService {
         // 防止 Emby 无 providerIds 时按标题搜索命中同名不同媒体（货不对板）。
         String norm(String s) => s
             .toLowerCase()
-            .replaceAll(RegExp(r'[\s\-_.:()（）【】\'"]+'), '');
+            .replaceAll(RegExp(r"[\s\-_.:()（）【】'\x22]+"), '');
         final targetNorm = norm(entry.originalTitle ?? entry.title);
         final year = int.tryParse(entry.year ?? '');
         ({int id, String type})? best;
