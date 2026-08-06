@@ -339,50 +339,104 @@ class DanmakuPainter extends CustomPainter {
       added++;
     }
 
-    // 每帧按当前实际横向矩形重新分配轨道。只冻结轨道号会导致弹幕进入/离场后，
-    // 同一轨道的左右矩形发生重叠；这里以当前 x + width 做真实碰撞检测。
-    cache.laneOf.clear();
-    final lanes = List<List<_DanmakuTrackItem>>.generate(
-      trackCount, (_) => <_DanmakuTrackItem>[]);
+    // 轨道分配采用「冻结 + 追尾检查」模型：
+    // - 弹幕入轨后轨道号冻结（laneOf），跨帧复用 → 不 Y 跳动闪烁
+    //   （每帧全量重排会让同一弹幕在不同帧被分到不同轨道，视觉上像
+    //   单轨多条弹幕互相交替显示）；
+    // - 每帧只做追尾检查：同轨尾条右界与自身左界重叠（不同速/异常）才
+    //   解除冻结重分配；出屏弹幕释放轨道；
+    // - 固定弹幕（type 4 底部 / 5 顶部）用 _assignLane 独立占轨
+    //   （居中显示 5 秒、到期腾轨顺延），滚动弹幕只与滚动弹幕碰撞。
+    final laneTail = List<_DanmakuTrackItem?>.filled(trackCount, null);
+    final scrollOccupant = List<_DanmakuTrackItem?>.filled(trackCount, null);
+    final topOccupant = List<_DanmakuTrackItem?>.filled(trackCount, null);
+    final bottomOccupant = List<_DanmakuTrackItem?>.filled(trackCount, null);
     final born = visibleItems
         .where((ti) => ti.item.time <= _currentSeconds)
         .toList()
       ..sort((a, b) => a.item.time.compareTo(b.item.time));
+
+    // 1) 出屏弹幕释放轨道 + 按冻结轨道登记尾条（按 time 升序覆盖为最新）。
+    for (final ti in born) {
+      final lane = cache.laneOf[ti.index];
+      if (lane == null) continue;
+      if (_computeX(ti, size) + ti.width < 0) {
+        cache.laneOf.remove(ti.index);
+        continue;
+      }
+      laneTail[lane] = ti; // 后入的 time 更大 → 天然成为尾条
+    }
+
+    // 2) 分配：已有冻结轨道的做追尾检查；新弹幕（含追尾被解除的）选轨。
     for (final ti in born) {
       final x = _computeX(ti, size);
+      if (x + ti.width < 0) continue; // 已出屏
+      final existing = cache.laneOf[ti.index];
+      if (existing != null) {
+        final tail = laneTail[existing];
+        // 安全 = 无尾条 / 自身就是尾条 / 与尾条左右不相交
+        // （早入轨弹幕在尾条左侧、后入轨弹幕在尾条右侧都正常；
+        //  只有真正的左右重叠才算追尾，解除冻结重分配）。
+        final safe = tail == null ||
+            identical(tail, ti) ||
+            x + ti.width + _padding <= _computeX(tail, size) ||
+            x >= _computeX(tail, size) + tail.width + _padding;
+        if (safe) {
+          laneTail[existing] = ti;
+          continue;
+        }
+        cache.laneOf.remove(ti.index); // 追尾 → 解除冻结重新分配
+      }
+      if (ti.item.type == 4 || ti.item.type == 5) {
+        final lane = _assignLane(
+            ti, size, scrollOccupant, topOccupant, bottomOccupant, trackCount);
+        _recordOccupant(ti, lane, scrollOccupant, topOccupant, bottomOccupant);
+        cache.laneOf[ti.index] = lane;
+        ti.startY = lane * _trackHeight + _padding;
+        laneTail[lane] = ti;
+        continue;
+      }
       var selectedLane = -1;
       for (var lane = 0; lane < trackCount; lane++) {
-        final collision = lanes[lane].any((other) {
-          final ox = _computeX(other, size);
-          return x < ox + other.width + _padding &&
-              x + ti.width + _padding > ox;
-        });
-        if (!collision) {
+        final tail = laneTail[lane];
+        if (tail == null) {
+          selectedLane = lane;
+          break;
+        }
+        // 后入弹幕从屏右进入：右界完全排在该轨尾条右侧即安全（同速不追尾）。
+        if (x > _computeX(tail, size) + tail.width + _padding) {
           selectedLane = lane;
           break;
         }
       }
-      // 轨道全部繁忙时选择当前最早离场的轨道。但**必须保证间距**：
-      // 新弹幕 x 要完全排在该轨道最后一条弹幕的右侧（x > 右界 + padding），
-      // 同速下间距恒定不会追尾；否则这一帧先跳过不画（laneOf 未登记），
-      // 等下一帧轨道让出后再入轨——避免高密度时强制同轨造成左右重叠。
+      // 轨道全部繁忙时选择当前最早离场的轨道（尾条右界最靠左）。
+      // 若新弹幕 x 仍不超过该轨右界 + padding，这一帧先跳过不画
+      // （laneOf 未登记），等下一帧轨道让出后再入轨——避免强制同轨追尾。
       if (selectedLane < 0) {
-        selectedLane = 0;
         var earliest = double.infinity;
         for (var lane = 0; lane < trackCount; lane++) {
-          final release = lanes[lane]
-              .map((item) => _computeX(item, size) + item.width)
-              .fold<double>(double.negativeInfinity, math.max);
+          final tail = laneTail[lane];
+          if (tail == null) {
+            selectedLane = lane;
+            break;
+          }
+          final release = _computeX(tail, size) + tail.width;
           if (release < earliest) {
             earliest = release;
             selectedLane = lane;
           }
         }
-        if (x <= earliest + _padding) continue;
+        if (selectedLane >= 0) {
+          final tail = laneTail[selectedLane];
+          if (tail != null &&
+              x <= _computeX(tail, size) + tail.width + _padding) {
+            continue;
+          }
+        }
       }
       cache.laneOf[ti.index] = selectedLane;
       ti.startY = selectedLane * _trackHeight + _padding;
-      lanes[selectedLane].add(ti);
+      laneTail[selectedLane] = ti;
     }
 
     for (final trackItem in visibleItems) {
