@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/providers/media_providers.dart';
+import '../../../core/providers/playback_providers.dart';
 import '../../../core/providers/unified_resource_provider.dart';
 import '../../../core/sources/unified_media_adapter.dart';
 import '../common/playback_resource_card.dart';
@@ -26,6 +27,7 @@ enum PopupMenuId {
   line,
   audio,
   subtitle,
+  subtitleSettings,
   episodes,
 }
 
@@ -1203,6 +1205,7 @@ class PopupTrackMenu extends StatelessWidget {
     required this.onTrackSelected,
     this.externalSubtitle = false,
     this.onExternalSubtitle,
+    this.onOpenSettings,
     this.unifiedResource,
   });
 
@@ -1212,6 +1215,7 @@ class PopupTrackMenu extends StatelessWidget {
   final ValueChanged<String> onTrackSelected;
   final bool externalSubtitle;
   final VoidCallback? onExternalSubtitle;
+  final VoidCallback? onOpenSettings;
   final UnifiedMediaResource? unifiedResource;
 
   @override
@@ -1242,6 +1246,14 @@ class PopupTrackMenu extends StatelessWidget {
             showCheck: true,
             onTap: () => onTrackSelected('关闭字幕'),
           ),
+        // 字幕设置二级菜单入口：大小 / 上下位置。
+        if (title == '字幕轨道' && onOpenSettings != null)
+          PopupMenuPill(
+            label: '字幕设置',
+            trailing: const Icon(Icons.chevron_right_rounded,
+                size: 18, color: Colors.white54),
+            onTap: onOpenSettings,
+          ),
         if (externalSubtitle)
           PopupMenuPill(
             label: '外挂字幕',
@@ -1269,6 +1281,107 @@ class PopupTrackMenu extends StatelessWidget {
     }
     // 回退到原始 tracks 列表
     return tracks.map((t) => PopupTrackOption(label: t)).toList();
+  }
+}
+
+/// 字幕设置二级菜单：当前字幕的大小（0.5x~2.0x）与上下位置（0~100%）。
+class PopupSubtitleSettingsMenu extends StatelessWidget {
+  const PopupSubtitleSettingsMenu({
+    super.key,
+    required this.subtitleSize,
+    required this.subtitlePosition,
+    required this.onSubtitleSizeChanged,
+    required this.onSubtitlePositionChanged,
+  });
+
+  final double subtitleSize;
+  final double subtitlePosition;
+  final ValueChanged<double> onSubtitleSizeChanged;
+  final ValueChanged<double> onSubtitlePositionChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget row({
+      required String label,
+      required double value,
+      required double min,
+      required double max,
+      required String display,
+      required ValueChanged<double> onChanged,
+    }) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 56,
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.75),
+                  fontSize: 12,
+                ),
+              ),
+            ),
+            Expanded(
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 5,
+                  activeTrackColor: popupMenuBlue,
+                  inactiveTrackColor: Colors.white.withOpacity(0.18),
+                  thumbColor: Colors.white,
+                  overlayColor: Colors.white.withOpacity(0.1),
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 5,
+                  ),
+                  overlayShape: const RoundSliderOverlayShape(
+                    overlayRadius: 10,
+                  ),
+                ),
+                child: Slider(
+                  value: value.clamp(min, max).toDouble(),
+                  min: min,
+                  max: max,
+                  onChanged: onChanged,
+                ),
+              ),
+            ),
+            SizedBox(
+              width: 40,
+              child: Text(
+                display,
+                textAlign: TextAlign.right,
+                style: const TextStyle(color: Colors.white, fontSize: 11),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const PopupMenuTitle(title: '字幕设置'),
+        row(
+          label: '大小',
+          value: subtitleSize,
+          min: 0.5,
+          max: 2.0,
+          display: '${subtitleSize.toStringAsFixed(1)}x',
+          onChanged: onSubtitleSizeChanged,
+        ),
+        row(
+          label: '位置',
+          value: subtitlePosition,
+          min: 0,
+          max: 1,
+          display: '${(subtitlePosition.clamp(0.0, 1.0) * 100).round()}%',
+          onChanged: onSubtitlePositionChanged,
+        ),
+      ],
+    );
   }
 }
 
@@ -1838,7 +1951,28 @@ class PopupMenuOverlay extends ConsumerWidget {
           onTrackSelected: onSubtitleChanged,
           externalSubtitle: true,
           onExternalSubtitle: onExternalSubtitleRequested,
+          onOpenSettings: () => onOpenMenu(PopupMenuId.subtitleSettings),
           unifiedResource: unifiedResource,
+        );
+      case PopupMenuId.subtitleSettings:
+        // 直接 watch 字幕大小/位置 provider（PopupMenuOverlay 是 ConsumerWidget，
+        // 无需经 widget 参数传递）；写 provider 后由播放器状态层的
+        // listenManual 自动下发到内核（setSubtitleSize / setSubtitlePosition）。
+        return Consumer(
+          builder: (context, ref, _) {
+            final size = ref.watch(subtitleSizeProvider);
+            final position = ref.watch(subtitlePositionProvider);
+            return PopupSubtitleSettingsMenu(
+              subtitleSize: size,
+              subtitlePosition: position,
+              onSubtitleSizeChanged: (v) {
+                ref.read(subtitleSizeTouchedProvider.notifier).state = true;
+                ref.read(subtitleSizeProvider.notifier).state = v;
+              },
+              onSubtitlePositionChanged: (v) =>
+                  ref.read(subtitlePositionProvider.notifier).state = v,
+            );
+          },
         );
       case PopupMenuId.episodes:
         return PopupEpisodesMenu(
