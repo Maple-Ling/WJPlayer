@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../app_identity.dart';
 import '../network/proxy_http_client.dart';
 import '../network/proxy_settings.dart';
+import '../services/app_logger.dart';
 import 'api_interfaces.dart';
 
 class EmbyApiClient implements ApiClientFactory {
@@ -444,7 +445,9 @@ class EmbyServerApi implements ServerApi {
       await EmbyApiClient._withRetry(() => dio.get('System/Info/Public'),
           retryGateway: true);
       return true;
-    } catch (_) {
+    } catch (e) {
+      // 记录失败原因（DNS/超时/TLS 证书过期等），便于排查"无法连接"。
+      AppLogger().w('TestConnection', '服务器连接测试失败: $baseUrl → $e');
       return false;
     }
   }
