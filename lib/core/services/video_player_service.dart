@@ -1130,24 +1130,26 @@ class VideoPlayerService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 设置音量
+  /// 设置音量（0.0 ~ 1.0 高精度浮点，UI 层 100 档连续）。
+  ///
+  /// UI/底层解耦：UI 层 [_currentVolume] 立即采用目标浮点值（丝滑跟随，
+  /// 视觉进度/数值每 1% 连续），底层 Android STREAM_MUSIC 的离散档位
+  /// （通常 15 级，每档 ≈ 6.7%）在原生侧做高精度比例映射
+  /// （round(value * max)，见 MainActivity.setMediaVolume），**不回读**
+  /// 档位化结果，避免滑动时 7%~8% 的大步长跳变。
   Future<void> setVolume(double volume) async {
     final target = volume.clamp(0.0, 1.0).toDouble();
-    var effective = target;
+    _currentVolume = target;
     try {
-      final value = await _systemControls.invokeMethod<num>(
+      await _systemControls.invokeMethod<num>(
         'setMediaVolume',
         {'value': target},
       );
-      if (value != null) {
-        effective = value.toDouble().clamp(0.0, 1.0).toDouble();
-      }
     } catch (_) {
       // 非 Android 回退到播放器内部音量。
     }
-    _currentVolume = effective;
-    // 内核保持满音量，Android 系统媒体流负责最终输出；其它平台直接取 effective。
-    await _adapter?.setVolume(Platform.isAndroid ? 1.0 : effective);
+    // 内核保持满音量，Android 系统媒体流负责最终输出；其它平台直接取 target。
+    await _adapter?.setVolume(Platform.isAndroid ? 1.0 : target);
     notifyListeners();
   }
 
@@ -1561,14 +1563,14 @@ class VideoPlayerService extends ChangeNotifier {
           _hapticTick(target);
         }
       } else {
-        // 音量：低灵敏度（全屏高度 = 25% 音量）+ 1% 量化递进，
-        // 避免一次小幅滑动直接跳 7~8%（系统音量通道为离散档位）。
+        // 音量：完全对齐亮度逻辑——全屏高度 = 100%，1% 步进连续调节，
+        // 视觉进度与数值丝滑跟随手指。底层 AudioManager 档位（15 级）的
+        // 比例映射在 setVolume 内部完成且不回读，杜绝 7%~8% 大步长跳变。
         final target =
-            (_dragStartVolume + delta * 0.25).clamp(0.0, 1.0).toDouble();
-        final quantized = (target * 100).round() / 100;
-        if ((quantized - volume).abs() >= 0.005) {
-          unawaited(setVolume(quantized));
-          _hapticTick(quantized);
+            (_dragStartVolume + delta).clamp(0.0, 1.0).toDouble();
+        if ((target - _currentVolume).abs() >= 0.01) {
+          unawaited(setVolume(target));
+          _hapticTick(target);
         }
       }
     }

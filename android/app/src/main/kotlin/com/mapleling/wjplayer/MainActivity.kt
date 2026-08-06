@@ -12,6 +12,7 @@ import android.provider.Settings
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import kotlin.math.roundToInt
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -140,12 +141,15 @@ class MainActivity : FlutterActivity() {
                         .coerceIn(0.0, 1.0)
                     val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
                     val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                    // 高精度比例映射：前端 0-100 连续档 → 底层离散档（通常 15 级）。
+                    // round 而非 toInt(floor)：低音量区更贴合目标值（如 13% → 2/15 档）。
+                    val level = (value * max).roundToInt().coerceIn(0, max)
                     audio.setStreamVolume(
                         AudioManager.STREAM_MUSIC,
-                        (value * max).toInt().coerceIn(0, max),
+                        level,
                         0
                     )
-                    result.success(currentMediaVolume())
+                    result.success(level.toDouble() / max)
                 }
                 else -> result.notImplemented()
             }
