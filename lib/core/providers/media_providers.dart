@@ -7,6 +7,7 @@ import '../api/api_interfaces.dart';
 import '../api/discover/discover_models.dart';
 import 'discover_providers.dart';
 import '../providers/app_providers.dart';
+import '../providers/reveal_hidden_provider.dart';
 import '../services/app_logger.dart';
 import '../services/home_data_cache.dart';
 import '../sources/feiniu_backend.dart';
@@ -482,9 +483,13 @@ final aggregateSearchByQueryProvider = StreamProvider.autoDispose
   }
   final servers = ref.watch(serverListProvider);
   final hiddenLibraries = ref.watch(hiddenLibrariesProvider);
-  // 安全过滤：隐藏属性的服务器不参与任何聚合搜索。
-  final visibleServers =
-      servers.where((server) => server.hidden != true).toList();
+  // 安全过滤：隐藏属性的服务器默认不参与聚合搜索；服务器列表「三击标题」
+  // 显示隐藏服务器（revealHiddenServersProvider=true）后，带 hidden 标记的
+  // 服务器同样可被搜索（与列表里实际能看到的一致）。
+  final revealHidden = ref.watch(revealHiddenServersProvider);
+  final visibleServers = servers
+      .where((server) => server.hidden != true || revealHidden)
+      .toList();
   final embyTargets = visibleServers
       .where((server) =>
           server.sourceKind == SourceKind.emby &&
@@ -564,18 +569,21 @@ final aggregateSearchByQueryProvider = StreamProvider.autoDispose
       accFeiniu.add(e);
     }
     emitted = true;
-    // 结果组装层的防御性校验：targets 在请求开始时就已滤除隐藏服务器，
-    // 这里在 emit 前再次拦截（server.hidden != true），双保险杜绝任何
-    // 隐藏/隐私服务器被展示——即使请求期间服务器属性发生变化也不放行。
+    // 结果组装层的防御性校验：targets 在请求开始时就已按「隐藏或未三击显示」
+    // 滤除，这里在 emit 前再次拦截（与 targets 同口径：!hidden || revealHidden），
+    // 双保险杜绝任何不应展示的服务器被展示——即使请求期间服务器属性发生变化
+    // 也不放行。
     yield AggregateSearchOutcome(
       embyGroups: {
         for (final s in embyTargets)
-          if (s.hidden != true && (accEmby[s.name]?.isNotEmpty ?? false))
+          if ((s.hidden != true || revealHidden) &&
+              (accEmby[s.name]?.isNotEmpty ?? false))
             s.name: accEmby[s.name]!,
       },
       feiniuGroups: [
         for (final s in feiniuTargets)
-          if (s.hidden != true && accFeiniu.any((g) => g.server.id == s.id))
+          if ((s.hidden != true || revealHidden) &&
+              accFeiniu.any((g) => g.server.id == s.id))
             accFeiniu.firstWhere((g) => g.server.id == s.id),
       ],
     );
@@ -585,15 +593,16 @@ final aggregateSearchByQueryProvider = StreamProvider.autoDispose
 });
 
 /// 聚合搜索中的飞牛分组。与 Emby 查询并行，任一飞牛服务器失败仅跳过该组。
-/// 过滤规则与公共链路一致：隐藏服务器 / 未登录一律排除。
+/// 过滤规则与公共链路一致：隐藏服务器（未三击显示时）/ 未登录一律排除。
 final aggregateFeiniuSearchProvider = FutureProvider.autoDispose
     .family<List<FeiniuSearchGroup>, String>((ref, rawQuery) async {
   final query = rawQuery.trim();
   if (query.isEmpty) return const [];
+  final revealHidden = ref.watch(revealHiddenServersProvider);
   final servers = ref
       .watch(serverListProvider)
       .where((server) =>
-          server.hidden != true &&
+          (server.hidden != true || revealHidden) &&
           server.sourceKind == SourceKind.feiniu &&
           ((server.authToken ?? '').isNotEmpty ||
               (server.username ?? '').isNotEmpty))
@@ -646,10 +655,11 @@ final aggregateSearchResultsProvider =
 
   // Emby 与飞牛使用不同协议；这里仅处理 Emby，飞牛由
   // aggregateFeiniuSearchProvider 并行查询并在 UI 合并。
+  final revealHidden = ref.watch(revealHiddenServersProvider);
   final targets = servers
       .where((s) =>
           s.sourceKind == SourceKind.emby &&
-          s.hidden != true &&
+          (s.hidden != true || revealHidden) &&
           (s.authToken ?? '').isNotEmpty)
       .toList();
   if (targets.isEmpty) {
@@ -762,9 +772,12 @@ final rankingCrossServerMatchProvider = StreamProvider.autoDispose
   }
   final servers = ref.watch(serverListProvider);
   final hiddenLibraries = ref.watch(hiddenLibrariesProvider);
+  // 隐藏服务器默认排除；服务器列表三击显示（revealHiddenServersProvider）
+  // 后同样参与跨服匹配（与列表可见性一致）。
+  final revealHidden = ref.watch(revealHiddenServersProvider);
   final targets = servers
       .where((s) =>
-          s.hidden != true &&
+          (s.hidden != true || revealHidden) &&
           (s.sourceKind == SourceKind.emby ||
               s.sourceKind == SourceKind.feiniu) &&
           ((s.authToken ?? '').isNotEmpty ||

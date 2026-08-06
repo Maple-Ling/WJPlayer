@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/api/emby_api.dart';
 import '../../../core/providers/app_providers.dart';
+import '../../../core/providers/reveal_hidden_provider.dart';
 import '../../../core/sources/feiniu_backend.dart';
 import '../../../core/sources/source_http.dart';
 import '../../../core/sources/source_kind.dart';
@@ -22,7 +23,6 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
   String _searchQuery = '';
   bool _isSearching = false;
   bool _gridLayout = false;
-  bool _revealHidden = false;
   int _titleTapCount = 0;
   DateTime? _lastTitleTap;
 
@@ -50,14 +50,17 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
     _titleTapCount++;
     if (_titleTapCount >= 3) {
       _titleTapCount = 0;
-      setState(() => _revealHidden = !_revealHidden);
-      AppToast.show(context, _revealHidden ? '已显示隐藏服务器' : '已隐藏服务器');
+      // 三击显隐是全局状态（聚合搜索也跟随：显示出来的隐藏服务器可被搜索）。
+      final next = !ref.read(revealHiddenServersProvider);
+      ref.read(revealHiddenServersProvider.notifier).state = next;
+      AppToast.show(context, next ? '已显示隐藏服务器' : '已隐藏服务器');
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final allServers = ref.watch(serverListProvider);
+    final revealHidden = ref.watch(revealHiddenServersProvider);
     var visible = _searchQuery.isEmpty
         ? allServers
         : allServers
@@ -69,7 +72,7 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
                     .toLowerCase()
                     .contains(_searchQuery.toLowerCase()))
             .toList();
-    if (!_revealHidden) {
+    if (!revealHidden) {
       visible = visible.where((s) => !s.hidden).toList();
     } else {
       // 显示隐藏时，隐藏的服务器排到最后。

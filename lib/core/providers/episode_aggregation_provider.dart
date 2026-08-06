@@ -23,6 +23,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../api/api_interfaces.dart';
+import '../providers/reveal_hidden_provider.dart';
 import '../services/app_logger.dart';
 import '../services/preload_service.dart';
 import '../services/watch_history/watch_history_matcher.dart'
@@ -126,12 +127,15 @@ final episodeAggregationProvider = StreamProvider.autoDispose
   // 只聚合其它「已登录的 Emby 服务器」——文件浏览型源（网盘/Ani-rss）无 Emby 版本概念；
   // 且排除用户在设置里关闭了「参与聚合」的服务器。
   final disabled = ref.watch(aggregationDisabledServersProvider);
+  // 服务器列表三击显示隐藏服务器后，隐藏标记的服务器同样参与聚合展示
+  // （与列表可见性一致）。
+  final revealHidden = ref.watch(revealHiddenServersProvider);
   final servers = ref.watch(serverListProvider).where((s) {
-    // 隐藏属性的服务器（server.hidden）严禁参与任何聚合展示：与聚合搜索
+    // 隐藏属性的服务器默认严禁参与任何聚合展示：与聚合搜索
     // 公共链路（aggregateSearchByQueryProvider）同规则，杜绝隐私服务器暴露。
     return !s.isFileBrowse &&
         (s.authToken ?? '').isNotEmpty &&
-        s.hidden != true &&
+        (s.hidden != true || revealHidden) &&
         s.id != homeServerId &&
         !disabled.contains(s.id);
   }).toList();
