@@ -259,7 +259,8 @@ class _HistoryTile extends ConsumerWidget {
     );
   }
 
-  bool _navInFlight = false;
+  // 导航防抖（const widget 类内只能放 static 可变状态）。
+  static bool _navInFlight = false;
 
   Future<void> _openDetail(
       BuildContext context, WidgetRef ref, ServerConfig server) async {

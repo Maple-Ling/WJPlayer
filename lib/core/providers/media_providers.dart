@@ -719,14 +719,12 @@ final searchResultsProvider =
   if (query.isEmpty) return [];
 
   if (isAggregate) {
-    // 跨服务器聚合后平铺（桌面/TV 用平铺列表展示）。
-    // 注意：不能用 aggregateSearchResultsProvider.future —— 它是逐台增量的
-    // 无限流（async* 永不 close），.future 永不 resolve 会导致聚合搜索永远
-    // loading（"聚合搜索失效"根因）。取首个增量快照即返回；
-    // UI 层的聚合模式独立渲染分组视图，不依赖这里的平铺结果。
-    final first = await ref
-        .watch(aggregateSearchResultsProvider.stream.first);
-    return first.values.expand((list) => list).toList();
+    // 聚合模式的展示由 UI 层独立渲染（搜索页 _buildAggregateResults：
+    // Emby 分组 + 飞牛分组并行展示），不依赖这里的平铺结果。
+    // 注意：不能 watch aggregateSearchResultsProvider.future —— 它是逐台
+    // 增量的无限流（async* 永不 close），.future 永不 resolve 会导致聚合
+    // 搜索永远 loading（"聚合搜索失效"根因）。此处直接返回空列表即可。
+    return const [];
   }
 
   final currentServer = ref.watch(currentServerProvider);

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../../core/providers/media_providers.dart';
 import '../../../core/services/system_info_service.dart';
 import 'player_controls.dart';
 import 'popup_menu_overlay.dart';
@@ -102,6 +103,7 @@ class PlayerOverlay extends StatefulWidget {
     this.onClearOutro,
     this.onExternalSubtitleRequested,
     this.onAggregationSearch,
+    this.onCrossServerMatchSelected,
   });
 
   final bool visible;
@@ -195,6 +197,7 @@ class PlayerOverlay extends StatefulWidget {
   final VoidCallback? onClearOutro;
   final VoidCallback? onExternalSubtitleRequested;
   final VoidCallback? onAggregationSearch;
+  final ValueChanged<ServerMatchInfo>? onCrossServerMatchSelected;
 
   @override
   State<PlayerOverlay> createState() => _PlayerOverlayState();
@@ -1000,6 +1003,8 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                       widget.onSearchDanmaku?.call();
                     },
                     onAggregationSearch: widget.onAggregationSearch,
+                    onCrossServerMatchSelected:
+                        widget.onCrossServerMatchSelected,
                     onPlaybackRateChanged: _setSpeed,
                     onAspectRatioChanged: _setAspectRatio,
                     onSourceChanged: _setSource,
