@@ -474,7 +474,8 @@ class DanmakuPainter extends CustomPainter {
       return (size.width - trackItem.width) / 2;
     }
 
-    final totalDuration = size.width / _speed + trackItem.width / _speed;
+    final totalDuration =
+        (size.width + trackItem.width + 2 * _padding) / _speed;
     final progress = elapsed / totalDuration;
     final startX = size.width + _padding;
     final endX = -trackItem.width - _padding;
