@@ -3364,11 +3364,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   void _showAggregationSearch() {
     // 用当前媒体做一次聚合搜索：跨服务器匹配，胶囊横向排布，点击即切换资源。
-    // 与详情页同款：先提取标题主干（去后缀/副标题），否则带后缀的条目名
-    // （飞牛常见「凡人修仙传.2023.1080p」/「凡人修仙传:风起天南」）搜不到
-    // 其他服务器的干净标题，聚合只剩本服务器。
+    // 优先复用详情页实际使用的跨服检索关键词（TMDB 标题优先，已写入
+    // crossServerQueryProvider）——否则用 currentItem.name 原始名会与详情页
+    // query 不一致，出现「详情页能搜到、聚合搜索为空」。
+    // 无详情页来源时回退 currentItem.name 并做标题主干规范化。
     final currentItem = ref.read(currentPlayingItemProvider);
-    final title = normalizeSearchTitle(currentItem?.name ?? widget.itemId);
+    final fromDetail = ref.read(crossServerQueryProvider);
+    final title = (fromDetail != null && fromDetail.isNotEmpty)
+        ? fromDetail
+        : normalizeSearchTitle(currentItem?.name ?? widget.itemId);
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,

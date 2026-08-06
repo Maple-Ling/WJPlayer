@@ -513,6 +513,9 @@ class _UnifiedMediaDetailScreenState
   ServerMatchInfo? _selectedCrossServerMatch;
   // 跨服务器资源播放防抖：连点播放键/资源卡只 push 一个页面，杜绝导航栈堆积。
   bool _navInFlight = false;
+  // 当前详情页实际使用的跨服检索关键词（TMDB 标题优先），_play 时写入
+  // crossServerQueryProvider 供播放器聚合按钮复用。
+  String _resourceQuery = '';
   int _lastWatchedEpIndex = 0;
   String _core = 'nativeMpv';
   bool _loading = true;
@@ -690,7 +693,14 @@ class _UnifiedMediaDetailScreenState
                   .where((e) =>
                       _episodeNumberFromName(e.name) ==
                       widget.targetEpisodeNumber)
-                  .firstOrNull
+                  .firstOrNull ??
+              // 顺序兜底：服务器既无集号字段、名字也无数字（常见于
+              // Emby 只以标题命名分集）时，按列表顺序匹配
+              // （第 1 条 = 第 1 集）——尽力而为，比回退首集更接近目标。
+              (widget.targetEpisodeNumber! >= 1 &&
+                      widget.targetEpisodeNumber! <= episodes.length
+                  ? episodes[widget.targetEpisodeNumber! - 1]
+                  : null)
           : null;
       final preferred = episodes
           .where((episode) => episode.id == detail.initialEntryId)
@@ -1000,6 +1010,11 @@ class _UnifiedMediaDetailScreenState
     if (_playInFlight) return;
     final entry = _selectedEntry;
     if (entry == null) return;
+    // 记录本次播放实际使用的跨服检索关键词（TMDB 标题优先），
+    // 播放器聚合按钮读取同一 query（详情页能搜到的聚合也能搜到）。
+    if (_resourceQuery.isNotEmpty) {
+      ref.read(crossServerQueryProvider.notifier).state = _resourceQuery;
+    }
     // 防重复点击：连点播放键只 push 一个播放器，避免并发进入多个播放实例
     // 导致路由栈错乱、方向锁竞争与"看似无响应"。
     _playInFlight = true;
@@ -1082,6 +1097,7 @@ class _UnifiedMediaDetailScreenState
     final resourceQuery = (externalTitle != null && externalTitle.isNotEmpty)
         ? externalTitle
         : normalizeSearchTitle(entry.name);
+    _resourceQuery = resourceQuery;
     final background = _backgroundColor ?? Theme.of(context).scaffoldBackgroundColor;
     return Scaffold(
       backgroundColor: background,

@@ -441,6 +441,12 @@ bool _isTopLevelFeiniuEntry(SourceEntry entry) {
 /// 聚合搜索开关
 final aggregateSearchProvider = StateProvider<bool>((ref) => false);
 
+/// 当前播放媒体实际使用的跨服检索关键词（详情页播放时写入：TMDB 标题优先，
+/// 空则服务器条目名规范化）。播放器聚合按钮读取同一 query，保证
+/// 「详情页能搜到的聚合也能搜到」——否则聚合用 currentItem.name 原始名
+/// 与详情页的 TMDB 标题不同，会出现详情页有资源、聚合搜索为空。
+final crossServerQueryProvider = StateProvider<String?>((ref) => null);
+
 class FeiniuSearchGroup {
   const FeiniuSearchGroup({required this.server, required this.entries});
   final ServerConfig server;
