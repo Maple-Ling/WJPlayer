@@ -640,12 +640,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       unawaited(_applyTrackSelections(item, mediaSource));
     }
 
-    _playerService.setSubtitleSize(ref.read(subtitleSizeProvider));
+    _playerService.setSubtitleSize(_effectiveSubtitleSize());
     _playerService.setSubtitlePosition(ref.read(subtitlePositionProvider));
     _playerService.setSubtitleDelay(ref.read(subtitleDelayProvider));
     _playerService.setSubtitleFont(ref.read(subtitleFontProvider));
     _playerService.setSubtitleBackground(ref.read(subtitleBackgroundProvider));
     _playerService.setAspectRatio(ref.read(aspectRatioProvider));
+
   }
 
   /// 网盘/聚合源直链播放初始化：复用本播放页全部 UI/手势/弹幕/字幕能力。
@@ -719,7 +720,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         } catch (_) {}
       }
       unawaited(_applySourceTrackPreferences(sp));
-      _playerService.setSubtitleSize(ref.read(subtitleSizeProvider));
+      _playerService.setSubtitleSize(_effectiveSubtitleSize());
       _playerService.setSubtitlePosition(ref.read(subtitlePositionProvider));
       _playerService.setSubtitleDelay(ref.read(subtitleDelayProvider));
       _playerService.setSubtitleFont(ref.read(subtitleFontProvider));
@@ -861,6 +862,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     final pos = _playerService.position;
     ref.read(sourceSelectedQualityProvider.notifier).state = qualityId;
     await _initializeSourcePlayer(sp, startPosition: pos);
+  }
+
+  /// mpv 内核（nativeMpv）**未调节过**字幕大小时用 mpv 标准 1.0：
+  /// 同一字幕 exo 显示正常、mpv 只有 50%，根因是 sub-scale 收到默认
+  /// 0.5（Kotlin 注释意图为 1.0）；exo 渲染基准不同，保持 0.5 默认不动。
+  /// 用户在滑块上调过（subtitleSizeTouchedProvider=true）后一律用用户值。
+  double _effectiveSubtitleSize() {
+    if (ref.read(subtitleSizeTouchedProvider)) {
+      return ref.read(subtitleSizeProvider);
+    }
+    return _playerService.coreType == PlayerCoreType.nativeMpv
+        ? 1.0
+        : ref.read(subtitleSizeProvider);
   }
 
   /// 后台挑轨：等内封轨道就绪（仅在有内封字幕时才等）后，依次应用字幕/音频/次字幕选择。

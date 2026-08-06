@@ -527,8 +527,10 @@ class _SubtitleSettingsContentState
           min: 0.5,
           max: 2.0,
           valueLabel: '${subtitleSize.toStringAsFixed(1)}x',
-          onChanged: (value) =>
-              ref.read(subtitleSizeProvider.notifier).state = value,
+          onChanged: (value) {
+            ref.read(subtitleSizeTouchedProvider.notifier).state = true;
+            ref.read(subtitleSizeProvider.notifier).state = value;
+          },
         ),
         PanelSliderRow(
           label: '字幕位置',
@@ -729,8 +731,10 @@ class _SubtitleSettingsContentState
               min: 0,
               max: 1,
               valueLabel: '${(subtitleSize.clamp(0.0, 1.0) * 100).round()}%',
-              onChanged: (value) =>
-                  ref.read(subtitleSizeProvider.notifier).state = value,
+              onChanged: (value) {
+                ref.read(subtitleSizeTouchedProvider.notifier).state = true;
+                ref.read(subtitleSizeProvider.notifier).state = value;
+              },
             ),
             PanelSliderRow(
               label: '字幕位置',

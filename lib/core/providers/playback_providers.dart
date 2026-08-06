@@ -631,6 +631,9 @@ final sleepTimerRemainingProvider = StateProvider<Duration?>((ref) => null);
 final subtitleDelayProvider = StateProvider<double>((ref) => 0.0);
 final audioDelayProvider = StateProvider<double>((ref) => 0.0);
 final subtitleSizeProvider = StateProvider<double>((ref) => 0.5);
+/// 用户是否主动调过字幕大小（区分"未调节默认"与"手动调到同值"）。
+/// mpv 内核未调节时用 mpv 标准 1.0，exo 保持 0.5 默认（内核差异）。
+final subtitleSizeTouchedProvider = StateProvider<bool>((ref) => false);
 final subtitlePositionProvider = StateProvider<double>((ref) => 0.0);
 // 次字幕位置/延迟（libmpv 0.41+ 的 secondary-sub-pos / secondary-sub-delay）。
 // 位置 0.0=底部、1.0=顶部（与主字幕一致，UI 语义）；默认 1.0 让次字幕在顶部。
