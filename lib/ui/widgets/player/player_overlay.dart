@@ -320,6 +320,17 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
     if (widget.initialSpeed != oldWidget.initialSpeed) {
       _speed = widget.initialSpeed;
     }
+    // 自动跳过开关/片头片尾时间可能被菜单外路径修改（设置页/播放器状态层），
+    // 重建时同步本地状态，保证菜单显示与 provider 一致。
+    if (widget.initialAutoSkip != oldWidget.initialAutoSkip) {
+      _autoSkip = widget.initialAutoSkip;
+    }
+    if (widget.initialIntroTime != oldWidget.initialIntroTime) {
+      _introTime = widget.initialIntroTime;
+    }
+    if (widget.initialOutroTime != oldWidget.initialOutroTime) {
+      _outroTime = widget.initialOutroTime;
+    }
     // seek 已经稳定落地后清除本地滑块预览；在服务层仍处于提交锁定时，
     // 即使底层 position 暂时回到旧值也不能清掉预览。
     // 本地 Slider 拖动进行中（_sliderDragActive）同样禁止清除，
@@ -502,7 +513,7 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
       }
     });
     widget.onSkipTimeRecorded?.call(record);
-    _showToast('已记录${record.type}时间: ${record.time}');
+    // toast 统一由 state 层弹（_recordSkipTime → AppToast），避免双份提示。
   }
 
   void _showToast(String message) {
@@ -1035,8 +1046,15 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                     onSubtitleChanged: _setSubtitleTrack,
                     onEpisodeChanged: _setEpisode,
                     onSkipTimeRecorded: _recordSkipTime,
-                    onClearIntro: () => widget.onClearIntro?.call(),
-                    onClearOutro: () => widget.onClearOutro?.call(),
+                    onClearIntro: () {
+                      // 长按清除后本地同步清掉菜单显示（didUpdateWidget 不依赖）。
+                      setState(() => _introTime = null);
+                      widget.onClearIntro?.call();
+                    },
+                    onClearOutro: () {
+                      setState(() => _outroTime = null);
+                      widget.onClearOutro?.call();
+                    },
                     onExternalSubtitleRequested: () {
                       widget.onExternalSubtitleRequested?.call();
                     },
