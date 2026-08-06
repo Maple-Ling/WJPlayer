@@ -389,7 +389,7 @@ class DanmakuPainter extends CustomPainter {
         }
         cache.laneOf.remove(ti.index); // 追尾 → 解除冻结重新分配
       }
-      if (ti.item.type == 4 || ti.item.type == 5) {
+      if (_isFixed(ti.item.type)) {
         final lane = _assignLane(ti, size, scrollOccupant, topOccupant,
             bottomOccupant, trackCount,
             maxLane: fixedLaneCount);
@@ -463,9 +463,9 @@ class DanmakuPainter extends CustomPainter {
       List<_DanmakuTrackItem?> topOccupant,
       List<_DanmakuTrackItem?> bottomOccupant) {
     if (lane < 0 || lane >= scrollOccupant.length) return;
-    final occ = ti.item.type == 4
+    final occ = _isBottom(ti.item.type)
         ? bottomOccupant
-        : ti.item.type == 5
+        : _isTop(ti.item.type)
             ? topOccupant
             : scrollOccupant;
     final cur = occ[lane];
@@ -525,11 +525,20 @@ class DanmakuPainter extends CustomPainter {
     return fallbackLane;
   }
 
+  /// 固定弹幕（顶部/底部，居中显示 5 秒）：
+  /// B 站 4=底部/5=顶部；腾讯/爱奇艺/优酷 2=顶部/3=底部——统一兼容。
+  static bool _isFixed(int type) =>
+      type == 2 || type == 3 || type == 4 || type == 5;
+  static bool _isTop(int type) => type == 2 || type == 5;
+  static bool _isBottom(int type) => type == 3 || type == 4;
+  /// 逆向滚动（B 站 mode 6：左→右）。
+  static bool _isReverse(int type) => type == 6;
+
   double _computeX(_DanmakuTrackItem trackItem, Size size) {
     final type = trackItem.item.type;
     final elapsed = _currentSeconds - trackItem.item.time;
 
-    if (type == 4 || type == 5) {
+    if (_isFixed(type)) {
       // 固定弹幕（顶部/底部）只显示 _topBottomDuration 秒；过期返回屏外坐标，让
       // paint 里的裁剪（x > size.width）把它剔除。**必须与 _assignLane 腾出轨道的时机
       // 对齐**：否则画面寿命(_visibleWindow=30s) > 占用寿命(_topBottomDuration=5s)，
@@ -542,6 +551,12 @@ class DanmakuPainter extends CustomPainter {
     final totalDuration =
         (size.width + trackItem.width + 2 * _padding) / _speed;
     final progress = elapsed / totalDuration;
+    if (_isReverse(type)) {
+      // 逆向滚动（B 站 mode 6）：从左侧进入、向右移动，与普通滚动方向相反。
+      final startX = -trackItem.width - _padding;
+      final endX = size.width + _padding;
+      return startX + (endX - startX) * progress;
+    }
     final startX = size.width + _padding;
     final endX = -trackItem.width - _padding;
     return startX + (endX - startX) * progress;

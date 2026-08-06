@@ -148,13 +148,45 @@ abstract class DanmakuSource {
 
   // ====== 共享解析（统一打上来源标签）======
 
+  /// 按弹幕来源平台归一化弹幕类型（各平台 type 数值定义不同）：
+  /// - B 站 / 弹弹Play 体系：1=滚动、4=底部、5=顶部、6=逆向滚动
+  /// - 腾讯 / 爱奇艺 / 优酷 体系：1=滚动、2=顶部、3=底部、4=逆向滚动
+  /// 检测来源名支持中文 / 英文 / 简写；识别为腾讯系则做数值映射，
+  /// 其余（B 站系 / 弹弹Play / 未知）按标准值原样返回。
+  int normalizeDanmakuType(String? source, int type) {
+    final s = (source ?? '').trim().toLowerCase();
+    final isTencentLike = s.contains('腾讯') ||
+        s.contains('tencent') ||
+        s.contains('qq视频') ||
+        s.contains('tx视频') ||
+        s.contains('tx');
+    final isIqiyiLike = s.contains('爱奇艺') ||
+        s.contains('iqiyi') ||
+        s.contains('奇艺') ||
+        s.contains('aqy');
+    final isYoukuLike =
+        s.contains('优酷') || s.contains('youku') || s.contains('yk');
+    if (isTencentLike || isIqiyiLike || isYoukuLike) {
+      switch (type) {
+        case 2:
+          return 5; // 顶部
+        case 3:
+          return 4; // 底部
+        case 4:
+          return 6; // 逆向滚动
+      }
+    }
+    return type; // B 站/弹弹Play/未知：4=底部、5=顶部、6=逆向 原样
+  }
+
   DanmakuItem parseComment(Map<String, dynamic> d) {
     // 弹弹Play `p` 字段格式： time,mode,color,userId （第 4 段是用户ID，不是字号）。
     final p = (d['p'] as String?)?.split(',') ?? const [];
     return DanmakuItem(
       time: double.tryParse(p.isNotEmpty ? p[0] : '0') ?? 0.0,
       text: d['m'] as String? ?? '',
-      type: p.length > 1 ? (int.tryParse(p[1]) ?? 1) : 1,
+      type: normalizeDanmakuType(
+          config.name, p.length > 1 ? (int.tryParse(p[1]) ?? 1) : 1),
       color: p.length > 2 ? (int.tryParse(p[2]) ?? 16777215) : 16777215,
       size: 25,
       source: config.name,

@@ -196,16 +196,19 @@ class DanmakuLocalParser {
   /// 把各家弹幕 mode 归一到弹弹Play 标准：1=滚动, 4=底部, 5=顶部。
   static int _normalizeMode(int mode) {
     switch (mode) {
+      case 2:
+        return 5; // 顶部（腾讯/爱奇艺/优酷体系）
+      case 3:
+        return 4; // 底部（同上）
       case 4:
-        return 4; // 底部
+        return 4; // 底部（B 站标准）
       case 5:
         return 5; // 顶部
-      case 1:
-      case 2:
-      case 3:
       case 6:
+        return 6; // 逆向滚动（左→右）
+      case 1:
       default:
-        return 1; // 滚动（含逆向，渲染层按滚动处理）
+        return 1; // 滚动
     }
   }
 }
