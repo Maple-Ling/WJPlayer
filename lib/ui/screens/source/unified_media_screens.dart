@@ -682,7 +682,15 @@ class _UnifiedMediaDetailScreenState
       final target = widget.targetEpisodeNumber != null
           ? episodes
               .where((e) => e.indexNumber == widget.targetEpisodeNumber)
-              .firstOrNull
+              .firstOrNull ??
+              // 兼容服务器集号字段缺失：从条目名解析集号匹配
+              // （「176 凡人修仙传风起天南」「凡人修仙传176」
+              //  「凡人修仙传..176」「第176集」「E176」）。
+              episodes
+                  .where((e) =>
+                      _episodeNumberFromName(e.name) ==
+                      widget.targetEpisodeNumber)
+                  .firstOrNull
           : null;
       final preferred = episodes
           .where((episode) => episode.id == detail.initialEntryId)
@@ -816,6 +824,23 @@ class _UnifiedMediaDetailScreenState
     if (!_coreTouched && _resourceHdrOrDv && _core == 'exoPlayer') {
       _core = 'nativeMpv';
     }
+  }
+
+  /// 从条目名解析集号（兼容服务器集号字段缺失/命名混乱）：
+  /// 「第176集」「E176 / EP176」「176 凡人修仙传风起天南」「176」
+  /// 「凡人修仙传176」「凡人修仙传..176」；解析不出返回 null。
+  int? _episodeNumberFromName(String name) {
+    final text = name.trim();
+    if (text.isEmpty) return null;
+    final cn = RegExp(r'第\s*(\d+)\s*[集话]').firstMatch(text);
+    if (cn != null) return int.tryParse(cn.group(1)!);
+    final ep = RegExp(r'[Ee][Pp]?\s*(\d+)').firstMatch(text);
+    if (ep != null) return int.tryParse(ep.group(1)!);
+    final head = RegExp(r'^0*(\d+)').firstMatch(text);
+    if (head != null) return int.tryParse(head.group(1)!);
+    final tail = RegExp(r'(\d+)\s*$').firstMatch(text);
+    if (tail != null) return int.tryParse(tail.group(1)!);
+    return null;
   }
 
   /// 当前内核策略下应默认选中的音频轨索引：
