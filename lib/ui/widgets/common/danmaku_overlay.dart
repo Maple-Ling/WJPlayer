@@ -362,8 +362,10 @@ class DanmakuPainter extends CustomPainter {
           break;
         }
       }
-      // 轨道全部繁忙时选择当前最早离场的轨道；这是极端高密度下的
-      // 最小损伤策略，正常密度下不会进入这里。
+      // 轨道全部繁忙时选择当前最早离场的轨道。但**必须保证间距**：
+      // 新弹幕 x 要完全排在该轨道最后一条弹幕的右侧（x > 右界 + padding），
+      // 同速下间距恒定不会追尾；否则这一帧先跳过不画（laneOf 未登记），
+      // 等下一帧轨道让出后再入轨——避免高密度时强制同轨造成左右重叠。
       if (selectedLane < 0) {
         selectedLane = 0;
         var earliest = double.infinity;
@@ -376,6 +378,7 @@ class DanmakuPainter extends CustomPainter {
             selectedLane = lane;
           }
         }
+        if (x <= earliest + _padding) continue;
       }
       cache.laneOf[ti.index] = selectedLane;
       ti.startY = selectedLane * _trackHeight + _padding;
