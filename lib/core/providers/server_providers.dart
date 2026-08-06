@@ -70,6 +70,10 @@ class ServerConfig {
   // 是否在服务器管理页隐藏（连点三次“服务器”标题可临时显示，隐藏后不记播放记录）。
   final bool hidden;
 
+  // 最近一次观看时间（ISO 字符串）：播放结束时写入服务器配置，隐藏服务器
+  // 删除观看历史后仍保留，供服务器卡片显示「最近观影」。
+  final String? lastWatchedAt;
+
   ServerConfig({
     required this.id,
     required this.name,
@@ -86,6 +90,7 @@ class ServerConfig {
     this.streamKind = StreamServerKind.unknown,
     this.sourceKind = SourceKind.emby,
     this.hidden = false,
+    this.lastWatchedAt,
   });
 
   /// 是否文件浏览型源（非 Emby）。现仅飞牛。
@@ -114,6 +119,7 @@ class ServerConfig {
     StreamServerKind? streamKind,
     SourceKind? sourceKind,
     bool? hidden,
+    String? lastWatchedAt,
   }) {
     return ServerConfig(
       id: id ?? this.id,
@@ -131,6 +137,7 @@ class ServerConfig {
       streamKind: streamKind ?? this.streamKind,
       sourceKind: sourceKind ?? this.sourceKind,
       hidden: hidden ?? this.hidden,
+      lastWatchedAt: lastWatchedAt ?? this.lastWatchedAt,
     );
   }
 }
@@ -456,8 +463,23 @@ class ServerListNotifier extends StateNotifier<List<ServerConfig>> {
       return server;
     }).toList();
     _saveServers();
-    // 隐藏不再删除观看历史：隐藏只是从列表/检索中隐藏，服务器卡片的
-    // 最近观影信息保留（播放器写入历史已有 hidden 拦截，不会新增记录）。
+    // 隐藏时删除该服务器的观看历史（不记播放记录）；
+    // 卡片「最近观影」时间由 server.lastWatchedAt 独立保留（不随历史删除）。
+    if (hidden && !wasHidden) {
+      unawaited(watchHistoryStore?.deleteByScopePrefix(serverId));
+    }
+  }
+
+  /// 播放结束时更新服务器的「最近观影」时间戳（独立于观看历史存储，
+  /// 隐藏服务器删除历史后仍保留，供服务器卡片显示）。
+  void updateLastWatchedAt(String serverId, DateTime time) {
+    state = state.map((server) {
+      if (server.id == serverId) {
+        return server.copyWith(lastWatchedAt: time.toIso8601String());
+      }
+      return server;
+    }).toList();
+    _saveServers();
   }
 }
 
@@ -489,6 +511,7 @@ Map<String, dynamic> _serverConfigToJson(ServerConfig server,
     'streamKind': server.streamKind.name,
     'sourceKind': server.sourceKind.name,
     'hidden': server.hidden,
+    'lastWatchedAt': server.lastWatchedAt,
   };
 }
 
@@ -536,6 +559,7 @@ ServerConfig _serverConfigFromJson(Map<String, dynamic> json) {
     // 迁移：旧数据无此字段 → emby（保持原 Emby 行为）。
     sourceKind: sourceKindFromName(json['sourceKind'] as String?),
     hidden: json['hidden'] as bool? ?? false,
+    lastWatchedAt: json['lastWatchedAt'] as String?,
   );
 }
 

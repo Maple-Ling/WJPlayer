@@ -832,9 +832,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             sourceEntryId: sp.entry.id,
             sourcePosterUrl: sp.entry.thumbUrl,
             playerCore: _currentCore,
-            incrementPlayCount: _lastSourceProgressSecond < 0,
-            force: force,
+            incrementPlayCount: _lastSourceProgressSecond < 0,            force: force,
           );
+      // 播放成功写历史 → 更新服务器配置上的「最近观影」时间戳
+      // （独立于历史存储，隐藏服务器删除历史后卡片仍显示）。
+      if (!sp.server.hidden) {
+        ref
+            .read(serverListProvider.notifier)
+            .updateLastWatchedAt(sp.server.id, DateTime.now());
+      }
     } catch (_) {
       // 本地记录失败不能中断来源播放和服务端进度回传。
     }
@@ -3633,6 +3639,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         record: record,
         force: force,
       );
+      // 播放成功写历史 → 更新服务器配置上的「最近观影」时间戳
+      // （独立于历史存储，隐藏服务器删除历史后卡片仍显示）。
+      if (current != null) {
+        ref
+            .read(serverListProvider.notifier)
+            .updateLastWatchedAt(current.id, DateTime.now());
+      }
     } catch (_) {
       // 本地观看记录失败不应中断播放。
     }

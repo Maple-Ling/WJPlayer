@@ -701,7 +701,26 @@ class _ServerCard extends ConsumerWidget {
               const SizedBox(height: 8),
               stats.when(data: (value) => _stats(context, value), loading: () => _stats(context, const ServerCardStats()), error: (_, __) => _stats(context, const ServerCardStats())),
               const SizedBox(height: 5),
-              stats.when(data: (value) => Text(value.lastWatchedAt == null ? '暂无观影记录' : _date(value.lastWatchedAt!), style: TextStyle(fontSize: compact ? 11 : 12, color: Theme.of(context).textTheme.bodySmall?.color)), loading: () => const Text('最近观影 —', style: TextStyle(fontSize: 12)), error: (_, __) => const Text('最近观影 —', style: TextStyle(fontSize: 12))),
+              stats.when(
+                  data: (value) => Text(
+                        // 优先服务器配置上的最近观影（隐藏删历史后仍保留），
+                        // 回退历史统计。
+                        server.lastWatchedAt != null
+                            ? '最近观影 ${_date(DateTime.parse(server.lastWatchedAt!))}'
+                            : value.lastWatchedAt == null
+                                ? '暂无观影记录'
+                                : _date(value.lastWatchedAt!),
+                        style: TextStyle(
+                            fontSize: compact ? 11 : 12,
+                            color: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.color),
+                      ),
+                  loading: () => const Text('最近观影 —',
+                      style: TextStyle(fontSize: 12)),
+                  error: (_, __) => const Text('最近观影 —',
+                      style: TextStyle(fontSize: 12))),
               if (server.remark?.trim().isNotEmpty == true) ...[
                 const SizedBox(height: 5),
                 Text(server.remark!, maxLines: compact ? 1 : 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: compact ? 11 : 13, color: Theme.of(context).textTheme.bodySmall?.color)),
