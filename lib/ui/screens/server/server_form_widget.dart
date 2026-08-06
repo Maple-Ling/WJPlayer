@@ -225,25 +225,23 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
                 obscureText: true,
                 autocorrect: false,
               ),
-              if (_isEdit) ...[
-                const SizedBox(height: 14),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF0F2F5),
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: SwitchListTile.adaptive(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('信任自签名证书',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                    subtitle: const Text('仅对自签名证书的服务器开启',
-                        style: TextStyle(fontSize: 11)),
-                    value: _allowInsecureTls,
-                    onChanged: (v) => setState(() => _allowInsecureTls = v),
-                  ),
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0F2F5),
+                  borderRadius: BorderRadius.circular(18),
                 ),
-              ],
+                child: SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('允许不安全 TLS（自签名/过期证书）',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  subtitle: const Text('证书过期或不受信任的服务器开启后即可连接',
+                      style: TextStyle(fontSize: 11)),
+                  value: _allowInsecureTls,
+                  onChanged: (v) => setState(() => _allowInsecureTls = v),
+                ),
+              ),
               const SizedBox(height: 20),
               Row(children: [
                 Expanded(child: _sectionTitle('服务器线路')),
