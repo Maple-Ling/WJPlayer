@@ -68,6 +68,8 @@ class _LibraryDetailScreenState extends ConsumerState<LibraryDetailScreen> {
       appBar: AppBar(
         title: const Text('媒体库'),
         actions: [
+          // 排序分类：与影视「查看更多」同款（kLibrarySortOptions 保持 Emby
+          // SortBy 字段，UI 对齐影视：spaceBetween + check 勾选）。
           PopupMenuButton<String>(
             tooltip: '排序',
             icon: const Icon(Icons.sort_rounded),
@@ -77,20 +79,23 @@ class _LibraryDetailScreenState extends ConsumerState<LibraryDetailScreen> {
                 PopupMenuItem<String>(
                   value: option.key,
                   child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Expanded(child: Text(option.label)),
+                      Text(option.label),
                       if (_filter.sortBy == option.key)
-                        Icon(
-                          _filter.sortDescending
-                              ? Icons.arrow_downward_rounded
-                              : Icons.arrow_upward_rounded,
-                          size: 18,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
+                        const Icon(Icons.check_rounded,
+                            size: 18, color: Color(0xFF34C759)),
                     ],
                   ),
                 ),
             ],
+          ),
+          // 排序方向：影视同款独立图标（正序/倒序）。
+          IconButton(
+            icon: const Icon(Icons.swap_vert_rounded),
+            tooltip: '正序/倒序',
+            onPressed: () =>
+                _onFilterChanged(_filter.toggledSort(_filter.sortBy)),
           ),
         ],
       ),
