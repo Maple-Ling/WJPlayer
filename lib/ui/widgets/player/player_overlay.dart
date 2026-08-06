@@ -101,6 +101,7 @@ class PlayerOverlay extends StatefulWidget {
     this.onClearIntro,
     this.onClearOutro,
     this.onExternalSubtitleRequested,
+    this.onAggregationSearch,
   });
 
   final bool visible;
@@ -193,6 +194,7 @@ class PlayerOverlay extends StatefulWidget {
   final VoidCallback? onClearIntro;
   final VoidCallback? onClearOutro;
   final VoidCallback? onExternalSubtitleRequested;
+  final VoidCallback? onAggregationSearch;
 
   @override
   State<PlayerOverlay> createState() => _PlayerOverlayState();
@@ -746,7 +748,7 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
               child: IgnorePointer(
                 ignoring: !overlayInteractive,
                 child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
+                  behavior: HitTestBehavior.opaque,
                   onTap: () {
                     if (activeMenu != null) {
                       _closeMenu();
@@ -866,10 +868,9 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                           onAction: (action) {
                             switch (action) {
                               case PlayerBottomAction.aggregate:
-                                // 没有跨服务器资源时只保留按钮，不打开空的长条菜单。
-                                if (widget.sources.isNotEmpty) {
-                                  _openMenu(PopupMenuId.aggregate);
-                                }
+                                // 没有已加载资源时也打开菜单；用户可从菜单进入
+                                // 聚合搜索，避免按钮没有反馈。
+                                _openMenu(PopupMenuId.aggregate);
                                 break;
                               case PlayerBottomAction.core:
                                 _openMenu(PopupMenuId.core);
@@ -978,6 +979,7 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                     onSearchDanmaku: () {
                       widget.onSearchDanmaku?.call();
                     },
+                    onAggregationSearch: widget.onAggregationSearch,
                     onPlaybackRateChanged: _setSpeed,
                     onAspectRatioChanged: _setAspectRatio,
                     onSourceChanged: _setSource,

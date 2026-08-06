@@ -28,6 +28,20 @@ typedef ResolvedStreamUrls = ({String url, String? fallbackUrl});
 /// 用于播放中断流（网盘 302 过期 / 跨境硬断）后在当前线路内重新取流续播。
 typedef StreamUrlResolver = Future<ResolvedStreamUrls?> Function();
 
+/// 播放页会话级系统控制快照。
+///
+/// 播放器切换内核/线路时会重建 [VideoPlayerService]，快照不能只放在单个
+/// service 实例里，否则新实例会把播放中已经调过的值误认为进入页面时的值。
+class SystemControlsSnapshot {
+  const SystemControlsSnapshot({
+    this.brightness,
+    this.volume,
+  });
+
+  final double? brightness;
+  final double? volume;
+}
+
 /// 视频播放器服务
 ///
 /// 支持动态切换播放器内核：
@@ -38,6 +52,13 @@ class VideoPlayerService extends ChangeNotifier {
   static const MethodChannel _systemControls =
       MethodChannel('com.mapleling.wjplayer/system_controls');
   static const int _maxDirectRetryCount = 5;
+
+  // 播放页是一个会话：切换内核/线路时会重建 VideoPlayerService，但不应重新
+  // 记录亮度/音量。快照放在 service 之外，并由播放页会话引用计数控制恢复时机。
+  static SystemControlsSnapshot? _pageSystemControlsSnapshot;
+  static Future<void>? _pageSystemControlsCapture;
+  static int _pageSystemControlsSessionCount = 0;
+  static Future<void>? _pageSystemControlsRestore;
 
   PlayerAdapter? _adapter;
   PlayerCoreType _coreType = PlayerCoreType.exoPlayer;
@@ -121,8 +142,6 @@ class VideoPlayerService extends ChangeNotifier {
   double _dragStartVolume = 1.0;
   double _currentVolume = 1.0;
   double _currentBrightness = 1.0;
-  double? _entryVolume;
-  double? _entryBrightness;
   Future<void>? _systemControlsHydration;
   double _dragStartBrightness = 1.0;
 
@@ -1298,37 +1317,108 @@ class VideoPlayerService extends ChangeNotifier {
       if (values[0] != null) {
         _currentBrightness =
             values[0]!.toDouble().clamp(0.01, 1.0).toDouble();
-        _entryBrightness ??= _currentBrightness;
       }
       if (values[1] != null) {
         _currentVolume = values[1]!.toDouble().clamp(0.0, 1.0).toDouble();
-        _entryVolume ??= _currentVolume;
       }
       notifyListeners();
-    } catch (_) {}
+    } catch (_) {
+      // 原生通道不可用时保留默认手势数值。
+    }
   }
 
-  /// 离开播放页时恢复进入播放页前的系统亮度和媒体音量。
-  Future<void> restoreSystemControls() async {
+  /// 进入一个播放器页面会话。内核/线路切换只重建 service，不会重新调用此方法。
+  static Future<void> beginPageSystemControls() async {
     if (!Platform.isAndroid) return;
-    // 极快退出时也要等进入页的系统状态读取完成，避免快照尚未写入。
-    await hydrateSystemControls();
+    _pageSystemControlsSessionCount++;
+    if (_pageSystemControlsSnapshot != null) return;
+
+    final pending = _pageSystemControlsCapture;
+    if (pending != null) {
+      await pending;
+      return;
+    }
+
+    final future = () async {
+      try {
+        final values = await Future.wait<num?>([
+          _systemControls.invokeMethod<num>('getBrightness'),
+          _systemControls.invokeMethod<num>('getMediaVolume'),
+        ]);
+        if (_pageSystemControlsSnapshot == null) {
+          _pageSystemControlsSnapshot = SystemControlsSnapshot(
+            brightness: values[0]?.toDouble().clamp(0.01, 1.0).toDouble(),
+            volume: values[1]?.toDouble().clamp(0.0, 1.0).toDouble(),
+          );
+        }
+      } catch (_) {
+        // 通道失败不阻塞播放；没有快照时退出也不会误改系统值。
+      }
+    }();
+    _pageSystemControlsCapture = future;
     try {
-      final brightness = _entryBrightness;
-      final volume = _entryVolume;
-      if (brightness != null) {
-        await _systemControls.invokeMethod<num>('setBrightness', {
-          'value': brightness,
-        });
-      } else {
-        await _systemControls.invokeMethod<void>('restoreBrightness');
+      await future;
+    } finally {
+      if (identical(_pageSystemControlsCapture, future)) {
+        _pageSystemControlsCapture = null;
       }
-      if (volume != null) {
-        await _systemControls.invokeMethod<num>('setMediaVolume', {
-          'value': volume,
-        });
+    }
+  }
+
+  /// 离开一个播放器页面会话。延迟一个 microtask，避免路由 replace 导致的
+  /// 旧页面 dispose 与新页面 init 短暂交错时恢复系统值。
+  static Future<void> endPageSystemControls() async {
+    if (!Platform.isAndroid || _pageSystemControlsSessionCount <= 0) return;
+    _pageSystemControlsSessionCount--;
+    final pending = _pageSystemControlsRestore;
+    if (pending != null) {
+      await pending;
+      return;
+    }
+
+    final future = () async {
+      // 如果用户在初始化动画/网络请求完成前就返回，先等进入快照读取结束，
+      // 再判断是否真的已经没有播放器页面。
+      final capture = _pageSystemControlsCapture;
+      if (capture != null) await capture;
+      await Future<void>.delayed(Duration.zero);
+      if (_pageSystemControlsSessionCount != 0) return;
+      final snapshot = _pageSystemControlsSnapshot;
+      if (snapshot == null) return;
+      try {
+        if (snapshot.brightness != null) {
+          await _systemControls.invokeMethod<num>('setBrightness', {
+            'value': snapshot.brightness,
+          });
+        }
+        if (snapshot.volume != null) {
+          await _systemControls.invokeMethod<num>('setMediaVolume', {
+            'value': snapshot.volume,
+          });
+        }
+      } catch (_) {
+        // 页面退出时尽力恢复；单个通道失败不能阻止页面销毁。
+      } finally {
+        _pageSystemControlsSnapshot = null;
       }
-    } catch (_) {}
+    }();
+    _pageSystemControlsRestore = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_pageSystemControlsRestore, future)) {
+        _pageSystemControlsRestore = null;
+      }
+    }
+  }
+
+  /// 当前播放器页面快照；播放器重建时继续沿用同一快照。
+  static SystemControlsSnapshot? get pageSystemControlsSnapshot =>
+      _pageSystemControlsSnapshot;
+
+  /// 兼容旧调用方；页面退出应使用 [endPageSystemControls]。
+  Future<void> restoreSystemControls() async {
+    await endPageSystemControls();
   }
 
   /// 设置系统窗口亮度。系统通道不可用时保留软件亮度值，保证其它平台不崩溃。

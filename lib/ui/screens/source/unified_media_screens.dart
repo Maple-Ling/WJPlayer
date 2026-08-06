@@ -414,6 +414,28 @@ class _UnifiedMediaLibraryScreenState
 }
 
 /// 飞牛详情视觉标准的统一详情页。
+/// A 模板分集展示模型：由 UnifiedMediaEntry 转换而来（转换层），
+/// 仅承载 A 页分段胶囊/剧集卡片所需展示字段，保留业务引用 [entry]。
+class _UiEpisode {
+  const _UiEpisode({
+    required this.number,
+    required this.name,
+    required this.entry,
+    this.overview,
+    this.stillUrl,
+    this.airDate,
+    this.runtime,
+  });
+
+  final int number;
+  final String name;
+  final String? overview;
+  final String? stillUrl;
+  final String? airDate;
+  final int? runtime;
+  final UnifiedMediaEntry entry;
+}
+
 class UnifiedMediaDetailScreen extends ConsumerStatefulWidget {
   const UnifiedMediaDetailScreen({
     super.key,
@@ -443,6 +465,7 @@ class _UnifiedMediaDetailScreenState
   int _audioIndex = 0;
   int _subtitleIndex = -1;
   int _selectedCrossServerIndex = 0;
+  int _episodeRangeStart = 1;
   String _core = 'nativeMpv';
   bool _loading = true;
   bool _loadingMedia = false;
@@ -452,7 +475,6 @@ class _UnifiedMediaDetailScreenState
   int _generation = 0;
   int? _resumePositionTicks;
   int? _resumeRuntimeTicks;
-  int _lastWatchedEpIndex = 0;
   List<WatchHistoryRecord> _scopeRecords = const [];
   final Map<String, UnifiedMediaDetail> _detailCache = {};
   final Map<String, List<UnifiedMediaResource>> _resourceCache = {};
@@ -624,31 +646,41 @@ class _UnifiedMediaDetailScreenState
           : episodes.where((episode) =>
               (episode.mediaItem?.indexNumber ?? episode.indexNumber) == latest.episode).firstOrNull;
       final selected = historyEpisode ?? preferred ?? (episodes.isEmpty ? null : episodes.first);
-      final orderedEpisodes = selected == null
-          ? episodes
-          : [
-              selected,
-              ...episodes.where((episode) => episode.id != selected.id),
-            ];
+      // 当前播放集编号（用于自动分段 + 滚动定位；无记录时为 null）
+      final targetNumber = historyEpisode == null
+          ? null
+          : (historyEpisode.mediaItem?.indexNumber ??
+              historyEpisode.indexNumber);
       setState(() {
-        _episodes = orderedEpisodes;
+        _episodes = episodes;
         _selectedEntry = selected;
         _loadingMedia = selected != null;
-        if (_scopeRecords.isNotEmpty) {
-          _lastWatchedEpIndex = _lastWatchedEpisodeIndex(episodes);
-        }
+        _episodeRangeStart = targetNumber == null || targetNumber <= 0
+            ? 1
+            : (((targetNumber - 1) ~/ 10) * 10 + 1);
       });
       if (selected != null) {
         await _loadResources(selected);
         if (widget.autoPlay && mounted) await _play();
       }
-      // Q5：进入详情后，自动无感滑动到最近播放的剧集（若有）。
-      if (_lastWatchedEpIndex > 0 && _episodeController.hasClients) {
+      // 自动滚动到当前播放集附近：仅滚动定位，不改数组/顺序/位置。
+      if (targetNumber != null && targetNumber > 0 && mounted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted || !_episodeController.hasClients) return;
-          // 置左：最新播放集滚动到横向列表的最左端可见位置（卡片宽 220 + 间距 8）。
-          // 若该集已靠近末尾，则只滚到最大位置，避免越界。
-          final target = (_lastWatchedEpIndex * 228.0)
+          final uiList = _uiEpisodes;
+          final start = _episodeRangeStart;
+          final end = start + 9;
+          // 当前分段内可见列表（与 _buildEpisodeCards 的过滤口径一致）
+          final visible = uiList
+              .where((e) {
+                final n = e.number <= 0 ? 1 : e.number;
+                return n >= start && n <= end;
+              })
+              .toList();
+          final visibleIdx =
+              visible.indexWhere((e) => e.number == targetNumber);
+          if (visibleIdx < 0) return;
+          final target = (visibleIdx * 228.0)
               .clamp(0.0, _episodeController.position.maxScrollExtent);
           _episodeController.animateTo(
             target,
@@ -763,49 +795,10 @@ class _UnifiedMediaDetailScreenState
     }
   }
 
-  int _lastWatchedEpisodeIndex(List<UnifiedMediaEntry> episodes) {
-    // 优先取当前季最近播放记录；若当前季没有记录，则取全剧最近播放的季集，
-    // 由调用方先切到对应季。这里保留当前季无记录时从第一集开始的兜底。
-    final wantedSeason = _seasonNumber(_selectedSeasonId);
-    for (final record in _scopeRecords) {
-      if (wantedSeason != null && record.seasonNumber != wantedSeason) continue;
-      final episodeNumber = record.episodeNumber;
-      if (episodeNumber == null) continue;
-      final index = episodes.indexWhere((ep) =>
-          (ep.mediaItem?.indexNumber ?? ep.indexNumber) == episodeNumber);
-      if (index >= 0) return index;
-    }
-    return 0;
-  }
-
   int? _seasonNumber(String? seasonId) {
     if (seasonId == null) return null;
     final match = RegExp(r'(?:season:)?(\d+)$').firstMatch(seasonId);
     return int.tryParse(match?.group(1) ?? seasonId);
-  }
-
-  /// 查询当前选中季中某集的续播进度（0~1）；无记录返回 null。用于选集卡片进度显示。
-  double? _episodeProgress(UnifiedMediaEntry episode) {
-    if (_scopeRecords.isEmpty) return null;
-    final wantedSeason = _seasonNumber(_selectedSeasonId);
-    final epNumber = episode.mediaItem?.indexNumber ?? episode.indexNumber;
-    if (epNumber == null) return null;
-    for (final record in _scopeRecords) {
-      if (wantedSeason != null &&
-          record.seasonNumber != null &&
-          record.seasonNumber != wantedSeason) {
-        continue;
-      }
-      if (record.episodeNumber != epNumber) continue;
-      final ticks = record.lastPositionTicks;
-      final runtime = record.runTimeTicks;
-      if (ticks == null || runtime == null || ticks <= 0 || runtime <= 0) {
-        return null;
-      }
-      if (ticks >= runtime) return null;
-      return (ticks / runtime).clamp(0.0, 1.0);
-    }
-    return null;
   }
 
   ({int? season, int? episode}) _latestPlayedEpisode() {
@@ -828,19 +821,8 @@ class _UnifiedMediaDetailScreenState
     final s = seconds % 60;
     String two(int v) => v.toString().padLeft(2, '0');
     return h > 0
-        ? '续播 ${two(h)}:${two(m)}:${two(s)}'
-        : '续播 ${two(m)}:${two(s)}';
-  }
-
-  /// 续播进度 0~1；无进度或已播完返回 null（用于播放按钮下方进度条）。
-  double? _resumeFraction() {
-    final ticks = _resumePositionTicks;
-    final runtime = _resumeRuntimeTicks;
-    if (ticks == null || runtime == null || ticks <= 0 || runtime <= 0) {
-      return null;
-    }
-    if (ticks >= runtime) return null;
-    return (ticks / runtime).clamp(0.0, 1.0);
+        ? '继续播放 ${two(h)}:${two(m)}:${two(s)}'
+        : '继续播放 ${two(m)}:${two(s)}';
   }
 
   Future<void> _play() async {
@@ -932,7 +914,7 @@ class _UnifiedMediaDetailScreenState
               actions: [
                 if (_externalDetail != null)
                   _roundButton(Icons.more_vert_rounded,
-                      () => _showLinksSheet(_externalDetail!)),
+                      () => _showLinks(_externalDetail!)),
               ],
               flexibleSpace: FlexibleSpaceBar(
                 collapseMode: CollapseMode.parallax,
@@ -992,8 +974,8 @@ class _UnifiedMediaDetailScreenState
                             if (_externalDetail?.numberOfSeasons != null)
                               Text('共${_externalDetail!.numberOfSeasons}季',
                                   style: _heroMeta)
-                            else
-                              Text(entry.isSeries ? '电视剧' : '电影',
+                            else if (detail.seasons.isNotEmpty)
+                              Text('共${detail.seasons.length}季',
                                   style: _heroMeta),
                           ],
                         ),
@@ -1008,136 +990,74 @@ class _UnifiedMediaDetailScreenState
                 ),
               ),
             ),
-            SliverToBoxAdapter(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Center(
-                    child: SizedBox(
-                      width: 200,
-                      height: 50,
-                      child: FilledButton.icon(
-                        style: FilledButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: Colors.black,
-                          shape: const StadiumBorder(),
-                          elevation: 0,
-                        ),
-                        onPressed:
-                            _selectedEntry == null || _loadingMedia ? null : _play,
-                        icon: const Icon(Icons.play_arrow_rounded, size: 23),
-                        label: Text(
-                          _selectedEntry == null ? '暂无资源' : _resumeLabel(),
-                          style: const TextStyle(
-                              fontSize: 12, fontWeight: FontWeight.w800),
-                        ),
-                      ),
-                    ),
-                  ),
-                  // 续播进度条 + 进度显示
-                  if (_resumeFraction() != null) ...[
-                    const SizedBox(height: 12),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 48),
-                      child: Column(children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(3),
-                          child: LinearProgressIndicator(
-                            value: _resumeFraction(),
-                            minHeight: 5,
-                            backgroundColor: Colors.black.withValues(alpha: 0.12),
-                            valueColor: const AlwaysStoppedAnimation(
-                                Color(0xFF5B8DEF)),
-                          ),
-                        ),
-                        const SizedBox(height: 5),
-                        Text(
-                          _resumeLabel(),
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.black.withValues(alpha: 0.55),
-                          ),
-                        ),
-                      ]),
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: _buildPlaybackOptions(),
-                  ),
-                ],
-              ),
-            ),
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 48),
               sliver: SliverList.list(children: [
+                _primaryPlayButton(),
                 const SizedBox(height: 14),
-                if (entry.overview?.isNotEmpty == true) ...[
+                _buildPlaybackOptionCapsules(),
+                const SizedBox(height: 14),
+                if (entry.overview?.isNotEmpty == true)
                   CollapsibleOverview(text: entry.overview!),
-                ],
                 if (detail.seasons.isNotEmpty) ...[
                   const SizedBox(height: 18),
-                  _buildSeasonSelector(detail.seasons),
-                  const SizedBox(height: 8),
-                  _buildEpisodeRangeSelector(),
+                  _seasonSelector(detail.seasons),
+                  const SizedBox(height: 18),
+                  _episodeRangeCapsules(),
                   const SizedBox(height: 10),
-                  _buildEpisodes(),
+                  _buildEpisodeCards(),
                 ],
                 const SizedBox(height: 20),
-                _sectionTitleWithTrailing(
+                _sectionTitle(
                   '播放资源',
-                  TextButton(
+                  trailing: TextButton(
                     onPressed: () => _showAllCrossServerResources(entry.name),
                     child: const Text('查看更多  ›'),
                   ),
                 ),
                 const SizedBox(height: 14),
                 _buildCrossServerResourceList(entry.name),
-                if (detail.people.isNotEmpty) ...[
+                if (_peopleList.isNotEmpty) ...[
                   const SizedBox(height: 20),
                   _sectionTitle('演员'),
                   const SizedBox(height: 16),
-                  _buildPeople(detail.people),
+                  _people(_peopleList),
                 ],
                 if (_externalDetail?.images.isNotEmpty == true) ...[
                   const SizedBox(height: 20),
                   _sectionTitle('剧照'),
                   const SizedBox(height: 16),
-                  _buildGallery(_externalDetail!.images),
+                  _gallery(_externalDetail!.images),
                 ],
                 if (_externalDetail?.recommendations.isNotEmpty == true) ...[
                   const SizedBox(height: 20),
                   _sectionTitle('相似推荐'),
                   const SizedBox(height: 16),
-                  _buildRecommendations(_externalDetail!.recommendations),
+                  _recommendations(_externalDetail!.recommendations),
+                ],
+                const SizedBox(height: 20),
+                _sectionTitle('媒体信息'),
+                const SizedBox(height: 14),
+                _mediaInfo(detail),
+                if (_resource != null) ...[
+                  const SizedBox(height: 16),
+                  _buildStreamInfoCards(),
+                ],
+                if (_resource?.path?.isNotEmpty == true) ...[
+                  const SizedBox(height: 12),
+                  _buildFileInfoCard(_resource!),
                 ],
                 if (_externalDetail != null) ...[
                   const SizedBox(height: 20),
                   _sectionTitle('链接'),
                   const SizedBox(height: 14),
-                  _buildExternalLinks(_externalDetail!),
+                  _links(_externalDetail!),
                 ],
                 if (_externalDetail?.companies.isNotEmpty == true) ...[
                   const SizedBox(height: 20),
                   _sectionTitle('工作室'),
                   const SizedBox(height: 14),
-                  _buildCompanies(_externalDetail!.companies),
-                ],
-                const SizedBox(height: 28),
-                _sectionTitle('媒体信息'),
-                const SizedBox(height: 12),
-                if (_loadingMedia)
-                  const SizedBox(
-                    height: 180,
-                    child: Center(child: CircularProgressIndicator()),
-                  )
-                else
-                  _buildMediaCards(),
-                if (_resource?.path?.isNotEmpty == true) ...[
-                  const SizedBox(height: 14),
-                  _buildFileCard(_resource!),
+                  _companies(_externalDetail!.companies),
                 ],
               ]),
             ),
@@ -1148,223 +1068,293 @@ class _UnifiedMediaDetailScreenState
     );
   }
 
-  Widget _buildSummary(UnifiedMediaEntry entry) => Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: SizedBox(
-              width: 104,
-              height: 150,
-              child: MediaImage(
-                imageUrl: entry.posterUrl,
-                httpHeaders: entry.imageHeaders,
-                fit: BoxFit.cover,
-              ),
+  Widget _primaryPlayButton() => Center(
+        child: SizedBox(
+          width: 185,
+          height: 50,
+          child: FilledButton.icon(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.white,
+              foregroundColor: Colors.black,
+              shape: const StadiumBorder(),
+              elevation: 0,
+            ),
+            onPressed:
+                _selectedEntry == null || _loadingMedia ? null : _play,
+            icon: const Icon(Icons.play_arrow_rounded, size: 23),
+            label: Text(
+              _selectedEntry == null ? '搜索中' : _resumeLabel(),
+              style: const TextStyle(
+                  fontSize: 12, fontWeight: FontWeight.w800),
             ),
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(entry.name,
-                    style: Theme.of(context)
-                        .textTheme
-                        .headlineSmall
-                        ?.copyWith(fontWeight: FontWeight.w800)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    if (entry.rating != null)
-                      Chip(
-                          label: Text('★ ${entry.rating!.toStringAsFixed(1)}')),
-                    if (entry.year != null) Chip(label: Text('${entry.year}')),
-                    Chip(label: Text(entry.isSeries ? '电视剧' : '电影')),
-                  ],
-                ),
-                if (_selectedEntry != null && _isSeries) ...[
-                  const SizedBox(height: 10),
-                  Text(_selectedEntry!.name,
-                      maxLines: 2, overflow: TextOverflow.ellipsis),
-                ],
-              ],
-            ),
-          ),
-        ],
+        ),
       );
 
-  Widget _buildFormatBadges() {
-    final video = _resource?.video;
-    if (video == null) return const SizedBox.shrink();
-    final text = [
-      video['video_range_type'],
-      video['video_range'],
-      video['codec_name'],
-    ].where((item) => item != null).join(' ').toLowerCase();
-    final labels = <String>[];
-    if (text.contains('dovi') || text.contains('dolby')) {
-      labels.add('DV');
-    } else if (text.contains('hdr')) {
-      labels.add('HDR');
-    } else {
-      labels.add('SDR');
+  /// ---- A 模板数据转换层：Unified* 模型 → A 页 UI 展示数据 ----
+  /// 剧集展示模型：对齐 A 页分段胶囊 + 剧集卡片所需字段，保留业务引用 [entry]。
+  List<_UiEpisode> get _uiEpisodes {
+    final result = <_UiEpisode>[];
+    for (final episode in _episodes) {
+      final number = episode.mediaItem?.indexNumber ?? episode.indexNumber;
+      result.add(_UiEpisode(
+        number: number ?? _episodeNumberFromName(episode.name) ?? 0,
+        name: episode.name,
+        overview: episode.overview,
+        stillUrl: episode.backdropUrl?.isNotEmpty == true
+            ? episode.backdropUrl
+            : episode.posterUrl,
+        airDate: null,
+        runtime: null,
+        entry: episode,
+      ));
     }
-    if (text.contains('hevc') || text.contains('265')) {
-      labels.add('265/HEVC');
-    } else if (text.contains('h264') || text.contains('avc')) {
-      labels.add('264');
-    }
-    return Wrap(
-      spacing: 6,
-      children: labels
-          .map((label) => Chip(
-                visualDensity: VisualDensity.compact,
-                label: Text(label,
-                    style: const TextStyle(fontWeight: FontWeight.w700)),
-              ))
-          .toList(),
-    );
+    result.sort((a, b) => a.number.compareTo(b.number));
+    return result;
   }
 
-  /// 当季分段选择：每 10 集一个区间。
-  Widget _buildEpisodeRangeSelector() {
-    if (_episodes.isEmpty) return const SizedBox.shrink();
-    final ranges = <int>[
-      for (var start = 1; start <= _episodes.length; start += 10) start,
+  int? _uiSeasonNumber(String? value) {
+    if (value == null) return null;
+    final match = RegExp(r'第\s*(\d+)\s*季|season[:\s]*(\d+)|(\d+)$',
+            caseSensitive: false)
+        .firstMatch(value);
+    if (match == null) return null;
+    final group = match.group(1) ?? match.group(2) ?? match.group(3);
+    return int.tryParse(group ?? '');
+  }
+
+  int? _episodeNumberFromName(String name) {
+    final match = RegExp(r'第\s*(\d+)\s*集|E(\d+)', caseSensitive: false)
+        .firstMatch(name);
+    if (match != null) {
+      return int.tryParse(match.group(1) ?? match.group(2) ?? '');
+    }
+    return null;
+  }
+
+  /// 演员：优先 A 模板所需的外部演员（可点开作品）；无外部数据时由
+  /// UnifiedPerson 转换（role→character、imageUrl→profileUrl，id 为空不可点）。
+  List<ExternalPerson> get _peopleList {
+    final external = _externalDetail;
+    if (external != null && external.people.isNotEmpty) return external.people;
+    final detail = _detail;
+    if (detail == null || detail.people.isEmpty) return const [];
+    return [
+      for (final person in detail.people)
+        ExternalPerson(
+          id: '',
+          name: person.name,
+          source: ReviewSource.tmdb,
+          originalName: person.role,
+          character: person.role,
+          profileUrl: person.imageUrl,
+        ),
     ];
-    final current = _selectedEntry == null
-        ? 1
-        : (_episodes.indexWhere((e) => e.id == _selectedEntry!.id) + 1).clamp(1, _episodes.length);
-    final selectedStart = ((current - 1) ~/ 10) * 10 + 1;
+  }
+
+  Widget _seasonSelector(List<UnifiedSeason> seasons) {
+    final visible = seasons
+        .where((season) =>
+            _uiSeasonNumber(season.id) != null ||
+            _uiSeasonNumber(season.name) != null)
+        .toList();
+    if (visible.isEmpty) return const SizedBox.shrink();
+    final current =
+        visible.where((season) => season.id == _selectedSeasonId).firstOrNull ??
+            visible.first;
+    final currentNumber =
+        _uiSeasonNumber(current.id) ?? _uiSeasonNumber(current.name) ?? 1;
+    return Row(children: [
+      const Icon(Icons.video_library_rounded, size: 16, color: Color(0xFF5B8DEF)),
+      const SizedBox(width: 6),
+      Text('第 $currentNumber 季',
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
+      const SizedBox(width: 6),
+      PopupMenuButton<String>(
+        icon: const Icon(Icons.unfold_more_rounded, size: 20),
+        tooltip: '切换分季',
+        onSelected: _selectSeason,
+        itemBuilder: (_) => [
+          for (final season in visible)
+            PopupMenuItem(value: season.id, child: Text(season.name)),
+        ],
+      ),
+    ]);
+  }
+
+  /// 1-10 / 11-20 / 21-30 分段切换胶囊，选中态带主色 + 阴影，未选中浅色描边。
+  Widget _episodeRangeCapsules() {
+    final episodes = _uiEpisodes;
+    if (episodes.length <= 10) return const SizedBox.shrink();
+    final ranges = <int>[
+      for (var start = 1; start <= episodes.length; start += 10) start,
+    ];
+    final selectedStart = _episodeRangeStart.clamp(1, ranges.last);
+    final scheme = Theme.of(context).colorScheme;
     return SizedBox(
-      height: 38,
+      height: 40,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: ranges.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 6),
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (_, index) {
           final start = ranges[index];
-          final end = (start + 9).clamp(start, _episodes.length);
-          return ChoiceChip(
-            label: Text('$start-$end'),
-            selected: start == selectedStart,
-            onSelected: (_) {
-              final target = (start - 1).clamp(0, _episodes.length - 1);
-              _episodeController.animateTo(
-                target * 228.0,
-                duration: const Duration(milliseconds: 240),
-                curve: Curves.easeOutCubic,
-              );
-            },
+          final end = (start + 9).clamp(start, episodes.length);
+          final selected = start == selectedStart;
+          return GestureDetector(
+            onTap: () => setState(() {
+              _episodeRangeStart = start;
+            }),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                gradient: selected
+                    ? LinearGradient(
+                        colors: [
+                          scheme.primary,
+                          scheme.primary.withValues(alpha: 0.78),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      )
+                    : null,
+                color: selected ? null : scheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(999),
+                border: selected
+                    ? null
+                    : Border.all(
+                        color: scheme.outlineVariant.withValues(alpha: 0.5)),
+                boxShadow: selected
+                    ? [
+                        BoxShadow(
+                          color: scheme.primary.withValues(alpha: 0.32),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ]
+                    : null,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (selected) ...[
+                    const Icon(Icons.check_rounded,
+                        size: 14, color: Colors.white),
+                    const SizedBox(width: 4),
+                  ],
+                  Text(
+                    '$start-$end',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: selected
+                          ? FontWeight.w800
+                          : FontWeight.w700,
+                      color: selected ? Colors.white : scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           );
         },
       ),
     );
   }
 
-  Widget _buildSeasonSelector(List<UnifiedSeason> seasons) => Row(children: [
-        Text(
-          seasons
-              .where((season) => season.id == _selectedSeasonId)
-              .firstOrNull
-              ?.name ??
-              '选择季',
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
-        ),
-        PopupMenuButton<String>(
-          icon: const Icon(Icons.unfold_more_rounded),
-          onSelected: _selectSeason,
-          itemBuilder: (_) => [
-            for (final season in seasons)
-              PopupMenuItem(value: season.id, child: Text(season.name)),
-          ],
-        ),
-      ]);
-
-  Widget _buildEpisodes() => SizedBox(
-        height: 220,
-        child: _episodes.isEmpty
-            ? const Center(child: Text('本季暂无剧集'))
-            : ListView.separated(
-                controller: _episodeController,
-                scrollDirection: Axis.horizontal,
-                itemCount: _episodes.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (_, index) {
-                  final episode = _episodes[index];
-                  final selected = _selectedEntry?.id == episode.id;
-                  return SizedBox(
-                    width: 220,
-                    child: InkWell(
-                      onTap: () => _selectEpisode(episode),
+  Widget _buildEpisodeCards() {
+    final episodes = _uiEpisodes;
+    if (episodes.isEmpty) {
+      return const SizedBox(
+          height: 220, child: Center(child: Text('本季暂无剧集')));
+    }
+    final end = (_episodeRangeStart + 9).clamp(_episodeRangeStart, episodes.length);
+    final visible = episodes
+        .where((episode) {
+          final n = episode.number <= 0 ? 1 : episode.number;
+          return n >= _episodeRangeStart && n <= end;
+        })
+        .toList();
+    return SizedBox(
+      height: 220,
+      child: ListView.separated(
+        controller: _episodeController,
+        scrollDirection: Axis.horizontal,
+        itemCount: visible.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, index) {
+          final episode = visible[index];
+          final selected = _selectedEntry?.id == episode.entry.id;
+          return SizedBox(
+            width: 220,
+            child: InkWell(
+              onTap: () => _selectEpisode(episode.entry),
+              borderRadius: BorderRadius.circular(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: ClipRRect(
                       borderRadius: BorderRadius.circular(18),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      child: Stack(
+                        fit: StackFit.expand,
                         children: [
-                          AspectRatio(
-                            aspectRatio: 16 / 9,
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(18),
-                              child: Stack(fit: StackFit.expand, children: [
-                                MediaImage(
-                                  imageUrl:
-                                      episode.backdropUrl?.isNotEmpty == true
-                                          ? episode.backdropUrl
-                                          : episode.posterUrl,
-                                  httpHeaders: episode.imageHeaders,
-                                  fit: BoxFit.cover,
-                                ),
-                                if (selected)
-                                  DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      border: Border.all(
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .primary,
-                                          width: 4),
-                                      borderRadius: BorderRadius.circular(18),
-                                    ),
-                                  ),
-                                // 选集续播进度条（叠加在图片底部）
-                                if (_episodeProgress(episode) != null)
-                                  Positioned(
-                                    left: 0,
-                                    right: 0,
-                                    bottom: 0,
-                                    child: LinearProgressIndicator(
-                                      value: _episodeProgress(episode),
-                                      minHeight: 3,
-                                      backgroundColor: Colors.black.withValues(alpha: 0.35),
-                                      valueColor:
-                                          const AlwaysStoppedAnimation(
-                                              Color(0xFF5B8DEF)),
-                                    ),
-                                  ),
-                              ]),
-                            ),
+                          MediaImage(
+                            imageUrl: episode.stillUrl,
+                            httpHeaders: episode.entry.imageHeaders,
+                            fit: BoxFit.cover,
                           ),
-                          const SizedBox(height: 12),
-                          Text(episode.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                  fontSize: 13, fontWeight: FontWeight.w800)),
-                          const SizedBox(height: 5),
-                          Text(episode.overview ?? '',
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                  height: 1.35, color: Colors.black54)),
+                          if (selected)
+                            DecoratedBox(
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .primary,
+                                    width: 4),
+                                borderRadius: BorderRadius.circular(18),
+                              ),
+                            ),
                         ],
                       ),
                     ),
-                  );
-                },
+                  ),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Text('第 ${episode.number} 集',
+                        style:
+                            const TextStyle(fontWeight: FontWeight.w800)),
+                    const SizedBox(width: 8),
+                    if (episode.runtime != null)
+                      Text('· ${episode.runtime}m',
+                          style: const TextStyle(color: Colors.black54)),
+                    const Spacer(),
+                    if (episode.airDate?.isNotEmpty == true)
+                      Text(episode.airDate!,
+                          style: const TextStyle(color: Colors.black54)),
+                  ]),
+                  const SizedBox(height: 5),
+                  Text(episode.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 5),
+                  Text(episode.overview ?? '',
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          height: 1.35, color: Colors.black54)),
+                ],
               ),
-      );
+            ),
+          );
+        },
+      ),
+    );
+  }
 
   Widget _buildCrossServerResourceList(String query) => Consumer(
         builder: (context, ref, _) {
@@ -1390,7 +1380,7 @@ class _UnifiedMediaDetailScreenState
                         serverName: match.serverName,
                         isBest: index == 0,
                         // 单击选中：高亮当前点选的跨服务器资源；默认高亮命中排第一的
-                        isCurrent: index == _selectedCrossServerIndex,
+                        isSelected: index == _selectedCrossServerIndex,
                         resolution: source?.qualityLabel,
                         dynamicRange: source?.primaryVideoStream?.videoRangeLabel,
                         codec: source?.primaryVideoStream?.videoCodecLabel,
@@ -1411,9 +1401,6 @@ class _UnifiedMediaDetailScreenState
           );
         },
       );
-
-  Widget _sectionTitleWithTrailing(String title, Widget trailing) =>
-      _sectionTitle(title, trailing: trailing);
 
   void _openCrossServerMatch(ServerMatchInfo match) {
     final server = ref
@@ -1528,7 +1515,7 @@ class _UnifiedMediaDetailScreenState
                       ),
                     )
                   : null,
-              isCurrent: selected,
+              isSelected: selected,
               resolution: _resolution(video),
               dynamicRange: range,
               codec: video['codec_name']?.toString(),
@@ -1548,14 +1535,14 @@ class _UnifiedMediaDetailScreenState
     );
   }
 
-  Widget _buildGallery(List<String> images) => SizedBox(
+  Widget _gallery(List<String> images) => SizedBox(
         height: 150,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
           itemCount: images.length,
           separatorBuilder: (_, __) => const SizedBox(width: 9),
           itemBuilder: (_, index) => InkWell(
-            onTap: () => _showGallery(images, index),
+            onTap: () => _showImage(images, index),
             borderRadius: BorderRadius.circular(18),
             child: AspectRatio(
               aspectRatio: 16 / 9,
@@ -1568,7 +1555,7 @@ class _UnifiedMediaDetailScreenState
         ),
       );
 
-  Widget _buildRecommendations(List<DiscoverEntry> items) => SizedBox(
+  Widget _recommendations(List<DiscoverEntry> items) => SizedBox(
         height: 180,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
@@ -1604,68 +1591,69 @@ class _UnifiedMediaDetailScreenState
         ),
       );
 
-  Widget _buildExternalLinks(ExternalMediaDetail detail) {
-    final links = <(String, String)>[
-      ('TMDB', 'https://www.themoviedb.org/${detail.mediaType}/${detail.tmdbId}'),
-      if (detail.imdbId != null)
-        ('IMDb', 'https://www.imdb.com/title/${detail.imdbId}/'),
-      if (detail.doubanId != null)
-        ('豆瓣', 'https://movie.douban.com/subject/${detail.doubanId}/'),
+  Widget _links(ExternalMediaDetail detail) {
+    final query =
+        Uri.encodeQueryComponent('${detail.title} ${detail.year ?? ''}'.trim());
+    final values = <(String, String)>[
+      (
+        'TMDB',
+        detail.tmdbId > 0
+            ? 'https://www.themoviedb.org/${detail.mediaType}/${detail.tmdbId}'
+            : 'https://www.themoviedb.org/search?query=$query',
+      ),
+      (
+        'IMDb',
+        detail.imdbId?.isNotEmpty == true
+            ? 'https://www.imdb.com/title/${detail.imdbId}/'
+            : 'https://www.imdb.com/find/?q=$query',
+      ),
+      (
+        '豆瓣',
+        detail.doubanId?.isNotEmpty == true
+            ? 'https://movie.douban.com/subject/${detail.doubanId}/'
+            : 'https://search.douban.com/movie/subject_search?search_text=$query',
+      ),
     ];
-    return Wrap(
-      spacing: 12,
-      runSpacing: 10,
-      children: [
-        for (final link in links)
-          ActionChip(
-            avatar: const Icon(Icons.open_in_new_rounded, size: 17),
-            label: Text(link.$1),
-            onPressed: () => launchUrl(Uri.parse(link.$2),
-                mode: LaunchMode.externalApplication),
+    return Wrap(spacing: 12, runSpacing: 10, children: [
+      for (final value in values)
+        ActionChip(
+          avatar: const Icon(Icons.open_in_new_rounded, size: 17),
+          label: Text(value.$1),
+          onPressed: () => launchUrl(
+            Uri.parse(value.$2),
+            mode: LaunchMode.externalApplication,
           ),
-      ],
-    );
+        ),
+    ]);
   }
 
-  static const TextStyle _heroMeta =
-      TextStyle(fontSize: 15, fontWeight: FontWeight.w800);
+  static const TextStyle _heroMeta = TextStyle(
+      fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF3B3B3B));
 
   Widget _roundButton(IconData icon, VoidCallback onTap) => Padding(
         padding: const EdgeInsets.all(6),
         child: Material(
-          color: Colors.black26,
+          color: Colors.black.withValues(alpha: 0.42),
           shape: const CircleBorder(),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: onTap,
-            child: Padding(
-              padding: const EdgeInsets.all(8),
-              child: Icon(icon, size: 20, color: Colors.white),
-            ),
-          ),
+          child: IconButton(
+              onPressed: onTap,
+              icon: Icon(icon, color: Colors.white, size: 30)),
         ),
       );
 
-  void _showLinksSheet(ExternalMediaDetail detail) => showModalBottomSheet<void>(
+  void _showLinks(ExternalMediaDetail detail) =>
+      showModalBottomSheet<void>(
         context: context,
         showDragHandle: true,
-        builder: (_) => Padding(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('外部链接',
-                  style:
-                      TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 16),
-              _buildExternalLinks(detail),
-            ],
+        builder: (_) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: _links(detail),
           ),
         ),
       );
 
-  Widget _buildCompanies(List<ExternalCompany> companies) => SizedBox(
+  Widget _companies(List<ExternalCompany> companies) => SizedBox(
         height: 54,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
@@ -1686,74 +1674,204 @@ class _UnifiedMediaDetailScreenState
         ),
       );
 
-  /// 播放选项胶囊：复刻影视详情页分段切换胶囊风格（浅色描边 + 图标 + 标签 + 值）。
-  Widget _CapsuleQuickOption({
-    required IconData icon,
-    required String label,
-    required String value,
-    required VoidCallback? onTap,
-    required ColorScheme scheme,
-  }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: scheme.outlineVariant.withValues(alpha: 0.5),
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 14, color: scheme.onSurfaceVariant),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(width: 3),
-              Flexible(
-                child: Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: scheme.primary,
+  Widget _people(List<ExternalPerson> people) => SizedBox(
+        height: 105,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: people.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 9),
+          itemBuilder: (_, index) {
+            final person = people[index];
+            return InkWell(
+              onTap:
+                  person.id.isEmpty ? null : () => _showPerson(person),
+              child: SizedBox(
+                width: 78,
+                child: Column(children: [
+                  ClipOval(
+                    child: SizedBox(
+                      width: 58,
+                      height: 58,
+                      child: MediaImage(
+                        imageUrl: person.profileUrl,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 8),
+                  Text(person.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w700)),
+                  Text(person.character ?? person.originalName ?? '',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.black54)),
+                ]),
               ),
-            ],
-          ),
+            );
+          },
+        ),
+      );
+
+  void _showPerson(ExternalPerson person) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => SizedBox(
+        height: MediaQuery.sizeOf(context).height * .78,
+        child: Consumer(
+          builder: (context, ref, _) {
+            final async = ref.watch(externalPersonCreditsProvider(person));
+            return Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      ClipOval(
+                        child: SizedBox(
+                          width: 80,
+                          height: 80,
+                          child: MediaImage(
+                            imageUrl: person.profileUrl,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              person.name,
+                              style: const TextStyle(
+                                  fontSize: 17, fontWeight: FontWeight.w800),
+                            ),
+                            Text(person.character ?? person.originalName ?? ''),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Expanded(
+                    child: async.when(
+                      loading: () => const Center(
+                        child: CircularProgressIndicator(),
+                      ),
+                      error: (_, __) =>
+                          const Center(child: Text('作品加载失败')),
+                      data: (items) => GridView.builder(
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          childAspectRatio: .55,
+                          crossAxisSpacing: 10,
+                          mainAxisSpacing: 12,
+                        ),
+                        itemCount: items.length,
+                        itemBuilder: (_, index) {
+                          final item = items[index];
+                          return InkWell(
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) =>
+                                    ExternalMediaDetailScreen(entry: item),
+                              ),
+                            ),
+                            child: Column(
+                              children: [
+                                Expanded(
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: MediaImage(
+                                      imageUrl: item.posterUrl,
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  item.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
         ),
       ),
     );
   }
 
-  Widget _buildPlaybackOptions() {
+  Widget _mediaInfo(UnifiedMediaDetail detail) {
+    final entry = detail.entry;
+    final resource = _resource;
+    final video = resource?.video;
+    final videoDisplay =
+        video == null ? '' : _videoDisplay(video);
+    final values = <(String, String)>[
+      ('来源', widget.server.name),
+      ('类型', entry.isSeries ? '剧集' : '电影'),
+      if (_externalDetail?.originalTitle?.isNotEmpty == true)
+        ('原名', _externalDetail!.originalTitle!),
+      if (entry.year != null) ('年份', '${entry.year}'),
+      if (_externalDetail?.runtime != null &&
+          _externalDetail!.runtime! > 0)
+        ('时长', '${_externalDetail!.runtime} 分钟'),
+      if (entry.isSeries && detail.seasons.isNotEmpty)
+        ('季数', '${detail.seasons.length}'),
+      if (_externalDetail?.status?.isNotEmpty == true)
+        ('状态', _externalDetail!.status!),
+      if (video != null && _resolution(video).isNotEmpty)
+        ('分辨率', _resolution(video)),
+      if (videoDisplay.isNotEmpty && videoDisplay != '-')
+        ('编码', videoDisplay),
+      if (resource?.size != null && resource!.size! > 0)
+        ('大小', formatSourceFileSize(resource.size!)),
+    ];
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final value in values)
+          Chip(label: Text('${value.$1}  ${value.$2}')),
+      ],
+    );
+  }
+
+  /// ---- 迁移自旧 B/C/D：播放选项胶囊（内核/线路/音频/字幕/版本）----
+  /// A 风格呈现：横向滚动浅色描边胶囊（不复用旧的四等分布局），
+  /// 点击弹出对应选择器；无资源/线路时对应项禁用。放置于播放键下方。
+  Widget _buildPlaybackOptionCapsules() {
     final resource = _resource;
     final audios = resource?.audios ?? const [];
     final subtitles = resource?.subtitles ?? const [];
     final scheme = Theme.of(context).colorScheme;
-    // 四个选项：内核 / 线路 / 音频 / 字幕，胶囊横向排列（复刻影视详情页胶囊风格）。
     final options = <({
       IconData icon,
       String label,
       String value,
       VoidCallback? onTap,
     })>[
+      if (_resources.length > 1)
+        (
+          icon: Icons.video_file_rounded,
+          label: '版本',
+          value: resource?.name ?? '默认资源',
+          onTap: _showResourcePicker,
+        ),
       (
         icon: Icons.memory_rounded,
         label: '内核',
@@ -1783,70 +1901,296 @@ class _UnifiedMediaDetailScreenState
         onTap: subtitles.isEmpty ? null : _showSubtitlePicker,
       ),
     ];
-    return Column(children: [
-      if (_resources.length > 1) ...[
-        _optionRow(
-          icon: Icons.video_file_rounded,
-          label: '版本',
-          value: resource?.name ?? '默认资源',
-          onTap: _showResourcePicker,
-        ),
-        const SizedBox(height: 10),
-      ],
-      Row(
-        children: [
-          for (var i = 0; i < options.length; i++) ...[
-            if (i > 0) const SizedBox(width: 6),
-            Expanded(
-              child: _CapsuleQuickOption(
-                icon: options[i].icon,
-                label: options[i].label,
-                value: options[i].value,
-                onTap: options[i].onTap,
-                scheme: scheme,
+    return SizedBox(
+      height: 40,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: options.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, index) {
+          final option = options[index];
+          return Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: option.onTap,
+              borderRadius: BorderRadius.circular(999),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                      color: scheme.outlineVariant.withValues(alpha: 0.5)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(option.icon, size: 14,
+                        color: scheme.onSurfaceVariant),
+                    const SizedBox(width: 4),
+                    Text(
+                      option.label,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(width: 3),
+                    Flexible(
+                      child: Text(
+                        option.value,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: scheme.primary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ],
-        ],
+          );
+        },
       ),
-    ]);
+    );
   }
 
-  Widget _optionRow({
-    required IconData icon,
-    required String label,
-    required String value,
-    VoidCallback? onTap,
-  }) =>
-      Material(
-        color: Theme.of(context).colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-            child: Row(children: [
-              Icon(icon),
-              const SizedBox(width: 12),
-              Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
-              const SizedBox(width: 12),
+  /// ---- 迁移自旧 B/C/D：媒体信息分类栏（视频/音频/字幕流信息）----
+  /// A 风格呈现：圆角 12 卡片 + 字段标签化（标签胶囊），横滑分组。
+  Widget _buildStreamInfoCards() {
+    final resource = _resource;
+    if (resource == null) {
+      return const SizedBox(
+          height: 80, child: Center(child: Text('暂无媒体流信息')));
+    }
+    String value(dynamic item) => item == null ? '' : '$item';
+    final cards = <Widget>[
+      if (resource.video != null)
+        _streamInfoCard('视频', Icons.videocam_rounded, [
+          ('编码', _videoDisplay(resource.video!)),
+          ('封装', value(resource.video!['container'])),
+          ('分辨率', _resolution(resource.video!)),
+          ('SAR', value(resource.video!['sample_aspect_ratio'])),
+          ('DAR', value(
+              resource.video!['aspect_ratio'] ?? _aspectRatio(resource.video!))),
+          ('帧率', _frameRate(resource.video!)),
+          ('码率', _bitrate(resource.video!['bitrate'])),
+          ('像素', value(resource.video!['pixel_format'])),
+          ('位深', resource.video!['bit_depth'] == null
+              ? ''
+              : '${resource.video!['bit_depth']} bit'),
+          ('色彩范围', value(resource.video!['color_range'])),
+          ('色彩空间', value(resource.video!['color_space'])),
+          ('色彩矩阵', value(resource.video!['color_matrix'])),
+          ('色域/传输', value(resource.video!['color_transfer'])),
+          ('HDR', value(resource.video!['video_range_type'])),
+          ('GOP', value(resource.video!['gop_size'])),
+          ('时间基', value(resource.video!['time_base'])),
+        ]),
+      for (var i = 0; i < resource.audios.length; i++)
+        _streamInfoCard('音频 ${i + 1}', Icons.audiotrack_rounded, [
+          ('编码', value(resource.audios[i]['codec_name'])),
+          ('语言', value(resource.audios[i]['language'])),
+          ('采样率', resource.audios[i]['sample_rate'] == null
+              ? ''
+              : '${resource.audios[i]['sample_rate']} Hz'),
+          ('位深', resource.audios[i]['bit_depth'] == null
+              ? ''
+              : '${resource.audios[i]['bit_depth']} bit'),
+          ('声道', value(resource.audios[i]['channel_layout'] ??
+              resource.audios[i]['channels'])),
+          ('码率', _bitrate(resource.audios[i]['bitrate'])),
+        ]),
+      for (var i = 0; i < resource.subtitles.length; i++)
+        _streamInfoCard('字幕 ${i + 1}', Icons.subtitles_rounded, [
+          ('编码', value(resource.subtitles[i]['codec_name'])),
+          ('语言', value(resource.subtitles[i]['language'])),
+          ('标题', value(resource.subtitles[i]['title'])),
+          ('外挂', resource.subtitles[i]['is_external'] == true ? '是' : '否'),
+        ]),
+    ];
+    if (cards.isEmpty) {
+      return const SizedBox(
+          height: 80, child: Center(child: Text('暂无媒体流信息')));
+    }
+    return SizedBox(
+      height: 300,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: cards.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (_, index) => cards[index],
+      ),
+    );
+  }
+
+  /// A 风格流信息卡片：圆角 12 卡片 + 标题行 + 字段标签 Wrap。
+  Widget _streamInfoCard(
+      String title, IconData icon, List<(String, String)> rows) {
+    final visible =
+        rows.where((row) => row.$2.isNotEmpty).toList();
+    final scheme = Theme.of(context).colorScheme;
+    Widget tag(String text) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+                color: scheme.outlineVariant.withValues(alpha: 0.4)),
+          ),
+          child: Text(text,
+              style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onSurfaceVariant)),
+        );
+    return SizedBox(
+      width: 240,
+      child: Card(
+        margin: EdgeInsets.zero,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12)),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Icon(icon, size: 20),
+                const SizedBox(width: 8),
+                Text(title,
+                    style: const TextStyle(fontWeight: FontWeight.w800)),
+              ]),
+              const SizedBox(height: 10),
               Expanded(
-                child: Text(value,
-                    textAlign: TextAlign.end,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis),
+                child: SingleChildScrollView(
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final row in visible) tag('${row.$1} ${row.$2}'),
+                    ],
+                  ),
+                ),
               ),
-              if (onTap != null) const Icon(Icons.chevron_right_rounded),
-            ]),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// ---- 迁移自旧 B/C/D：文件信息卡（文件名/路径/大小）----
+  /// A 风格呈现：圆角 12 卡片。
+  Widget _buildFileInfoCard(UnifiedMediaResource resource) => Card(
+        margin: EdgeInsets.zero,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(children: [
+                Icon(Icons.folder_open_rounded, size: 20),
+                SizedBox(width: 8),
+                Text('视频文件',
+                    style: TextStyle(fontWeight: FontWeight.w800)),
+              ]),
+              const SizedBox(height: 10),
+              SelectableText(resource.name),
+              if (resource.path?.isNotEmpty == true) ...[
+                const SizedBox(height: 8),
+                SelectableText(resource.path!,
+                    style: Theme.of(context).textTheme.bodySmall),
+              ],
+              if ((resource.size ?? 0) > 0) ...[
+                const SizedBox(height: 8),
+                Text(formatSourceFileSize(resource.size!)),
+              ],
+            ],
           ),
         ),
       );
+
+  Widget _sectionTitle(String title, {Widget? trailing}) => Row(children: [
+        Text(title, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900)),
+        if (trailing != null) trailing,
+      ]);
+
+  String _resolution(Map<String, dynamic> stream) {
+    final width = (stream['width'] as num?)?.toInt() ?? 0;
+    final height = (stream['height'] as num?)?.toInt() ?? 0;
+    return width > 0 && height > 0 ? '${width}×$height' : '';
+  }
+
+  String _bitrate(dynamic value) {
+    final bitrate = value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+    return bitrate <= 0 ? '' : '${(bitrate / 1000000).toStringAsFixed(1)} Mbps';
+  }
+
+  String _videoDisplay(Map<String, dynamic> stream) {
+    final codec = stream['codec_name']?.toString().trim().toUpperCase() ?? '';
+    final profile = stream['profile']?.toString().trim() ?? '';
+    final parts = <String>[codec, profile.toUpperCase()].where((s) => s.isNotEmpty).toList();
+    return parts.isEmpty ? '-' : parts.join(' / ');
+  }
+
+  String _trackLabel(Map<String, dynamic> track, int index, String fallback) {
+    final title = track['title']?.toString().trim() ?? '';
+    final language = track['language']?.toString().trim() ?? '';
+    final codec = track['codec_name']?.toString().trim().toUpperCase() ?? '';
+    if (title.isNotEmpty) return title;
+    final parts = [language, codec].where((part) => part.isNotEmpty).toList();
+    return parts.isEmpty ? '$fallback ${index + 1}' : parts.join(' · ');
+  }
+
+  String _aspectRatio(Map<String, dynamic> stream) {
+    final width = (stream['width'] as num?)?.toInt() ?? 0;
+    final height = (stream['height'] as num?)?.toInt() ?? 0;
+    if (width <= 0 || height <= 0) return '';
+    final ratio = width / height;
+    if ((ratio - 16 / 9).abs() < 0.02) return '16:9';
+    if ((ratio - 4 / 3).abs() < 0.02) return '4:3';
+    if ((ratio - 21 / 9).abs() < 0.02) return '21:9';
+    if ((ratio - 2.35).abs() < 0.05) return '2.35:1';
+    if ((ratio - 1.85).abs() < 0.05) return '1.85:1';
+    return ratio.toStringAsFixed(2);
+  }
+
+  String _frameRate(Map<String, dynamic> stream) {
+    final rate = (stream['real_frame_rate'] ?? stream['average_frame_rate']);
+    if (rate is! num || rate <= 0) return '';
+    final value = rate.toDouble();
+    if ((value - 23976 / 1000).abs() < 0.001) return '23.976 fps';
+    if ((value - 24000 / 1000).abs() < 0.001) return '24 fps';
+    if ((value - 25000 / 1000).abs() < 0.001) return '25 fps';
+    if ((value - 30000 / 1000).abs() < 0.001) return '30 fps';
+    if ((value - 48000 / 1000).abs() < 0.001) return '48 fps';
+    if ((value - 60000 / 1000).abs() < 0.001) return '60 fps';
+    return '${value.toStringAsFixed(2)} fps';
+  }
 
   String _lineLabel(ServerConfig server) {
     if (server.lines.isEmpty) return '默认线路';
     final index = server.activeLineIndex.clamp(0, server.lines.length - 1);
     return server.lines[index].name;
+  }
+
+  void _showPicker({required List<Widget> children}) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => SafeArea(
+        child: ListView(shrinkWrap: true, children: children),
+      ),
+    );
   }
 
   void _showLinePicker() {
@@ -1857,10 +2201,13 @@ class _UnifiedMediaDetailScreenState
           value: index,
           groupValue: widget.server.activeLineIndex,
           title: Text(lines[index].name),
-          subtitle: Text(lines[index].url, maxLines: 1, overflow: TextOverflow.ellipsis),
+          subtitle: Text(lines[index].url,
+              maxLines: 1, overflow: TextOverflow.ellipsis),
           onChanged: (value) {
             if (value == null) return;
-            ref.read(serverListProvider.notifier).setActiveLine(widget.server.id, value);
+            ref
+                .read(serverListProvider.notifier)
+                .setActiveLine(widget.server.id, value);
             Navigator.pop(context);
           },
         ),
@@ -1953,258 +2300,7 @@ class _UnifiedMediaDetailScreenState
           ),
       ]);
 
-  void _showPicker({required List<Widget> children}) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (_) => SafeArea(
-        child: ListView(shrinkWrap: true, children: children),
-      ),
-    );
-  }
-
-  Widget _buildPeople(List<UnifiedPerson> people) => SizedBox(
-        height: 112,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: people.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 12),
-          itemBuilder: (_, index) => SizedBox(
-            width: 76,
-            child: Column(children: [
-              ClipOval(
-                child: SizedBox(
-                  width: 66,
-                  height: 66,
-                  child: MediaImage(
-                    imageUrl: people[index].imageUrl,
-                    httpHeaders: people[index].imageHeaders,
-                    fit: BoxFit.cover,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(people[index].name,
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
-              Text(people[index].role ?? '',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 11)),
-            ]),
-          ),
-        ),
-      );
-
-  Widget _buildMediaCards() {
-    final resource = _resource;
-    if (resource == null) {
-      return const SizedBox(
-          height: 120, child: Center(child: Text('暂无媒体流信息')));
-    }
-    String value(dynamic item) => item == null ? '' : '$item';
-    final cards = <Widget>[
-      if (resource.video != null)
-        _infoCard('视频', Icons.videocam_rounded, [
-          ('编码格式', _videoDisplay(resource.video!)),
-          ('封装格式', value(resource.video!['container'])),
-          ('分辨率', _resolution(resource.video!)),
-          ('SAR', value(resource.video!['sample_aspect_ratio'])),
-          ('DAR', value(resource.video!['aspect_ratio'] ?? _aspectRatio(resource.video!))),
-          ('帧率', _frameRate(resource.video!)),
-          ('码率', _bitrate(resource.video!['bitrate'])),
-          ('像素格式', value(resource.video!['pixel_format'])),
-          ('位深度', resource.video!['bit_depth'] == null ? '' : '${resource.video!['bit_depth']} bit'),
-          ('色彩范围', value(resource.video!['color_range'])),
-          ('色彩空间', value(resource.video!['color_space'])),
-          ('色彩矩阵', value(resource.video!['color_matrix'])),
-          ('色域/传输', value(resource.video!['color_transfer'])),
-          ('HDR类型', value(resource.video!['video_range_type'])),
-          ('GOP长度', value(resource.video!['gop_size'])),
-          ('时间基', value(resource.video!['time_base'])),
-        ]),
-      for (var i = 0; i < resource.audios.length; i++)
-        _infoCard('音频 ${i + 1}', Icons.audiotrack_rounded, [
-          ('编码格式', value(resource.audios[i]['codec_name'])),
-          ('语言', value(resource.audios[i]['language'])),
-          ('采样率', resource.audios[i]['sample_rate'] == null ? '' : '${resource.audios[i]['sample_rate']} Hz'),
-          ('位深度', resource.audios[i]['bit_depth'] == null ? '' : '${resource.audios[i]['bit_depth']} bit'),
-          ('声道', value(resource.audios[i]['channel_layout'] ?? resource.audios[i]['channels'])),
-          ('码率', _bitrate(resource.audios[i]['bitrate'])),
-        ]),
-      for (var i = 0; i < resource.subtitles.length; i++)
-        _infoCard('字幕 ${i + 1}', Icons.subtitles_rounded, [
-          ('编码', value(resource.subtitles[i]['codec_name'])),
-          ('语言', value(resource.subtitles[i]['language'])),
-          ('标题', value(resource.subtitles[i]['title'])),
-          ('外挂', resource.subtitles[i]['is_external'] == true ? '是' : '否'),
-        ]),
-    ];
-    return SizedBox(
-      height: 310,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: cards.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
-        itemBuilder: (_, index) => cards[index],
-      ),
-    );
-  }
-
-  Widget _infoCard(String title, IconData icon, List<(String, dynamic)> rows) {
-    final visible =
-        rows.where((row) => row.$2 != null && '${row.$2}'.isNotEmpty).toList();
-    return Container(
-      width: 224,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Theme.of(context).dividerColor),
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Icon(icon, size: 20),
-          const SizedBox(width: 8),
-          Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
-        ]),
-        const SizedBox(height: 12),
-        Expanded(
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                for (final row in visible)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                      SizedBox(
-                        width: 60,
-                        child: Text(row.$1,
-                            style: Theme.of(context).textTheme.bodySmall),
-                      ),
-                      Expanded(
-                        child: Text('${row.$2}',
-                            maxLines: 3, overflow: TextOverflow.ellipsis),
-                      ),
-                    ]),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ]),
-    );
-  }
-
-  Widget _buildFileCard(UnifiedMediaResource resource) => Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerLow,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Row(children: [
-            Icon(Icons.folder_open_rounded, size: 20),
-            SizedBox(width: 8),
-            Text('视频文件', style: TextStyle(fontWeight: FontWeight.w800)),
-          ]),
-          const SizedBox(height: 10),
-          SelectableText(resource.name),
-          if (resource.path?.isNotEmpty == true) ...[
-            const SizedBox(height: 8),
-            SelectableText(resource.path!,
-                style: Theme.of(context).textTheme.bodySmall),
-          ],
-          if ((resource.size ?? 0) > 0) ...[
-            const SizedBox(height: 8),
-            Text(formatSourceFileSize(resource.size!)),
-          ],
-        ]),
-      );
-
-  Widget _sectionTitle(String title, {Widget? trailing}) => Row(children: [
-        Text(title, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900)),
-        if (trailing != null) trailing,
-      ]);
-
-  String _trackLabel(Map<String, dynamic> track, int index, String fallback) {
-    final title = track['title']?.toString().trim() ?? '';
-    final language = track['language']?.toString().trim() ?? '';
-    final codec = track['codec_name']?.toString().trim().toUpperCase() ?? '';
-    if (title.isNotEmpty) return title;
-    final parts = [language, codec].where((part) => part.isNotEmpty).toList();
-    return parts.isEmpty ? '$fallback ${index + 1}' : parts.join(' · ');
-  }
-
-  String _resolution(Map<String, dynamic> stream) {
-    final width = (stream['width'] as num?)?.toInt() ?? 0;
-    final height = (stream['height'] as num?)?.toInt() ?? 0;
-    return width > 0 && height > 0 ? '${width}×$height' : '';
-  }
-
-  String _bitrate(dynamic value) {
-    final bitrate = value is num ? value.toInt() : int.tryParse('$value') ?? 0;
-    return bitrate <= 0 ? '' : '${(bitrate / 1000000).toStringAsFixed(1)} Mbps';
-  }
-
-  String _videoDisplay(Map<String, dynamic> stream) {
-    final codec = stream['codec_name']?.toString().trim().toUpperCase() ?? '';
-    final profile = stream['profile']?.toString().trim() ?? '';
-    final parts = <String>[codec, profile.toUpperCase()].where((s) => s.isNotEmpty).toList();
-    return parts.isEmpty ? '-' : parts.join(' / ');
-  }
-
-  String _aspectRatio(Map<String, dynamic> stream) {
-    final width = (stream['width'] as num?)?.toInt() ?? 0;
-    final height = (stream['height'] as num?)?.toInt() ?? 0;
-    if (width <= 0 || height <= 0) return '';
-    final ratio = width / height;
-    if ((ratio - 16 / 9).abs() < 0.02) return '16:9';
-    if ((ratio - 4 / 3).abs() < 0.02) return '4:3';
-    if ((ratio - 21 / 9).abs() < 0.02) return '21:9';
-    if ((ratio - 2.35).abs() < 0.05) return '2.35:1';
-    if ((ratio - 1.85).abs() < 0.05) return '1.85:1';
-    return ratio.toStringAsFixed(2);
-  }
-
-  String _frameRate(Map<String, dynamic> stream) {
-    final rate = (stream['real_frame_rate'] ?? stream['average_frame_rate']);
-    if (rate is! num || rate <= 0) return '';
-    final value = rate.toDouble();
-    if ((value - 23976 / 1000).abs() < 0.001) return '23.976 fps';
-    if ((value - 24000 / 1000).abs() < 0.001) return '24 fps';
-    if ((value - 25000 / 1000).abs() < 0.001) return '25 fps';
-    if ((value - 30000 / 1000).abs() < 0.001) return '30 fps';
-    if ((value - 48000 / 1000).abs() < 0.001) return '48 fps';
-    if ((value - 60000 / 1000).abs() < 0.001) return '60 fps';
-    return '${value.toStringAsFixed(2)} fps';
-  }
-
-  String _colorDepth(Map<String, dynamic> stream) {
-    final rangeType = stream['video_range_type']?.toString();
-    final range = stream['video_range']?.toString();
-    final pixel = stream['pixel_format']?.toString().toLowerCase() ?? '';
-    final colorSpace = stream['color_space']?.toString().toUpperCase() ?? '';
-    final hdr = rangeType?.isNotEmpty == true
-        ? rangeType
-        : (range?.isNotEmpty == true ? range : null);
-    final bit = pixel.contains('10le') || pixel.contains('p010')
-        ? '10bit'
-        : pixel.isEmpty || pixel == 'yuv420p' || pixel == 'yuvj420p'
-            ? '8bit'
-            : '';
-    final parts = [
-      if (bit.isNotEmpty) bit,
-      if (hdr?.isNotEmpty == true) hdr,
-      if (hdr == null && colorSpace.isNotEmpty) colorSpace,
-    ];
-    return parts.isEmpty ? '' : parts.join(' · ');
-  }
-
-  void _showGallery(List<String> images, int initial) {
+  void _showImage(List<String> images, int initial) {
     showDialog<void>(
       context: context,
       barrierColor: Colors.black,

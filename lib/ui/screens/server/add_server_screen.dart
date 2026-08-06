@@ -5,8 +5,8 @@ import '../../../core/providers/server_providers.dart';
 import '../../widgets/common/app_toast.dart';
 import 'server_form_widget.dart';
 
-/// 添加服务器页面（单表单）：名称(留空自动获取)/备注/地址/路径/用户名/密码，
-/// 连接并保存；下方 + 号可动态增删线路（备注/地址 http·https/路径，默认路径 /）。
+/// 添加服务器页面（单表单）：名称(留空自动获取)/服务器备注/用户名/密码，
+/// 连接并保存；下方 + 号可动态增删线路（线路备注/协议/地址/路径，默认路径 /）。
 class AddServerScreen extends ConsumerStatefulWidget {
   const AddServerScreen({super.key, this.sourceKind = SourceKind.emby});
 

@@ -40,14 +40,14 @@ class _LineField {
   }
 }
 
-/// 服务器 添加/编辑 共用表单：名称(可空自动获取)/备注/地址/路径/用户名/密码，
-/// 连接并保存；下方加号可动态增删线路（每条：备注/地址(http·https)/路径，默认路径 /）。
+/// 服务器 添加/编辑 共用表单：名称(可空自动获取)/服务器备注/用户名/密码，
+/// 连接并保存；下方加号可动态增删线路（每条：线路备注/协议(http·https)/地址/路径，
+/// 路径固定显示默认 /）。粘贴完整网址时自动识别协议、主机和路径。
 class ServerEditorForm extends ConsumerStatefulWidget {
   const ServerEditorForm({
     super.key,
     this.existing,
     this.allowInsecureTls = false,
-    this.hideMainUrl = false,
     this.autoAddLine = false,
     this.sourceKind = SourceKind.emby,
     this.onSaved,
@@ -62,9 +62,6 @@ class ServerEditorForm extends ConsumerStatefulWidget {
   /// 编辑模式下是否显示“信任自签名证书”开关。
   final bool allowInsecureTls;
 
-  /// 编辑模式精简：隐藏主表单的 备注/服务器地址/路径（线路在下方统一编辑）。
-  final bool hideMainUrl;
-
   /// 新增模式默认自动增加一条空线路。
   final bool autoAddLine;
 
@@ -78,12 +75,9 @@ class ServerEditorForm extends ConsumerStatefulWidget {
 class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
   final _nameController = TextEditingController();
   final _remarkController = TextEditingController();
-  final _urlController = TextEditingController();
-  final _pathController = TextEditingController();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   final List<_LineField> _lines = [];
-  ServerProtocol _protocol = ServerProtocol.https;
   bool _isLoading = false;
   bool _allowInsecureTls = false;
   String? _errorMessage;
@@ -98,18 +92,6 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
     if (s != null) {
       _nameController.text = s.name;
       _remarkController.text = s.remark ?? '';
-      _pathController.text = s.activeLineUrl.isEmpty
-          ? '/'
-          : (Uri.tryParse(s.activeLineUrl)?.path ?? '/');
-      final activeUri = Uri.tryParse(s.activeLineUrl);
-      if (activeUri != null && activeUri.host.isNotEmpty) {
-        _urlController.text = activeUri.hasPort
-            ? '${activeUri.host}:${activeUri.port}'
-            : activeUri.host;
-        _protocol = activeUri.scheme.toLowerCase() == 'http'
-            ? ServerProtocol.http
-            : ServerProtocol.https;
-      }
       _usernameController.text = s.username ?? '';
       _passwordController.text = s.password ?? '';
       for (final line in s.lines) {
@@ -128,8 +110,6 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
           url: host,
         ));
       }
-    } else {
-      _pathController.text = '/';
     }
     if (widget.autoAddLine && !_isEdit && _lines.isEmpty) {
       _lines.add(_LineField());
@@ -140,8 +120,6 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
   void dispose() {
     _nameController.dispose();
     _remarkController.dispose();
-    _urlController.dispose();
-    _pathController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
     for (final l in _lines) {
@@ -219,30 +197,14 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
                     hint: '留空则自动获取', icon: Icons.dns_outlined),
               ),
               const SizedBox(height: 14),
-              if (!widget.hideMainUrl) ...[
-                _fieldLabel('备注（例如：到期时间）'),
-                TextField(
-                  controller: _remarkController,
-                  decoration: _fieldDeco(hint: '选填', icon: Icons.notes_rounded),
-                ),
-                const SizedBox(height: 14),
-                _fieldLabel('服务器地址'),
-                ProtocolAddressField(
-                  controller: _urlController,
-                  label: '输入或粘贴服务器地址',
-                  hint: 'example.com:8096 或完整网址',
-                  initialProtocol: _protocol,
-                  onProtocolChanged: (v) => _protocol = v,
-                ),
-                const SizedBox(height: 14),
-                _fieldLabel('路径'),
-                TextField(
-                  controller: _pathController,
-                  decoration: _fieldDeco(
-                      hint: '例如：emby', icon: Icons.folder_open_rounded),
-                ),
-                const SizedBox(height: 14),
-              ],
+              _fieldLabel('服务器备注（例如：到期时间、归属）'),
+              TextField(
+                controller: _remarkController,
+                decoration: _fieldDeco(
+                    hint: '服务器全局备注，与线路备注无关',
+                    icon: Icons.notes_rounded),
+              ),
+              const SizedBox(height: 14),
               _fieldLabel('用户名'),
               TextField(
                 controller: _usernameController,
@@ -379,21 +341,31 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
               onPressed: () => _removeLine(index),
             ),
           ]),
+          _fieldLabel('线路备注（如：备用线路、电信宽带）'),
           TextField(
             controller: line.remarkController,
-            decoration: _fieldDeco(hint: '线路备注', icon: Icons.notes),
+            decoration: _fieldDeco(
+                hint: '仅用于备注这条线路', icon: Icons.notes_rounded),
           ),
           const SizedBox(height: 12),
+          _fieldLabel('服务器地址'),
           ProtocolAddressField(
             controller: line.urlController,
             label: '服务器地址',
-            hint: 'example.com:8096',
+            hint: 'example.com:8096 或粘贴完整网址',
+            initialProtocol: line.protocol,
             onProtocolChanged: (v) => line.protocol = v,
+            // 粘贴完整网址：自动把路径剥离并填入下方路径输入框。
+            onPathExtracted: (path) {
+              line.pathController.text = path;
+            },
           ),
           const SizedBox(height: 12),
+          _fieldLabel('路径'),
           TextField(
             controller: line.pathController,
-            decoration: _fieldDeco(icon: Icons.folder),
+            decoration: _fieldDeco(
+                hint: '默认 /，如 /emby', icon: Icons.folder_open_rounded),
           ),
         ],
       ),
@@ -415,40 +387,15 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
 
   List<ServerLine> _collectLines() {
     final result = <ServerLine>[];
-    final mainHost = _urlController.text.trim();
-    // 新增页：主地址作为默认线路，再追加用户新增线路。
-    // 编辑页：主地址统一代表第一条线路，避免同一条线路重复保存；其余线路保留。
-    if (mainHost.isNotEmpty && (!_isEdit || _lines.isEmpty)) {
-      result.add(ServerLine(
-        id: 'default',
-        name: _remarkController.text.trim().isEmpty
-            ? '默认线路'
-            : _remarkController.text.trim(),
-        url: _fullUrl(mainHost, _protocol, _pathController.text),
-        remark: _remarkController.text.trim().isEmpty
-            ? null
-            : _remarkController.text.trim(),
-      ));
-    }
     for (var index = 0; index < _lines.length; index++) {
       final line = _lines[index];
-      final host = index == 0 && _isEdit
-          ? mainHost
-          : line.urlController.text.trim();
+      final host = line.urlController.text.trim();
       if (host.isEmpty) continue;
-      final protocol = index == 0 && _isEdit ? _protocol : line.protocol;
-      final path = index == 0 && _isEdit
-          ? _pathController.text
-          : line.pathController.text;
-      final remark = index == 0 && _isEdit
-          ? _remarkController.text.trim().isEmpty
-              ? line.remarkController.text.trim()
-              : _remarkController.text.trim()
-          : line.remarkController.text.trim();
+      final remark = line.remarkController.text.trim();
       result.add(ServerLine(
         id: line.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
         name: remark.isEmpty ? '线路 ${result.length + 1}' : remark,
-        url: _fullUrl(host, protocol, path),
+        url: _fullUrl(host, line.protocol, line.pathController.text),
         remark: remark.isEmpty ? null : remark,
       ));
     }
@@ -465,19 +412,18 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
       final remark = _remarkController.text.trim();
       final username = _usernameController.text.trim();
       final password = _passwordController.text;
-      final mainHost = _urlController.text.trim();
+      final lines = _collectLines();
 
-      if (mainHost.isEmpty) {
+      if (lines.isEmpty) {
         if (_isEdit && widget.existing!.baseUrl.isNotEmpty) {
-          // 编辑模式隐藏了主地址，沿用原 baseUrl。
+          // 编辑模式：用户删光了所有线路，沿用原 baseUrl 兜底。
         } else {
-          throw Exception('服务器地址不能为空');
+          throw Exception('请至少填写一条线路的服务器地址');
         }
       }
-      final fullUrl = mainHost.isEmpty
+      final fullUrl = lines.isEmpty
           ? (_isEdit ? widget.existing!.baseUrl : '')
-          : _fullUrl(mainHost, _protocol, _pathController.text);
-      final lines = _collectLines();
+          : lines.first.url;
 
       // 编辑时沿用原 sourceKind；新增时用表单传入的 sourceKind。
       final sourceKind = _isEdit ? widget.existing!.sourceKind : widget.sourceKind;

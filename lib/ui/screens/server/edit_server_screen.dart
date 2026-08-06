@@ -6,7 +6,8 @@ import '../../../core/providers/server_providers.dart';
 import '../../widgets/common/app_toast.dart';
 import 'server_form_widget.dart';
 
-/// 编辑服务器页面：名称/备注/地址/路径/用户名/密码 + 完整线路编辑（点编辑即进入所有线路编辑）。
+/// 编辑服务器页面：名称/服务器备注/用户名/密码 + 完整线路编辑
+/// （每条线路：线路备注/协议/地址/路径，粘贴完整网址自动解析）。
 class EditServerScreen extends ConsumerStatefulWidget {
   final String serverId;
 
@@ -49,7 +50,6 @@ class _EditServerScreenState extends ConsumerState<EditServerScreen> {
           : ServerEditorForm(
               existing: server,
               allowInsecureTls: server.allowInsecureTls,
-              hideMainUrl: false,
               onSaved: (updated) {
                 if (!mounted) return;
                 AppToast.show(context, '服务器已更新');

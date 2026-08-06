@@ -34,12 +34,20 @@ class PopupAggregateSource {
     required this.name,
     required this.resolution,
     required this.metadata,
+    this.dynamicRange,
+    this.codec,
+    this.size,
+    this.bitrate,
   });
 
   final String id;
   final String name;
   final String resolution;
   final String metadata;
+  final String? dynamicRange;
+  final String? codec;
+  final int? size;
+  final int? bitrate;
 }
 
 class PopupEpisodeOption {
@@ -455,12 +463,15 @@ class AggregateSearchCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 240,
+      width: 250,
       child: PlaybackResourceCard(
         serverName: source.name,
         isCurrent: selected,
         resolution: source.resolution.isEmpty ? null : source.resolution,
-        codec: source.metadata.isEmpty ? null : source.metadata,
+        dynamicRange: source.dynamicRange,
+        codec: source.codec ?? (source.metadata.isEmpty ? null : source.metadata),
+        size: source.size,
+        bitrate: source.bitrate,
         onTap: onTap,
       ),
     );
@@ -473,33 +484,48 @@ class PopupAggregateSearchMenu extends StatelessWidget {
     required this.sources,
     required this.selectedSource,
     required this.onSourceSelected,
+    this.onSearchMore,
   });
 
   final List<PopupAggregateSource> sources;
   final String selectedSource;
   final ValueChanged<String> onSourceSelected;
+  final VoidCallback? onSearchMore;
 
   @override
   Widget build(BuildContext context) {
-    if (sources.isEmpty) return const SizedBox.shrink();
+    final visibleSources = sources.take(3).toList(growable: false);
+    if (visibleSources.isEmpty) {
+      return SizedBox(
+        height: 52,
+        child: Center(
+          child: TextButton.icon(
+            onPressed: onSearchMore,
+            icon: const Icon(Icons.search_rounded, size: 18),
+            label: const Text('搜索更多资源'),
+          ),
+        ),
+      );
+    }
 
+    // 资源卡直接位于播放器进度条锚点，不再叠加“菜单胶囊”内边距/背景。
     return SizedBox(
+      height: 155,
       width: double.infinity,
-      child: SingleChildScrollView(
+      child: ListView.separated(
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
-        child: Row(
-          children: [
-            for (var i = 0; i < sources.length; i++) ...[
-              AggregateSearchCard(
-                source: sources[i],
-                selected: sources[i].id == selectedSource,
-                onTap: () => onSourceSelected(sources[i].id),
-              ),
-              if (i < sources.length - 1) const SizedBox(width: 10),
-            ],
-          ],
-        ),
+        padding: EdgeInsets.zero,
+        itemCount: visibleSources.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (context, index) {
+          final source = visibleSources[index];
+          return AggregateSearchCard(
+            source: source,
+            selected: source.id == selectedSource,
+            onTap: () => onSourceSelected(source.id),
+          );
+        },
       ),
     );
   }
@@ -746,7 +772,7 @@ class PopupAspectRatioMenu extends StatelessWidget {
   }
 }
 
-class PopupMediaInfoMenu extends StatelessWidget {
+class PopupMediaInfoMenu extends StatefulWidget {
   const PopupMediaInfoMenu({
     super.key,
     required this.title,
@@ -769,78 +795,148 @@ class PopupMediaInfoMenu extends StatelessWidget {
   final String? selectedSubtitleTrack;
 
   @override
-  Widget build(BuildContext context) {
-    final Widget? audioPill =
-        (unifiedResource != null || selectedAudioTrack != null)
-            ? _audioPill()
-            : null;
-    final Widget? subtitlePill =
-        (unifiedResource != null || selectedSubtitleTrack != null)
-            ? _subtitlePill()
-            : null;
+  State<PopupMediaInfoMenu> createState() => _PopupMediaInfoMenuState();
+}
 
-    final video = unifiedResource?.video;
-    final enc = video != null
-        ? _videoDisplay(video)
-            .replaceAll(' (HDR10+)', '')
-            .replaceAll(' (HDR10)', '')
-        : encoder ?? '未知';
-    final res = video != null ? _resolution(video) : resolution ?? '未知';
-    final fps = video != null ? _frameRate(video) : frameRate ?? '未知';
-    final br = video != null ? _bitrate(video) : bitrate ?? '未知';
+class _PopupMediaInfoMenuState extends State<PopupMediaInfoMenu> {
+  late final PageController _pageController;
+  int _page = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pages = _pages();
+    final page = _page.clamp(0, pages.length - 1).toInt();
+    if (page != _page) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _page = page);
+      });
+    }
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const PopupMenuTitle(title: '媒体信息'),
-        PopupMenuPill(label: '标题', sub: title),
-        PopupMenuPill(label: '编码器', sub: enc),
-        PopupMenuPill(label: '分辨率', sub: res),
-        PopupMenuPill(label: '帧率', sub: fps),
-        PopupMenuPill(label: '码率', sub: br),
-        if (audioPill != null) ...[
-          const PopupMenuDivider(),
-          audioPill,
-        ],
-        if (subtitlePill != null) ...[
-          const PopupMenuDivider(),
-          subtitlePill,
-        ],
+        SizedBox(
+          height: 184,
+          child: PageView.builder(
+            controller: _pageController,
+            itemCount: pages.length,
+            onPageChanged: (value) => setState(() => _page = value),
+            itemBuilder: (_, index) => _PopupInfoPage(items: pages[index]),
+          ),
+        ),
+        if (pages.length > 1)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              IconButton(
+                tooltip: '上一页',
+                visualDensity: VisualDensity.compact,
+                onPressed: page == 0 ? null : () => _goTo(page - 1),
+                icon: const Icon(Icons.chevron_left_rounded, size: 20),
+              ),
+              Text(
+                '${page + 1}/${pages.length}',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.58),
+                  fontSize: 11,
+                ),
+              ),
+              IconButton(
+                tooltip: '下一页',
+                visualDensity: VisualDensity.compact,
+                onPressed: page == pages.length - 1
+                    ? null
+                    : () => _goTo(page + 1),
+                icon: const Icon(Icons.chevron_right_rounded, size: 20),
+              ),
+            ],
+          ),
       ],
     );
   }
 
-  Widget _audioPill() {
-    final unified = unifiedResource;
-    // 以播放器当前已选轨道为准；统一资源只作为播放器尚未上报轨道时的回退。
-    // 不能固定显示 unified.audios.first，否则切换资源/音轨后会一直显示共享资源首轨。
-    final label = selectedAudioTrack?.trim().isNotEmpty == true
-        ? selectedAudioTrack!
-        : unified != null
-            ? unified.audios.isNotEmpty
-                ? _trackLabel(unified.audios.first, unified.isFeiniu)
-                : '无音轨'
-            : '无音轨';
-    return PopupMenuPill(label: '当前音频', sub: label);
+  void _goTo(int page) {
+    _pageController.animateToPage(
+      page,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+    );
   }
 
-  Widget _subtitlePill() {
-    final unified = unifiedResource;
-    final label = unified != null
-        ? unified.subtitles.isNotEmpty
-            ? _trackLabel(unified.subtitles.first, unified.isFeiniu)
-            : '无字幕'
-        : (selectedSubtitleTrack ?? '无字幕');
-    return PopupMenuPill(label: '当前字幕', sub: label);
+  List<List<_PopupInfoItem>> _pages() {
+    final resource = widget.unifiedResource;
+    final video = resource?.video;
+    final enc = video != null
+        ? _videoDisplay(video)
+            .replaceAll(' (HDR10+)', '')
+            .replaceAll(' (HDR10)', '')
+        : widget.encoder ?? '未知';
+    final res = video != null ? _resolution(video) : widget.resolution ?? '未知';
+    final fps = video != null ? _frameRate(video) : widget.frameRate ?? '未知';
+    final bitrate = video != null ? _bitrate(video) : widget.bitrate ?? '未知';
+
+    final basic = <_PopupInfoItem>[
+      _PopupInfoItem('标题', widget.title),
+      _PopupInfoItem('编码器', enc),
+      _PopupInfoItem('分辨率', res),
+      _PopupInfoItem('帧率', fps),
+      _PopupInfoItem('码率', bitrate),
+    ];
+
+    final tracks = <_PopupInfoItem>[
+      _PopupInfoItem('当前音频', _audioLabel()),
+      _PopupInfoItem('当前字幕', _subtitleLabel()),
+      if (resource != null)
+        for (var i = 0; i < resource.audios.length; i++)
+          _PopupInfoItem(
+            '音频 ${i + 1}',
+            _trackLabel(resource.audios[i], resource.isFeiniu),
+          ),
+      if (resource != null)
+        for (var i = 0; i < resource.subtitles.length; i++)
+          _PopupInfoItem(
+            '字幕 ${i + 1}',
+            _trackLabel(resource.subtitles[i], resource.isFeiniu),
+          ),
+    ];
+    return [basic, tracks];
   }
 
-  // ── 格式化辅助方法（与统一媒体详情页共享同一逻辑）─────────
+  String _audioLabel() {
+    final selected = widget.selectedAudioTrack?.trim();
+    if (selected != null && selected.isNotEmpty) return selected;
+    final resource = widget.unifiedResource;
+    if (resource == null || resource.audios.isEmpty) return '无音轨';
+    return _trackLabel(resource.audios.first, resource.isFeiniu);
+  }
+
+  String _subtitleLabel() {
+    final selected = widget.selectedSubtitleTrack?.trim();
+    if (selected != null && selected.isNotEmpty) return selected;
+    final resource = widget.unifiedResource;
+    if (resource == null || resource.subtitles.isEmpty) return '无字幕';
+    return _trackLabel(resource.subtitles.first, resource.isFeiniu);
+  }
 
   String _videoDisplay(Map<String, dynamic> video) {
     final codec = (video['codec'] as String?)?.toUpperCase() ?? '未知编码';
     final colorDepth = video['colorDepth'] as int?;
-    final colorDepthLabel = colorDepth != null && colorDepth > 8 ? ' ($colorDepth-bit)' : '';
+    final colorDepthLabel =
+        colorDepth != null && colorDepth > 8 ? ' ($colorDepth-bit)' : '';
     final hdr = video['isHDR'] == true ? ' HDR' : '';
     final hdrType = video['hdrType'] as String?;
     final hdrTypeLabel = hdrType != null ? ' ($hdrType)' : '';
@@ -854,10 +950,11 @@ class PopupMediaInfoMenu extends StatelessWidget {
   }
 
   String _frameRate(Map<String, dynamic> video) {
-    final fps = video['realFrameRate'] as double? ?? video['nominalFrameRate'] as double?;
+    final fps = video['realFrameRate'] as double? ??
+        video['nominalFrameRate'] as double?;
     if (fps == null) return '未知';
     final rounded = fps.round();
-    return (rounded == fps) ? '$rounded fps' : '$fps fps';
+    return rounded == fps ? '$rounded fps' : '$fps fps';
   }
 
   String _bitrate(Map<String, dynamic> video) {
@@ -880,29 +977,84 @@ class PopupMediaInfoMenu extends StatelessWidget {
       final channels = track['channels'] as int?;
       final channelLabel = channels != null ? ', $channels CH' : '';
       return '$name$codecLabel$channelLabel';
-    } else {
-      final index = (track['index'] as int? ?? 0) + 1;
-      final displayName = track['displayName'] as String? ??
-          track['language'] as String?;
-      final codec = track['codec'] as String?;
-      final channels = track['channels'] as int?;
-      final bitrate = track['bitrate'] as int?;
-      final parts = <String>[
-        'Track $index',
-        if (displayName != null) displayName,
-      ];
-      final info = <String>[
-        if (codec != null) codec,
-        if (channels != null) '${channels}ch',
-        if (bitrate != null && bitrate > 0) '${_formatBitrateKbps(bitrate)}kbps',
-      ];
-      if (info.isNotEmpty) parts.add(info.join(', '));
-      return parts.join(' · ');
     }
+    final index = (track['index'] as int? ?? 0) + 1;
+    final displayName = track['displayName'] as String? ??
+        track['language'] as String?;
+    final codec = track['codec'] as String?;
+    final channels = track['channels'] as int?;
+    final bitrate = track['bitrate'] as int?;
+    final parts = <String>[
+      'Track $index',
+      if (displayName != null) displayName,
+    ];
+    final info = <String>[
+      if (codec != null) codec,
+      if (channels != null) '${channels}ch',
+      if (bitrate != null && bitrate > 0) '${bitrate ~/ 1000}kbps',
+    ];
+    if (info.isNotEmpty) parts.add(info.join(', '));
+    return parts.join(' · ');
   }
+}
 
-  int _formatBitrateKbps(int? bitrateBps) =>
-      (bitrateBps ?? 0) ~/ 1000;
+class _PopupInfoItem {
+  const _PopupInfoItem(this.label, this.value);
+
+  final String label;
+  final String value;
+}
+
+class _PopupInfoPage extends StatelessWidget {
+  const _PopupInfoPage({required this.items});
+
+  final List<_PopupInfoItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      physics: const BouncingScrollPhysics(),
+      itemCount: items.length,
+      separatorBuilder: (_, __) => Divider(
+        height: 1,
+        color: Colors.white.withOpacity(0.09),
+      ),
+      itemBuilder: (_, index) {
+        final item = items[index];
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 58,
+                child: Text(
+                  item.label,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.55),
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  item.value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }
 
 class PopupCoreMenu extends StatelessWidget {
@@ -1089,7 +1241,7 @@ class PopupTrackOption {
   final String label;
 }
 
-class PopupEpisodesMenu extends StatelessWidget {
+class PopupEpisodesMenu extends StatefulWidget {
   const PopupEpisodesMenu({
     super.key,
     required this.episodes,
@@ -1102,56 +1254,201 @@ class PopupEpisodesMenu extends StatelessWidget {
   final ValueChanged<int> onEpisodeSelected;
 
   @override
+  State<PopupEpisodesMenu> createState() => _PopupEpisodesMenuState();
+}
+
+class _PopupEpisodesMenuState extends State<PopupEpisodesMenu> {
+  late final PageController _pageController;
+  int _page = 0;
+
+  int get _pageCount =>
+      widget.episodes.isEmpty ? 1 : (widget.episodes.length + 4) ~/ 5;
+
+  @override
+  void initState() {
+    super.initState();
+    final selectedIndex = widget.episodes.indexWhere(
+      (episode) =>
+          episode.selected || episode.index == widget.selectedEpisode,
+    );
+    _page = selectedIndex < 0 ? 0 : selectedIndex ~/ 5;
+    _pageController = PageController(initialPage: _page);
+  }
+
+  @override
+  void didUpdateWidget(covariant PopupEpisodesMenu oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.episodes != widget.episodes ||
+        oldWidget.selectedEpisode != widget.selectedEpisode) {
+      final selectedIndex = widget.episodes.indexWhere(
+        (episode) =>
+            episode.selected || episode.index == widget.selectedEpisode,
+      );
+      final nextPage = selectedIndex < 0 ? 0 : selectedIndex ~/ 5;
+      _page = nextPage.clamp(0, _pageCount - 1).toInt();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _pageController.hasClients) {
+          _pageController.jumpToPage(_page);
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    if (widget.episodes.isEmpty) {
+      return const Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          PopupMenuTitle(title: '选集'),
+          PopupMenuPill(label: '暂无可用选集'),
+        ],
+      );
+    }
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const PopupMenuTitle(title: '选集'),
-        if (episodes.isEmpty)
-          const PopupMenuPill(label: '暂无可用选集'),
-        if (episodes.isNotEmpty)
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
+        SizedBox(
+          height: 220,
+          child: PageView.builder(
+            controller: _pageController,
+            itemCount: _pageCount,
+            onPageChanged: (value) => setState(() => _page = value),
+            itemBuilder: (_, page) {
+              final start = page * 5;
+              final end = math.min(start + 5, widget.episodes.length);
+              return _PopupEpisodePage(
+                episodes: widget.episodes.sublist(start, end),
+                selectedEpisode: widget.selectedEpisode,
+                onEpisodeSelected: widget.onEpisodeSelected,
+              );
+            },
+          ),
+        ),
+        if (_pageCount > 1)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              for (final episode in episodes)
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => onEpisodeSelected(episode.index),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 7,
-                    ),
-                    decoration: BoxDecoration(
-                      color: episode.selected ||
-                              selectedEpisode == episode.index
-                          ? popupMenuSelectedBlue
-                          : Colors.white.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      'EP${episode.index} ${episode.name}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: episode.selected ||
-                                selectedEpisode == episode.index
-                            ? FontWeight.w600
-                            : FontWeight.normal,
-                      ),
-                    ),
-                  ),
+              IconButton(
+                tooltip: '上一页',
+                visualDensity: VisualDensity.compact,
+                onPressed: _page == 0 ? null : () => _goTo(_page - 1),
+                icon: const Icon(Icons.chevron_left_rounded, size: 20),
+              ),
+              Text(
+                '${_page + 1}/$_pageCount',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.58),
+                  fontSize: 11,
                 ),
+              ),
+              IconButton(
+                tooltip: '下一页',
+                visualDensity: VisualDensity.compact,
+                onPressed: _page == _pageCount - 1
+                    ? null
+                    : () => _goTo(_page + 1),
+                icon: const Icon(Icons.chevron_right_rounded, size: 20),
+              ),
             ],
           ),
       ],
     );
   }
+
+  void _goTo(int page) {
+    _pageController.animateToPage(
+      page,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+    );
+  }
 }
+
+class _PopupEpisodePage extends StatelessWidget {
+  const _PopupEpisodePage({
+    required this.episodes,
+    required this.selectedEpisode,
+    required this.onEpisodeSelected,
+  });
+
+  final List<PopupEpisodeOption> episodes;
+  final int selectedEpisode;
+  final ValueChanged<int> onEpisodeSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: episodes.length,
+      separatorBuilder: (_, __) => Divider(
+        height: 1,
+        color: Colors.white.withOpacity(0.09),
+      ),
+      itemBuilder: (_, index) {
+        final episode = episodes[index];
+        final selected =
+            episode.selected || selectedEpisode == episode.index;
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => onEpisodeSelected(episode.index),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 42,
+                  child: Text(
+                    'EP${episode.index}',
+                    style: TextStyle(
+                      color: selected ? popupMenuBlue : Colors.white,
+                      fontSize: 12,
+                      fontWeight: selected
+                          ? FontWeight.w700
+                          : FontWeight.normal,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    episode.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(selected ? 1 : 0.78),
+                      fontSize: 12,
+                      fontWeight: selected
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    ),
+                  ),
+                ),
+                if (selected)
+                  const Icon(
+                    Icons.check_rounded,
+                    color: popupMenuBlue,
+                    size: 17,
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 
 /// 可定位的播放器菜单覆盖层。聚合卡片以进度条为锚点居中，其余菜单以按钮为锚点。
 class PopupMenuOverlay extends ConsumerWidget {
@@ -1209,6 +1506,7 @@ class PopupMenuOverlay extends ConsumerWidget {
     required this.onAudioTrackChanged,
     required this.onSubtitleChanged,
     required this.onEpisodeChanged,
+    this.onAggregationSearch,
     required this.onSkipTimeRecorded,
     required this.onClearIntro,
     required this.onClearOutro,
@@ -1271,6 +1569,7 @@ class PopupMenuOverlay extends ConsumerWidget {
   final ValueChanged<String> onAudioTrackChanged;
   final ValueChanged<String> onSubtitleChanged;
   final ValueChanged<int> onEpisodeChanged;
+  final VoidCallback? onAggregationSearch;
   final ValueChanged<PopupSkipRecord> onSkipTimeRecorded;
   final VoidCallback onClearIntro;
   final VoidCallback onClearOutro;
@@ -1349,6 +1648,7 @@ class PopupMenuOverlay extends ConsumerWidget {
           sources: sources,
           selectedSource: selectedSource,
           onSourceSelected: onSourceChanged,
+          onSearchMore: onAggregationSearch,
         );
       case PopupMenuId.core:
         return PopupCoreMenu(
@@ -1395,6 +1695,8 @@ class PopupMenuOverlay extends ConsumerWidget {
     final menu = activeMenu;
     if (menu == null) return const SizedBox.shrink();
 
+    final isInlineAggregate = menu == PopupMenuId.aggregate;
+    final menuChild = _menu(unifiedResource: unifiedResource);
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -1407,11 +1709,15 @@ class PopupMenuOverlay extends ConsumerWidget {
         ),
         CustomSingleChildLayout(
           delegate: _PopupMenuPositionDelegate(
-            aggregate: menu == PopupMenuId.aggregate,
+            aggregate: isInlineAggregate,
             anchorRect: anchorRect,
             progressRect: progressRect,
           ),
-          child: PopupMenuShell(child: _menu(unifiedResource: unifiedResource)),
+          // 聚合资源卡本身就是详情页资源框：不再用 PopupMenuShell 包裹，
+          // 也不增加二级胶囊的内边距/背景。
+          child: isInlineAggregate
+              ? menuChild
+              : PopupMenuShell(child: menuChild),
         ),
       ],
     );
@@ -1445,7 +1751,8 @@ class _PopupMenuPositionDelegate extends SingleChildLayoutDelegate {
       return BoxConstraints(
         minWidth: aggregateWidth,
         maxWidth: aggregateWidth,
-        maxHeight: availableHeight,
+        minHeight: 155,
+        maxHeight: 155,
       );
     }
 

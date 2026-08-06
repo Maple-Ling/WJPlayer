@@ -10,6 +10,7 @@ class ProtocolAddressField extends StatefulWidget {
     this.label = '服务器地址',
     this.hint = 'example.com:8096',
     this.onProtocolChanged,
+    this.onPathExtracted,
     this.initialProtocol = ServerProtocol.https,
   });
 
@@ -17,6 +18,10 @@ class ProtocolAddressField extends StatefulWidget {
   final String label;
   final String hint;
   final ValueChanged<ServerProtocol>? onProtocolChanged;
+
+  /// 粘贴完整网址时，自动解析出的路径部分（如 /path/to/server）回调给外部，
+  /// 用于填入该线路的路径输入框；解析为空或 / 时不回调。
+  final ValueChanged<String>? onPathExtracted;
   final ServerProtocol initialProtocol;
 
   @override
@@ -51,16 +56,18 @@ class _ProtocolAddressFieldState extends State<ProtocolAddressField> {
   }
 
   void _consumeCompleteUrl(String raw) {
-    final lower = raw.trim().toLowerCase();
+    final trimmed = raw.trim();
+    final lower = trimmed.toLowerCase();
     final ServerProtocol? next = lower.startsWith('http://')
         ? ServerProtocol.http
         : lower.startsWith('https://')
             ? ServerProtocol.https
             : null;
     if (next == null) return;
-    final host = raw
-        .trim()
-        .replaceFirst(RegExp(r'^https?://', caseSensitive: false), '');
+    // 完整网址：剥离协议 → 主机[:端口] 填入地址框，路径剥离 → 回调外部。
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null || uri.host.isEmpty) return;
+    final host = uri.hasPort ? '${uri.host}:${uri.port}' : uri.host;
     _normalizing = true;
     widget.controller.value = TextEditingValue(
       text: host,
@@ -70,6 +77,10 @@ class _ProtocolAddressFieldState extends State<ProtocolAddressField> {
     if (_protocol != next && mounted) {
       setState(() => _protocol = next);
       widget.onProtocolChanged?.call(next);
+    }
+    final path = uri.path;
+    if (path.isNotEmpty && path != '/') {
+      widget.onPathExtracted?.call(path);
     }
   }
 

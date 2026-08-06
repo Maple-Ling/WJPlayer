@@ -214,6 +214,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         IntroSkipController(service: ref.read(introSkipServiceProvider));
     _playerService = VideoPlayerService();
     _playerService.addListener(_onPlayerUpdate);
+    unawaited(VideoPlayerService.beginPageSystemControls());
     unawaited(_playerService.hydrateSystemControls());
 
     // Delay initialization when using nativeMpv to allow SurfaceView to be created
@@ -1909,6 +1910,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   onAspectRatioChanged: _setAspectRatioValue,
                   onSourceChanged: (sourceId) =>
                       _switchOverlaySource(sourceId, item, aggregateVersions),
+                  onAggregationSearch: _showAggregationSearch,
                   onCoreChanged: _switchCore,
                   onLineChanged: _switchLine,
                   onAudioTrackChanged: _switchAudioTrackByName,
@@ -4203,23 +4205,33 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         const <MediaSource>[];
     for (final source in currentSources) {
       final key = '${server?.id ?? ''}:${item?.id ?? widget.itemId}:${source.id}';
+      final video = source.primaryVideoStream;
       result.add(
         PopupAggregateSource(
           id: key,
           name: source.name ?? server?.name ?? '',
           resolution: source.qualityLabel,
           metadata: _sourceMetadata(source),
+          dynamicRange: video?.videoRangeLabel,
+          codec: video?.videoCodecLabel,
+          size: source.size,
+          bitrate: video?.bitRate,
         ),
       );
     }
     for (final version in versions) {
       final key = '${version.server.id}:${version.item.id}:${version.source.id}';
+      final video = version.source.primaryVideoStream;
       result.add(
         PopupAggregateSource(
           id: key,
           name: version.server.name,
           resolution: version.source.qualityLabel,
           metadata: _sourceMetadata(version.source),
+          dynamicRange: video?.videoRangeLabel,
+          codec: video?.videoCodecLabel,
+          size: version.source.size,
+          bitrate: video?.bitRate,
         ),
       );
     }
