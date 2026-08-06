@@ -821,12 +821,14 @@ final rankingCrossServerMatchProvider = StreamProvider.autoDispose
       if (client == null) return null;
       var items = await client.search.search(query, cancelToken: cancelToken);
       if (items.isEmpty) {
-        // 兜底：query 带年份/分辨率等后缀（飞牛条目名常见如
-        // 「凡人修仙传.2023.1080p」）时 Emby 完整包含匹配必空——
-        // 提取标题主干（去掉后缀 token）再搜一次。
-        final clean = normalizeSearchTitle(query);
-        if (clean != query) {
-          items = await client.search.search(clean, cancelToken: cancelToken);
+        // 兜底：主 query 无结果时按候选列表重搜——去年份/分辨率后缀
+        // （飞牛条目名常见「凡人修仙传.2023.1080p」）与冒号副标题截断
+        // （「凡人修仙传:风起天南」→「凡人修仙传」），Emby 完整包含匹配
+        // 对带后缀/副标题的 query 必空，干净主干才能命中。
+        for (final candidate in searchTitleCandidates(query)) {
+          items = await client.search.search(candidate,
+              cancelToken: cancelToken);
+          if (items.isNotEmpty) break;
         }
       }
       // Emby search API 的 IncludeItemTypes 硬编码 Movie,Series，

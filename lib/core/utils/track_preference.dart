@@ -157,3 +157,32 @@ String normalizeSearchTitle(String raw) {
   final clean = result.trim();
   return clean.isEmpty ? t : clean;
 }
+
+/// 生成跨服检索的**候选标题列表**（按优先级）：
+/// 1. 原标题（保留完整信息，如「凡人修仙传:风起天南」）；
+/// 2. 去后缀主干（[normalizeSearchTitle]）；
+/// 3. 冒号/分隔符前的**主标题**（「凡人修仙传:风起天南」→「凡人修仙传」，
+///    副标题是常见的服务器间命名差异来源）；
+/// 4. 两者组合（先去后缀再截冒号，以及先截冒号再去后缀）。
+///
+/// 用于搜索主 query 无结果时的兜底重搜：只在空结果时启用，避免误伤
+/// 副标题本身就是标题一部分的片子（如「蜘蛛侠:英雄远征」主 query 直接命中
+/// 就不会走到兜底）。
+List<String> searchTitleCandidates(String raw) {
+  final t = raw.trim();
+  if (t.isEmpty) return const [];
+  final out = <String>[];
+  final clean = normalizeSearchTitle(t);
+  if (clean != t) out.add(clean);
+  final colon = t.split(RegExp(r'[:：]')).first.trim();
+  if (colon.isNotEmpty && colon != t && !out.contains(colon)) {
+    out.add(colon);
+  }
+  if (clean != t) {
+    final c2 = clean.split(RegExp(r'[:：]')).first.trim();
+    if (c2.isNotEmpty && c2 != clean && !out.contains(c2)) out.add(c2);
+  }
+  final c3 = normalizeSearchTitle(colon == t ? t : colon);
+  if (c3.isNotEmpty && c3 != colon && !out.contains(c3)) out.add(c3);
+  return out;
+}
