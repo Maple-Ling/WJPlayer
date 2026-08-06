@@ -1741,6 +1741,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   void _onPlayerUpdate() {
     setState(() {});
+    // ExoPlayer 解码器初始化失败（DTS 等硬件不支持）时自动切 MPV 兜底
+    // （内部自带一次性防重 + postFrame，安全）。
+    _maybeAutoFallbackCore();
     _checkSkipOpening();
     _introSkip.onPosition(_playerService.position);
     final sp = _activeSourcePlay;
@@ -2200,8 +2203,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             const Center(
               child: CircularProgressIndicator(color: Colors.white),
             ),
-          if (_playerService.hasError) {
-            _maybeAutoFallbackCore();
+          if (_playerService.hasError)
             Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 420),

@@ -410,6 +410,13 @@ class ServerListNotifier extends StateNotifier<List<ServerConfig>> {
     _saveServers();
   }
 
+  /// 直接用重排后的完整列表覆盖顺序（双排长按拖动排序用，长度必须一致）。
+  void reorderTo(List<ServerConfig> ordered) {
+    if (ordered.length != state.length) return;
+    state = List<ServerConfig>.from(ordered);
+    _saveServers();
+  }
+
   void setActiveLine(String serverId, int lineIndex) {
     state = state.map((server) {
       if (server.id == serverId) {

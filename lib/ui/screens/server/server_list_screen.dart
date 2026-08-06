@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_reorderable_grid_view/widgets/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -28,6 +29,8 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
   bool _gridLayout = false;
   int _titleTapCount = 0;
   DateTime? _lastTitleTap;
+  // 双排长按拖动排序（flutter_reorderable_grid_view）需要共享 ScrollController。
+  final ScrollController _gridScrollController = ScrollController();
 
   @override
   void initState() {
@@ -40,6 +43,12 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
         await ref.read(currentServerProvider.notifier).loadFromSaved(servers);
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _gridScrollController.dispose();
+    super.dispose();
   }
 
   /// 连点三次顶部“服务器”标题：切换隐藏服务器显示/隐藏（纯功能，无提示）。
@@ -195,18 +204,43 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
   }
 
   Widget _buildServerList(BuildContext context, List<ServerConfig> servers) {
-    // 双排（grid）与单排共用 ReorderableListView：长按卡片拖动排序，
-    // 排序结果经 serverListProvider.reorderServers 持久化。
+    // 双排（grid）：flutter_reorderable_grid_view 支持长按单卡片拖动排序；
+    // 单排：官方 ReorderableListView。排序结果统一走
+    // serverListProvider.reorderServers 持久化。
+    if (_gridLayout) {
+      return ReorderableBuilder<ServerConfig>(
+        children: [
+          for (final server in servers)
+            _ServerCard(
+              key: ValueKey(server.id),
+              server: server,
+              compact: true,
+              onTap: () => _openServer(context, server),
+              onMoreTap: () => _showServerMenu(context, ref, server),
+            ),
+        ],
+        scrollController: _gridScrollController,
+        // 默认 enableLongPress=true：长按卡片拖动排序（手机端）。
+        onReorder: (reorder) {
+          ref
+              .read(serverListProvider.notifier)
+              .reorderTo(reorder(servers));
+        },
+        builder: (children) => GridView(
+          controller: _gridScrollController,
+          padding: const EdgeInsets.all(12),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+            childAspectRatio: 1.12,
+          ),
+          children: children,
+        ),
+      );
+    }
     return ReorderableListView.builder(
-      padding: EdgeInsets.all(_gridLayout ? 12 : 16),
-      gridDelegate: _gridLayout
-          ? const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              crossAxisSpacing: 10,
-              mainAxisSpacing: 10,
-              childAspectRatio: 1.12,
-            )
-          : null,
+      padding: const EdgeInsets.all(16),
       itemCount: servers.length,
       onReorder: (oldIndex, newIndex) {
         ref.read(serverListProvider.notifier).reorderServers(oldIndex, newIndex);
@@ -216,7 +250,6 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
         return _ServerCard(
           key: ValueKey(server.id),
           server: server,
-          compact: _gridLayout,
           onTap: () => _openServer(context, server),
           onMoreTap: () => _showServerMenu(context, ref, server),
         );
