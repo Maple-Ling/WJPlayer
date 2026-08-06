@@ -4318,13 +4318,21 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     if (mounted) setState(() {});
   }
 
-  /// 与播放器菜单同源的轨道标签：优先取 unifiedResource 同索引轨道（与菜单
-  /// 显示格式一致，保证打开面板时默认项正确点亮），回退播放器轨道标签。
+  /// 与播放器菜单同源的轨道标签：优先按**轨道身份**（title/lang+codec，
+  /// 与 _switchXxxTrackByName 同源）在 unifiedResource 里找对应轨道，取
+  /// 同一套菜单标签，保证打开面板时默认项正确点亮；身份未命中回退同索引，
+  /// 最后回退播放器轨道标签。
   String _trackLabelForOverlay(Map<String, dynamic> track, int index) {
     final unified = ref.read(unifiedResourceProvider);
     if (unified != null) {
       final isAudio = track['type']?.toString().toLowerCase() == 'audio';
       final list = isAudio ? unified.audios : unified.subtitles;
+      final wanted = _trackIdentity(track);
+      for (final t in list) {
+        if (_trackIdentity(t) == wanted) {
+          return unifiedTrackLabel(t, unified.isFeiniu);
+        }
+      }
       if (index < list.length) {
         return unifiedTrackLabel(list[index], unified.isFeiniu);
       }

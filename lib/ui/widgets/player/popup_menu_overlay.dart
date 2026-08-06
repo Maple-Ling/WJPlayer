@@ -1232,6 +1232,16 @@ class PopupTrackMenu extends StatelessWidget {
             showCheck: true,
             onTap: () => onTrackSelected(track.label),
           ),
+        // 字幕菜单提供「关闭字幕」（音频无此概念）：走 onTrackSelected('关闭字幕')
+        // → state._switchSubtitleTrackByName 的 deselect 分支；无选中字幕时高亮
+        // （selectedTrack 为空串，或刚点过关闭暂存的 '关闭字幕'）。
+        if (title == '字幕轨道')
+          PopupMenuPill(
+            label: '关闭字幕',
+            selected: selectedTrack.isEmpty || selectedTrack == '关闭字幕',
+            showCheck: true,
+            onTap: () => onTrackSelected('关闭字幕'),
+          ),
         if (externalSubtitle)
           PopupMenuPill(
             label: '外挂字幕',
