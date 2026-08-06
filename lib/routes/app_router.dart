@@ -475,24 +475,7 @@ class _MainShellState extends ConsumerState<MainShell> {
     final isKeyboardVisible = mediaQuery.viewInsets.bottom > 0;
     final showFloatingTabBar = _supportsFloatingTabBar && !isKeyboardVisible;
     final bottomPadding = mediaQuery.padding.bottom;
-    // 底部 tab 栏：胶囊+搜索图标已放大 1.2 倍（胶囊高 52.8），
-    // 整体相对此前"下移 2 倍胶囊"位置上移 0.5 倍胶囊高度（净下移 1.5×52.8）。
-    // tabHeight 与 _FloatingTabBar 占高同步，防止内容被 tab 栏遮挡。
-    final statusGap = showFloatingTabBar ? mediaQuery.padding.top : 0.0;
-    final tabHeight = showFloatingTabBar
-        ? (64.0 + 8.0 + bottomPadding + statusGap - 1.5 * 52.8)
-            .clamp(0.0, double.infinity)
-        : 0.0;
-    final shellBody = isKeyboardVisible
-        ? widget.navigationShell
-        : MediaQuery(
-            data: mediaQuery.copyWith(
-              padding: mediaQuery.padding.copyWith(
-                bottom: mediaQuery.padding.bottom + tabHeight,
-              ),
-            ),
-            child: widget.navigationShell,
-          );
+    final tabHeight = showFloatingTabBar ? 64.0 + bottomPadding : 0.0;
 
     return PopScope(
       // canPop:false → 拦截 go_router 冒泡到根导航器的返回（分支根/退出），交由 _handleShellPop。
@@ -505,28 +488,30 @@ class _MainShellState extends ConsumerState<MainShell> {
         onNotification: _onScrollNotification,
         child: Scaffold(
           resizeToAvoidBottomInset: true, // 显式设置以确保键盘正确处理
-          body: Stack(
-            fit: StackFit.expand,
-            children: [
-              shellBody,
-              if (showFloatingTabBar)
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  child: ValueListenableBuilder<double>(
-                    valueListenable: _tabOpacity,
-                    builder: (context, value, _) => Opacity(
-                      opacity: _isServerListPage ? 1.0 : value,
-                      child: _FloatingTabBar(
-                        navigationShell: widget.navigationShell,
-                      ),
+          body: isKeyboardVisible
+              ? widget.navigationShell // 键盘显示时不修改 MediaQuery，让系统自动处理
+              : MediaQuery(
+                  data: mediaQuery.copyWith(
+                    padding: mediaQuery.padding.copyWith(
+                      bottom: mediaQuery.padding.bottom + tabHeight,
                     ),
                   ),
+                  child: widget.navigationShell,
                 ),
-            ],
-          ),
           bottomNavigationBar: const SizedBox.shrink(),
+          floatingActionButtonLocation:
+              FloatingActionButtonLocation.centerDocked,
+          floatingActionButton: showFloatingTabBar
+              ? ValueListenableBuilder<double>(
+                  valueListenable: _tabOpacity,
+                  builder: (context, value, _) => Opacity(
+                    opacity: _isServerListPage ? 1.0 : value,
+                    child: _FloatingTabBar(
+                      navigationShell: widget.navigationShell,
+                    ),
+                  ),
+                )
+              : null,
         ),
       ),
     );
@@ -540,48 +525,28 @@ class _FloatingTabBar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    // 底部悬停空隙：间隔一个“同状态栏高度”的距离，不贴屏幕底边。
-    final statusGap = MediaQuery.of(context).padding.top;
-    // 胶囊 + 搜索图标整体放大 1.2 倍（44 → 52.8），
-    // 后续位移量一律以放大后的胶囊高度为基准。
-    const capsuleHeight = 44.0 * 1.2; // 52.8
     final navBg = isDark ? AppColors.darkNavBackground : AppColors.lightNavBackground;
     final selectedBg = isDark ? AppColors.darkNavSelected : AppColors.lightNavSelected;
     final textColor = isDark ? Colors.white : const Color(0xFF1C1C1E);
     final mutedColor = isDark ? const Color(0xFFB8B8BA) : const Color(0xFF6F6F72);
-    final shadow = BoxShadow(
-      color: Colors.black.withValues(alpha: 0.12),
-      blurRadius: 16,
-      offset: const Offset(0, 6),
-    );
 
-    // 胶囊内的四个 tab：空间等分（固定等宽）。
-    Widget capsuleItem(int index, IconData icon, String label) {
+    Widget item(int index, IconData icon, String label) {
       final selected = navigationShell.currentIndex == index;
       return GestureDetector(
         onTap: () => navigationShell.goBranch(index),
         child: Container(
-          width: 66 * 1.2, // 79.2
-          height: capsuleHeight,
-          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
           decoration: BoxDecoration(
             color: selected ? selectedBg : Colors.transparent,
-            borderRadius: BorderRadius.circular(30 * 1.2),
+            borderRadius: BorderRadius.circular(30),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 22 * 1.2, color: selected ? textColor : mutedColor),
+              Icon(icon, size: 22, color: selected ? textColor : mutedColor),
               if (selected) ...[
-                const SizedBox(width: 8.4),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: textColor,
-                    fontSize: 13 * 1.2,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+                const SizedBox(width: 8),
+                Text(label, style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.w600)),
               ],
             ],
           ),
@@ -589,60 +554,48 @@ class _FloatingTabBar extends ConsumerWidget {
       );
     }
 
-    // 圆形的搜索按钮：固定在胶囊右侧。
-    Widget searchButton() {
-      final selected = navigationShell.currentIndex == 3;
-      return GestureDetector(
-        onTap: () => navigationShell.goBranch(3),
-        child: Container(
-          width: 48 * 1.2, // 57.6
-          height: 48 * 1.2,
-          decoration: BoxDecoration(
-            color: selected ? selectedBg : navBg,
-            shape: BoxShape.circle,
-            boxShadow: [shadow],
-          ),
-          child: Icon(Icons.search_rounded, size: 22 * 1.2, color: textColor),
-        ),
-      );
-    }
-
     return Container(
-      alignment: Alignment.center,
-      margin: EdgeInsets.only(
-        top: 8,
-        // 以放大后胶囊高度（52.8）为基准：此前向下移动 2 倍胶囊，
-        // 本次整体**上移 0.5 倍胶囊高度**，净下移 = 1.5 × 胶囊（clamp 防负）。
-        bottom: (statusGap + 8 - 1.5 * capsuleHeight)
-            .clamp(0.0, double.infinity),
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+      decoration: BoxDecoration(
+        color: navBg,
+        borderRadius: BorderRadius.circular(42),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 20, offset: const Offset(0, 8), spreadRadius: 2),
+          BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4, offset: const Offset(0, 2)),
+        ],
       ),
       child: SafeArea(
         top: false,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 左：影视 / 记录 / 服务器 / 设置，组合成一个胶囊，空间等分
             Container(
-              padding: const EdgeInsets.all(3.6),
-              decoration: BoxDecoration(
-                color: navBg,
-                borderRadius: BorderRadius.circular(36 * 1.2),
-                boxShadow: [shadow],
-              ),
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(color: navBg, borderRadius: BorderRadius.circular(36)),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  capsuleItem(0, Icons.movie_filter_rounded, '影视'),
-                  capsuleItem(1, Icons.history_rounded, '记录'),
-                  capsuleItem(2, Icons.dns_rounded, '服务器'),
-                  capsuleItem(4, Icons.settings_rounded, '设置'),
+                  item(0, Icons.movie_filter_rounded, '影视'),
+                  item(1, Icons.history_rounded, '记录'),
+                  item(2, Icons.dns_rounded, '服务器'),
+                  item(4, Icons.settings_rounded, '设置'),
                 ],
               ),
             ),
-            // 中：间隔一个图标的无连接空间
-            const SizedBox(width: 24),
-            // 右：圆形搜索
-            searchButton(),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => navigationShell.goBranch(3),
+              child: Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: navigationShell.currentIndex == 3 ? selectedBg : navBg,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.search_rounded, size: 22, color: textColor),
+              ),
+            ),
           ],
         ),
       ),
