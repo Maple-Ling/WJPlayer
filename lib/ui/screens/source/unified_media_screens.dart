@@ -173,7 +173,7 @@ class _UnifiedMediaHomeScreenState
     try {
       // 首页数据走本地缓存（24h）：首次/过期才请求网络，之后打开秒开，
       // 避免每次启动都重新拉库列表/继续观看/预览（图标与媒体信息）。
-      final libraries = await HomeDataCache.load<List<UnifiedMediaLibrary>>(
+      final libraries = await HomeCacheLoader.load<List<UnifiedMediaLibrary>>(
         serverId: server.id,
         dataType: 'libraries',
         decode: (json) => (json as List)
@@ -184,7 +184,7 @@ class _UnifiedMediaHomeScreenState
         encode: (v) =>
             v.map((e) => {'id': e.id, 'name': e.name}).toList(),
       );
-      final continueItems = await HomeDataCache
+      final continueItems = await HomeCacheLoader
           .load<List<UnifiedContinueItem>>(
         serverId: server.id,
         dataType: 'resume',
@@ -215,7 +215,7 @@ class _UnifiedMediaHomeScreenState
       });
       await Future.wait(visibleLibraries.map((library) async {
         try {
-          final items = await HomeDataCache.load<List<UnifiedMediaEntry>>(
+          final items = await HomeCacheLoader.load<List<UnifiedMediaEntry>>(
             serverId: server.id,
             dataType: 'latest:${library.id}',
             decode: (json) =>
