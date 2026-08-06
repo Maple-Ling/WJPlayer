@@ -2652,7 +2652,17 @@ class _ServerListMenuEntry extends PopupMenuEntry<String> {
       (46.0 * servers.length).clamp(46.0, 460.0).toDouble() + 57;
 
   @override
+  bool represents(String? value) => false;
+
+  @override
+  State<PopupMenuEntry<String>> createState() => _ServerListMenuEntryState();
+}
+
+class _ServerListMenuEntryState extends State<_ServerListMenuEntry> {
+  @override
   Widget build(BuildContext context) {
+    final servers = widget.servers;
+    final currentId = widget.currentId;
     final scheme = Theme.of(context).colorScheme;
     return Column(mainAxisSize: MainAxisSize.min, children: [
       ConstrainedBox(
