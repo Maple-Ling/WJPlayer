@@ -740,25 +740,19 @@ class ServerMatchInfo {
   });
 }
 
-/// 按标题跨服务器聚合搜索：遍历**每台已登录**服务器，各自挑出与标题最匹配的
-/// 一条并解析其总集数。供排行榜条目点按后的详情弹窗展示「哪些服务器有、共几集」。
-///
-/// 复用 [aggregateSearchResultsProvider] 的并行 + 单台失败隔离思路，但以标题
-/// 参数化，且每台只保留一条最佳匹配（避免弹窗信息过载）。不解析分辨率/码率——
-/// 剧集要逐集拉流才知道，太贵且意义不大。
-///
-/// **逐台增量**：StreamProvider + [Stream.fromFutures]，哪台先命中就先 emit，一台
-/// 慢/掉线不阻塞其它台（不再 `Future.wait` 等齐才出）。
 /// 跨服务器最佳匹配（ABCD 详情页「播放资源」区、播放器聚合菜单共用）。
 ///
-/// **直接消费首页聚合搜索公共链路（[aggregateSearchByQueryProvider]）**：
-/// 隐藏服务器 / 隐藏库 / 未登录 / 顶层类型 / 来源标记等安全过滤规则与首页
-/// 状态栏聚合搜索完全一致，只维护一份，不再各自发请求。
-/// 此处只做「每台服务器挑一条最佳」的视图转换：
-/// - Emby：分组内精确同名优先，否则取第一条（公共链路已保证都是顶层条目）；
+/// **独立逐台并行查询（与搜索页聚合链路同款逻辑）**：遍历每台**已登录且
+/// 未隐藏**服务器，各自搜索并挑一条最佳，单台失败只记日志跳过，不拖垮其余。
+/// 过滤规则与首页状态栏聚合搜索一致：隐藏服务器（server.hidden == true）/
+/// 未登录 / 隐藏库一律排除。
+/// - Emby：仅保留 Movie/Series 顶层条目；query 含 S\d{1,2}E\d{1,3} 时额外
+///   保留 Episode（A 页 Discover 详情带「剧名 S01E02」精确匹配到集，纯标题
+///   的 BCD/播放器聚合不会误选单集）。精确同名优先，否则取第一条；
 /// - 飞牛：归一化评分（精确 3 分 > 互相包含 2 分，episode/season 降权、
-///   tv/movie/series 加分），避免「名称近似但货不对板」的误匹配
-///   （严格匹配不可靠：服务器间标题可能带年份/后缀/大小写差异）。
+///   tv/movie/series 加分），避免「名称近似但货不对板」的误匹配。
+/// 每台「搜索+匹配+详情」完成后即增量 emit（Stream.fromFutures，哪台先命中
+/// 先显示，按服务器原顺序重排）；详情失败只丢详情不丢匹配（胶囊回退搜索摘要）。
 final rankingCrossServerMatchProvider = StreamProvider.autoDispose
     .family<List<ServerMatchInfo>, String>((ref, title) async* {
   final query = title.trim();
@@ -766,85 +760,104 @@ final rankingCrossServerMatchProvider = StreamProvider.autoDispose
     yield const <ServerMatchInfo>[];
     return;
   }
-  // serverId → 媒体详情 future：公共链路逐台增量会 emit 多版，
-  // 详情只在首次出现时拉取，后续版本复用，避免重复请求。
-  final detailFutures = <String, Future<Object?>>{};
-
-  await for (final outcome
-      in ref.watch(aggregateSearchByQueryProvider(query).stream)) {
-    // 每台服务器的 best（Emby + 飞牛），统一描述供详情拉取。
-    final picks = <
-        ({
-          String serverName,
-          String serverId,
-          MediaItem item,
-          SourceEntry? entry,
-          String kind,
-          int? episodeCount,
-        })>[];
-    for (final group in outcome.embyGroups.entries) {
-      final best = _pickBestEmbyMatch(group.value, query);
-      if (best == null) continue;
-      picks.add((
-        serverName: group.key,
-        serverId: best.sourceServerId ?? group.key,
-        item: best,
-        entry: null,
-        kind: 'emby',
-        episodeCount: best.recursiveItemCount ?? best.childCount,
-      ));
-    }
-    for (final group in outcome.feiniuGroups) {
-      final picked = _pickBestFeiniuMatch(group.entries, query);
-      if (picked == null) continue;
-      // 补来源标记：让封面/点击解析回正确服务器（见 MediaItem.sourceServerId）。
-      picked.item.sourceServerId = group.server.id;
-      picks.add((
-        serverName: group.server.name,
-        serverId: group.server.id,
-        item: picked.item,
-        entry: picked.entry,
-        kind: 'feiniu',
-        episodeCount: picked.episodeCount,
-      ));
-    }
-    if (picks.isEmpty) {
-      yield const <ServerMatchInfo>[];
-      continue;
-    }
-
-    // 每台并行拉媒体详情（Emby: getItemMediaSources / 飞牛: mediaDetails，
-    // 与详情页底部媒体信息同源），完成一台出一次增量结果；
-    // 单台详情失败只丢详情不丢匹配（胶囊回退搜索摘要）。
-    final acc = <String, ServerMatchInfo>{};
-    final futures = picks.map((p) async {
-      final detail = await (detailFutures[p.serverId] ??= p.kind == 'emby'
-          ? _loadEmbyMediaSource(ref, p.serverId, p.item)
-          : _loadFeiniuMediaDetails(ref, p.serverId, p.entry!));
-      return (p: p, detail: detail);
-    });
-    var emitted = false;
-    await for (final r in Stream.fromFutures(futures)) {
-      final p = r.p;
-      acc[p.serverId] = ServerMatchInfo(
-        serverName: p.serverName,
-        item: p.item,
-        sourceEntry: p.entry,
-        sourceServerId: p.kind == 'feiniu' ? p.serverId : null,
-        episodeCount: p.episodeCount,
-        mediaSource: p.kind == 'emby' ? r.detail as MediaSource? : null,
-        feiniuDetails:
-            p.kind == 'feiniu' ? r.detail as FeiniuMediaDetails? : null,
-      );
-      emitted = true;
-      // 按服务器原顺序重排后输出（完成顺序 ≠ 展示顺序）。
-      yield <ServerMatchInfo>[
-        for (final p2 in picks)
-          if (acc[p2.serverId] != null) acc[p2.serverId]!,
-      ];
-    }
-    if (!emitted) yield const <ServerMatchInfo>[];
+  final servers = ref.watch(serverListProvider);
+  final hiddenLibraries = ref.watch(hiddenLibrariesProvider);
+  final targets = servers
+      .where((s) =>
+          s.hidden != true &&
+          (s.sourceKind == SourceKind.emby ||
+              s.sourceKind == SourceKind.feiniu) &&
+          ((s.authToken ?? '').isNotEmpty ||
+              (s.sourceKind == SourceKind.feiniu &&
+                  (s.username ?? '').isNotEmpty)))
+      .toList();
+  if (targets.isEmpty) {
+    yield const <ServerMatchInfo>[];
+    return;
   }
+
+  // 离开详情页/关闭聚合菜单即杀掉在飞的跨服搜索请求。
+  final cancelToken = CancelToken();
+  ref.onDispose(() {
+    if (!cancelToken.isCancelled) cancelToken.cancel('ranking-match-disposed');
+  });
+
+  Future<ServerMatchInfo?> matchOne(ServerConfig server) async {
+    try {
+      if (server.sourceKind == SourceKind.feiniu) {
+        final entries = await ref.read(feiniuSearchResultsProvider(
+          (serverId: server.id, query: query),
+        ).future);
+        final picked = _pickBestFeiniuMatch(entries, query);
+        if (picked == null) return null;
+        picked.item.sourceServerId = server.id;
+        // 拉飞牛完整媒体流详情（movie/episode；tv 返回 null 让胶囊回退摘要）。
+        final details = await _loadFeiniuMediaDetails(
+            ref, server.id, picked.entry);
+        return ServerMatchInfo(
+          serverName: server.name,
+          item: picked.item,
+          sourceEntry: picked.entry,
+          sourceServerId: server.id,
+          episodeCount: picked.episodeCount,
+          feiniuDetails: details,
+        );
+      }
+      final client = ref.read(serverApiClientProvider(server.id));
+      if (client == null) return null;
+      final items = await client.search.search(query, cancelToken: cancelToken);
+      final topLevel = items.where((item) {
+        if (item.type == 'Movie' || item.type == 'Series') return true;
+        if (item.type != 'Episode') return false;
+        // A 页「剧名 S01E02」搜索时允许保留 Episode 让该集精确命中；
+        // 纯标题（BCD/播放器聚合）不会误选单集当整剧。
+        final hasEpisodeQuery = RegExp(r'\bS\d{1,2}E\d{1,3}\b',
+                caseSensitive: false)
+            .hasMatch(query);
+        return hasEpisodeQuery;
+      }).where((item) {
+        // 排除隐藏库（与搜索页聚合同规则）。
+        if (item.parentId != null && hiddenLibraries.contains(item.parentId)) {
+          return false;
+        }
+        return true;
+      }).toList();
+      if (topLevel.isEmpty) return null;
+      for (final item in topLevel) {
+        item.sourceServerId = server.id;
+      }
+      final lower = query.toLowerCase();
+      final best = topLevel.firstWhere(
+        (i) => i.name.toLowerCase() == lower,
+        orElse: () => topLevel.first,
+      );
+      // 拉 Emby 完整媒体流详情（仅 Movie；Series 返回 null 让胶囊回退摘要）。
+      final mediaSource = await _loadEmbyMediaSource(ref, server.id, best);
+      return ServerMatchInfo(
+        serverName: server.name,
+        item: best,
+        episodeCount: best.recursiveItemCount ?? best.childCount,
+        mediaSource: mediaSource,
+      );
+    } catch (e) {
+      AppLogger().w('RankingMatch', '服务器「${server.name}」搜索失败: $e');
+      return null;
+    }
+  }
+
+  // 哪台先命中就先显示：按完成顺序累积，每次按 serverListProvider 原顺序重排后 emit。
+  final acc = <String, ServerMatchInfo>{};
+  var emitted = false;
+  await for (final r in Stream.fromFutures(targets.map(matchOne))) {
+    if (r == null) continue;
+    acc[r.serverName] = r;
+    emitted = true;
+    yield <ServerMatchInfo>[
+      for (final s in targets)
+        if (acc[s.name] != null) acc[s.name]!,
+    ];
+  }
+  if (!emitted) yield const <ServerMatchInfo>[];
 });
 
 /// 拉取 Emby 服务器资源的完整媒体流详情（仅 Movie；Series 需逐集拉流，
@@ -881,16 +894,6 @@ Future<FeiniuMediaDetails?> _loadFeiniuMediaDetails(
   } catch (_) {
     return null;
   }
-}
-
-/// 从 Emby 分组结果挑一条最佳：精确同名优先，否则取第一条。
-MediaItem? _pickBestEmbyMatch(List<MediaItem> items, String query) {
-  if (items.isEmpty) return null;
-  final lower = query.toLowerCase();
-  return items.firstWhere(
-    (i) => i.name.toLowerCase() == lower,
-    orElse: () => items.first,
-  );
 }
 
 /// 飞牛最佳匹配：归一化评分。返回命中的 SourceEntry 与合成 MediaItem。
