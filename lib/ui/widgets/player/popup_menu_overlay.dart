@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/providers/media_providers.dart';
 import '../../../core/providers/unified_resource_provider.dart';
 import '../../../core/sources/unified_media_adapter.dart';
 import '../common/playback_resource_card.dart';
@@ -880,21 +881,60 @@ class _PopupMediaInfoMenuState extends State<PopupMediaInfoMenu> {
   List<List<_PopupInfoItem>> _pages() {
     final resource = widget.unifiedResource;
     final video = resource?.video;
+    // 兼容详情页流 API（codec_name/real_frame_rate…）与 Emby MediaStream
+    // （codec/realFrameRate…）两种命名，保证与详情页底部媒体信息栏一致。
+    dynamic pick(List<String> keys) {
+      for (final key in keys) {
+        final value = video?[key];
+        if (value != null && value.toString().isNotEmpty) return value;
+      }
+      return null;
+    }
+
     final enc = video != null
         ? _videoDisplay(video)
-            .replaceAll(' (HDR10+)', '')
-            .replaceAll(' (HDR10)', '')
         : widget.encoder ?? '未知';
     final res = video != null ? _resolution(video) : widget.resolution ?? '未知';
     final fps = video != null ? _frameRate(video) : widget.frameRate ?? '未知';
     final bitrate = video != null ? _bitrate(video) : widget.bitrate ?? '未知';
+    final size = resource != null ? _formatSize(resource.size) : '';
 
     final basic = <_PopupInfoItem>[
       _PopupInfoItem('标题', widget.title),
       _PopupInfoItem('编码器', enc),
+      _PopupInfoItem('封装格式',
+          pick(['container', 'format', 'file_format'])?.toString() ?? '未知'),
       _PopupInfoItem('分辨率', res),
+      _PopupInfoItem('SAR',
+          pick(['sample_aspect_ratio', 'sar'])?.toString() ?? '未知'),
+      _PopupInfoItem('DAR',
+          pick(['aspect_ratio', 'display_aspect_ratio', 'dar'])?.toString() ??
+              '未知'),
       _PopupInfoItem('帧率', fps),
       _PopupInfoItem('码率', bitrate),
+      _PopupInfoItem('像素格式',
+          pick(['pixel_format', 'pix_fmt', 'pixelFormat'])?.toString() ?? '未知'),
+      _PopupInfoItem('位深度',
+          pick(['bit_depth', 'bitDepth', 'colorDepth'])?.toString() ?? '未知'),
+      _PopupInfoItem('色彩范围',
+          pick(['color_range', 'colorRange', 'range'])?.toString() ?? '未知'),
+      _PopupInfoItem('色彩空间',
+          pick(['color_space', 'colorSpace'])?.toString() ?? '未知'),
+      _PopupInfoItem('色彩矩阵',
+          pick(['color_matrix', 'colorMatrix'])?.toString() ?? '未知'),
+      _PopupInfoItem('色域/传输',
+          pick(['color_transfer', 'colorTransfer', 'transfer'])?.toString() ??
+              '未知'),
+      _PopupInfoItem('HDR类型',
+          pick(['video_range_type', 'videoRangeType', 'hdr_type'])
+                  ?.toString() ??
+              pick(['video_range', 'videoRange', 'dynamic_range'])?.toString() ??
+              '未知'),
+      _PopupInfoItem('GOP长度',
+          pick(['gop_size', 'gopSize', 'gop'])?.toString() ?? '未知'),
+      _PopupInfoItem('时间基',
+          pick(['time_base', 'timeBase'])?.toString() ?? '未知'),
+      if (size.isNotEmpty) _PopupInfoItem('媒体体积', size),
     ];
 
     final tracks = <_PopupInfoItem>[
@@ -916,6 +956,18 @@ class _PopupMediaInfoMenuState extends State<PopupMediaInfoMenu> {
     return [basic, tracks];
   }
 
+  String _formatSize(int? bytes) {
+    if (bytes == null || bytes <= 0) return '';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    var value = bytes.toDouble();
+    var unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit++;
+    }
+    return '${value.toStringAsFixed(value >= 100 ? 0 : 2)} ${units[unit]}';
+  }
+
   String _audioLabel() {
     final selected = widget.selectedAudioTrack?.trim();
     if (selected != null && selected.isNotEmpty) return selected;
@@ -933,34 +985,44 @@ class _PopupMediaInfoMenuState extends State<PopupMediaInfoMenu> {
   }
 
   String _videoDisplay(Map<String, dynamic> video) {
-    final codec = (video['codec'] as String?)?.toUpperCase() ?? '未知编码';
-    final colorDepth = video['colorDepth'] as int?;
+    final codec = (video['codec_name'] ?? video['codec'] ?? '未知编码')
+        .toString()
+        .toUpperCase();
+    final colorDepth = video['bit_depth'] ?? video['colorDepth'];
     final colorDepthLabel =
-        colorDepth != null && colorDepth > 8 ? ' ($colorDepth-bit)' : '';
-    final hdr = video['isHDR'] == true ? ' HDR' : '';
-    final hdrType = video['hdrType'] as String?;
-    final hdrTypeLabel = hdrType != null ? ' ($hdrType)' : '';
-    return '$codec$hdr$hdrTypeLabel$colorDepthLabel';
+        colorDepth != null && colorDepth.toString().isNotEmpty
+            ? ' ${colorDepth}bit'
+            : '';
+    final hdrType = video['video_range_type'] ?? video['hdrType'];
+    final hdrTypeLabel =
+        hdrType != null && hdrType.toString().isNotEmpty ? ' ($hdrType)' : '';
+    return '$codec$hdrTypeLabel$colorDepthLabel';
   }
 
   String _resolution(Map<String, dynamic> video) {
     final w = video['width'] as int?;
     final h = video['height'] as int?;
-    return (w != null && h != null) ? '${w}×$h' : '未知';
+    if (w == null || h == null || w <= 0 || h <= 0) return '未知';
+    return '${w}×$h';
   }
 
   String _frameRate(Map<String, dynamic> video) {
-    final fps = video['realFrameRate'] as double? ??
-        video['nominalFrameRate'] as double?;
-    if (fps == null) return '未知';
-    final rounded = fps.round();
-    return rounded == fps ? '$rounded fps' : '$fps fps';
+    final fps = (video['real_frame_rate'] ?? video['realFrameRate'] ??
+            video['average_frame_rate'] ?? video['nominalFrameRate'])
+        as num?;
+    if (fps == null || fps <= 0) return '未知';
+    final value = fps.toDouble();
+    return value == value.roundToDouble()
+        ? '${value.round()} fps'
+        : '${value.toStringAsFixed(2)} fps';
   }
 
   String _bitrate(Map<String, dynamic> video) {
-    final bps = video['bitrate'] as int?;
+    final bps = video['bitrate'] as num?;
     if (bps == null || bps <= 0) return '未知';
-    return '$bps bps';
+    final value = bps.toDouble();
+    if (value >= 1000000) return '${(value / 1000000).toStringAsFixed(1)} Mbps';
+    return '${(value / 1000).toStringAsFixed(0)} kbps';
   }
 
   String _trackLabel(Map<String, dynamic> track, bool isFeiniu) {
@@ -1041,11 +1103,10 @@ class _PopupInfoPage extends StatelessWidget {
               Expanded(
                 child: Text(
                   item.value,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12,
+                    height: 1.35,
                   ),
                 ),
               ),
@@ -1192,47 +1253,49 @@ class PopupTrackMenu extends StatelessWidget {
       final trackList = isAudio ? unified.audios : unified.subtitles;
       if (trackList.isNotEmpty) {
         return trackList.map((t) => PopupTrackOption(
-          label: _trackLabel(t, unified.isFeiniu),
+          label: unifiedTrackLabel(t, unified.isFeiniu),
         )).toList();
       }
     }
     // 回退到原始 tracks 列表
     return tracks.map((t) => PopupTrackOption(label: t)).toList();
   }
+}
 
-  String _trackLabel(Map<String, dynamic> track, bool isFeiniu) {
-    if (isFeiniu) {
-      final name = track['displayName'] as String? ??
-          track['title'] as String? ??
-          track['language'] as String?;
-      if (name == null || name.isEmpty) {
-        final index = (track['index'] as int? ?? 0) + 1;
-        return 'Track $index';
-      }
-      final codec = track['codec'] as String?;
-      final codecLabel = codec != null ? ' ($codec)' : '';
-      final channels = track['channels'] as int?;
-      final channelLabel = channels != null ? ', $channels CH' : '';
-      return '$name$codecLabel$channelLabel';
-    } else {
+/// 统一的轨道显示标签（播放器菜单 / 媒体信息共用，与详情页流信息一致）。
+/// 供 PopupTrackMenu 与播放器状态层共同使用，保证"选中态字符串"同源可比。
+String unifiedTrackLabel(Map<String, dynamic> track, bool isFeiniu) {
+  if (isFeiniu) {
+    final name = track['displayName'] as String? ??
+        track['title'] as String? ??
+        track['language'] as String?;
+    if (name == null || name.isEmpty) {
       final index = (track['index'] as int? ?? 0) + 1;
-      final displayName = track['displayName'] as String? ??
-          track['language'] as String?;
-      final codec = track['codec'] as String?;
-      final channels = track['channels'] as int?;
-      final bitrate = track['bitrate'] as int?;
-      final parts = <String>[
-        'Track $index',
-        if (displayName != null) displayName,
-      ];
-      final info = <String>[
-        if (codec != null) codec,
-        if (channels != null) '${channels}ch',
-        if (bitrate != null && bitrate > 0) '${bitrate ~/ 1000}kbps',
-      ];
-      if (info.isNotEmpty) parts.add(info.join(', '));
-      return parts.join(' · ');
+      return 'Track $index';
     }
+    final codec = track['codec'] as String?;
+    final codecLabel = codec != null ? ' ($codec)' : '';
+    final channels = track['channels'] as int?;
+    final channelLabel = channels != null ? ', $channels CH' : '';
+    return '$name$codecLabel$channelLabel';
+  } else {
+    final index = (track['index'] as int? ?? 0) + 1;
+    final displayName = track['displayName'] as String? ??
+        track['language'] as String?;
+    final codec = track['codec'] as String?;
+    final channels = track['channels'] as int?;
+    final bitrate = track['bitrate'] as int?;
+    final parts = <String>[
+      'Track $index',
+      if (displayName != null) displayName,
+    ];
+    final info = <String>[
+      if (codec != null) codec,
+      if (channels != null) '${channels}ch',
+      if (bitrate != null && bitrate > 0) '${bitrate ~/ 1000}kbps',
+    ];
+    if (info.isNotEmpty) parts.add(info.join(', '));
+    return parts.join(' · ');
   }
 }
 
@@ -1278,8 +1341,13 @@ class _PopupEpisodesMenuState extends State<PopupEpisodesMenu> {
   @override
   void didUpdateWidget(covariant PopupEpisodesMenu oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.episodes != widget.episodes ||
-        oldWidget.selectedEpisode != widget.selectedEpisode) {
+    // 注意：播放器每次 rebuild 都会传入新的 episodes 列表实例（直链播放时
+    // _overlayEpisodesFor 每次重建列表），若按实例比较会反复 jumpToPage 把
+    // 用户手动翻的页拉回选中集页，导致"无法翻页"。
+    // 这里只对比内容（长度/选中集）是否真正变化。
+    final contentChanged = oldWidget.episodes.length != widget.episodes.length ||
+        oldWidget.selectedEpisode != widget.selectedEpisode;
+    if (contentChanged) {
       final selectedIndex = widget.episodes.indexWhere(
         (episode) =>
             episode.selected || episode.index == widget.selectedEpisode,
@@ -1507,6 +1575,7 @@ class PopupMenuOverlay extends ConsumerWidget {
     required this.onSubtitleChanged,
     required this.onEpisodeChanged,
     this.onAggregationSearch,
+    this.onCrossServerMatchSelected,
     required this.onSkipTimeRecorded,
     required this.onClearIntro,
     required this.onClearOutro,
@@ -1570,6 +1639,7 @@ class PopupMenuOverlay extends ConsumerWidget {
   final ValueChanged<String> onSubtitleChanged;
   final ValueChanged<int> onEpisodeChanged;
   final VoidCallback? onAggregationSearch;
+  final ValueChanged<ServerMatchInfo>? onCrossServerMatchSelected;
   final ValueChanged<PopupSkipRecord> onSkipTimeRecorded;
   final VoidCallback onClearIntro;
   final VoidCallback onClearOutro;
@@ -1644,11 +1714,74 @@ class PopupMenuOverlay extends ConsumerWidget {
           selectedSubtitleTrack: selectedSubtitleTrack,
         );
       case PopupMenuId.aggregate:
-        return PopupAggregateSearchMenu(
-          sources: sources,
-          selectedSource: selectedSource,
-          onSourceSelected: onSourceChanged,
-          onSearchMore: onAggregationSearch,
+        // 复用详情页播放资源栏的跨服务器检索（rankingCrossServerMatchProvider），
+        // 实时搜索其他服务器同媒体资源；无结果时回退本地已加载资源。
+        return Consumer(
+          builder: (context, ref, _) {
+            final async = ref.watch(rankingCrossServerMatchProvider(mediaTitle));
+            return async.when(
+              loading: () => const SizedBox(
+                height: 155,
+                child: Center(child: CircularProgressIndicator()),
+              ),
+              error: (_, __) => PopupAggregateSearchMenu(
+                sources: sources,
+                selectedSource: selectedSource,
+                onSourceSelected: onSourceChanged,
+                onSearchMore: onAggregationSearch,
+              ),
+              data: (matches) {
+                if (matches.isEmpty) {
+                  return PopupAggregateSearchMenu(
+                    sources: sources,
+                    selectedSource: selectedSource,
+                    onSourceSelected: onSourceChanged,
+                    onSearchMore: onAggregationSearch,
+                  );
+                }
+                return StatefulBuilder(
+                  builder: (context, setState) {
+                    var crossSelectedIndex = 0;
+                    return SizedBox(
+                      height: 155,
+                      width: double.infinity,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        physics: const BouncingScrollPhysics(),
+                        padding: EdgeInsets.zero,
+                        itemCount: matches.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 10),
+                        itemBuilder: (_, index) {
+                          final match = matches[index];
+                          final source = match.item.mediaSources?.firstOrNull;
+                          return SizedBox(
+                            width: 250,
+                            child: PlaybackResourceCard(
+                              serverName: match.serverName,
+                              isBest: index == 0,
+                              isSelected: index == crossSelectedIndex,
+                              resolution: source?.qualityLabel,
+                              dynamicRange:
+                                  source?.primaryVideoStream?.videoRangeLabel,
+                              codec:
+                                  source?.primaryVideoStream?.videoCodecLabel,
+                              size: source?.size,
+                              bitrate: source?.primaryVideoStream?.bitRate,
+                              // 单击 = 直接播放该服务器资源（复用详情页播放链路）。
+                              onTap: () {
+                                setState(() => crossSelectedIndex = index);
+                                onCrossServerMatchSelected?.call(match);
+                              },
+                            ),
+                          );
+                        },
+                      ),
+                    );
+                  },
+                );
+              },
+            );
+          },
         );
       case PopupMenuId.core:
         return PopupCoreMenu(

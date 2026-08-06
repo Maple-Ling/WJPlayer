@@ -142,19 +142,20 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         !ref.watch(aggregateSearchProvider)) {
       return _buildFeiniuSearchResults(server!);
     }
+    final isAggregate = ref.watch(aggregateSearchProvider);
+    if (isAggregate) {
+      // 聚合模式独立渲染：Emby 分组 + 飞牛分组并行展示。
+      // 不经过 searchResults 的 loading/empty 判断——聚合结果由
+      // aggregateSearchResultsProvider / aggregateFeiniuSearchProvider 提供。
+      return _buildAggregateResults();
+    }
     return results.when(
       data: (items) {
         if (items.isEmpty) {
           return const Center(child: Text('没有找到结果'));
         }
         
-        // 聚合搜索显示
-        final isAggregate = ref.watch(aggregateSearchProvider);
-        if (isAggregate) {
-          return _buildAggregateResults();
-        }
-        
-          return ListView.builder(
+        return ListView.builder(
             padding: const EdgeInsets.all(16),
             itemCount: items.length,
             itemBuilder: (context, index) {

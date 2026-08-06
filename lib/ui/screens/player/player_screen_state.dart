@@ -1850,6 +1850,20 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   meta: _metaLabel(item, mediaSource),
                   serverName: server?.name ?? '',
                   serverLine: lineName,
+                  serverIcon: server?.iconUrl?.isNotEmpty == true
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(5),
+                          child: MediaImage(
+                            imageUrl: server!.iconUrl,
+                            width: 22,
+                            height: 22,
+                            fit: BoxFit.contain,
+                            useDefaultUserAgent: true,
+                            errorWidget: const Icon(Icons.dns_outlined,
+                                size: 14, color: Colors.white70),
+                          ),
+                        )
+                      : null,
                   logoText: _logoText(item),
                   logoImage: _activeSourcePlay?.logoUrl?.isNotEmpty == true
                       ? NetworkImage(_activeSourcePlay!.logoUrl!)
@@ -1911,6 +1925,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   onSourceChanged: (sourceId) =>
                       _switchOverlaySource(sourceId, item, aggregateVersions),
                   onAggregationSearch: _showAggregationSearch,
+                  onCrossServerMatchSelected: (match) {
+                    // 关闭聚合菜单后切服务器播放该资源（复用详情页同款播放链路）。
+                    _playerService.setControlsAutoHidePaused(false);
+                    _switchToCrossServerMatch(match);
+                  },
                   onCoreChanged: _switchCore,
                   onLineChanged: _switchLine,
                   onAudioTrackChanged: _switchAudioTrackByName,
@@ -3281,13 +3300,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     );
   }
 
+  bool _playerNavInFlight = false;
+
   void _switchToCrossServerMatch(ServerMatchInfo match) {
+    if (_playerNavInFlight) return;
     // 切换聚合资源：播放进度与内核保持不变，仅换源起播。
     final server = ref
         .read(serverListProvider)
         .where((s) => s.id == match.sourceServerId)
         .firstOrNull;
     if (server == null) return;
+    _playerNavInFlight = true;
     if (match.sourceEntry != null) {
       // 切源：完整重建播放器（保证服务/纹理/轨道都正确初始化）。
       context.pushReplacement('/source-player',
@@ -4259,20 +4282,26 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     MediaItem? item,
     List<AggregatedVersion> versions,
   ) async {
-    for (final version in versions) {
-      final key = '${version.server.id}:${version.item.id}:${version.source.id}';
-      if (key == sourceKey) {
-        playAggregatedVersion(ref, context, version);
-        return;
+    if (_playerNavInFlight) return;
+    _playerNavInFlight = true;
+    try {
+      for (final version in versions) {
+        final key = '${version.server.id}:${version.item.id}:${version.source.id}';
+        if (key == sourceKey) {
+          playAggregatedVersion(ref, context, version);
+          return;
+        }
       }
-    }
-    final parts = sourceKey.split(':');
-    if (parts.length < 3 || item == null) return;
-    final sourceId = parts.sublist(2).join(':');
-    if (sourceId.isEmpty) return;
-    ref.read(selectedMediaSourceProvider.notifier).state = sourceId;
-    if (mounted) {
-      context.replace('/player/${item.id}?mediaSourceId=${Uri.encodeQueryComponent(sourceId)}');
+      final parts = sourceKey.split(':');
+      if (parts.length < 3 || item == null) return;
+      final sourceId = parts.sublist(2).join(':');
+      if (sourceId.isEmpty) return;
+      ref.read(selectedMediaSourceProvider.notifier).state = sourceId;
+      if (mounted) {
+        context.replace('/player/${item.id}?mediaSourceId=${Uri.encodeQueryComponent(sourceId)}');
+      }
+    } finally {
+      _playerNavInFlight = false;
     }
   }
 
@@ -4287,25 +4316,52 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     if (mounted) setState(() {});
   }
 
-  String _currentAudioTrackLabel() {
-    for (final track in _playerService.tracksInfo) {
-      if (track['type']?.toString().toLowerCase() == 'audio' &&
-          (track['isSelected'] == true || track['selected'] == true)) {
-        return _trackLabel(track);
+  /// 与播放器菜单同源的轨道标签：优先取 unifiedResource 同索引轨道（与菜单
+  /// 显示格式一致，保证打开面板时默认项正确点亮），回退播放器轨道标签。
+  String _trackLabelForOverlay(Map<String, dynamic> track, int index) {
+    final unified = ref.read(unifiedResourceProvider);
+    if (unified != null) {
+      final isAudio = track['type']?.toString().toLowerCase() == 'audio';
+      final list = isAudio ? unified.audios : unified.subtitles;
+      if (index < list.length) {
+        return unifiedTrackLabel(list[index], unified.isFeiniu);
       }
     }
-    return '';
+    return _trackLabel(track);
+  }
+
+  String _currentAudioTrackLabel() {
+    final audioTracks = _playerService.tracksInfo
+        .where((t) => t['type']?.toString().toLowerCase() == 'audio')
+        .toList();
+    int? selectedIndex;
+    for (var i = 0; i < audioTracks.length; i++) {
+      if (audioTracks[i]['isSelected'] == true ||
+          audioTracks[i]['selected'] == true) {
+        selectedIndex = i;
+        break;
+      }
+    }
+    if (selectedIndex == null) return '';
+    return _trackLabelForOverlay(audioTracks[selectedIndex], selectedIndex);
   }
 
   String _currentSubtitleTrackLabel() {
-    for (final track in _playerService.tracksInfo) {
-      final type = track['type']?.toString().toLowerCase();
-      if ((type == 'text' || type == 'bitmap') &&
-          (track['isSelected'] == true || track['selected'] == true)) {
-        return _trackLabel(track);
+    final subtitleTracks = _playerService.tracksInfo
+        .where((t) =>
+            t['type']?.toString().toLowerCase() == 'text' ||
+            t['type']?.toString().toLowerCase() == 'bitmap')
+        .toList();
+    int? selectedIndex;
+    for (var i = 0; i < subtitleTracks.length; i++) {
+      if (subtitleTracks[i]['isSelected'] == true ||
+          subtitleTracks[i]['selected'] == true) {
+        selectedIndex = i;
+        break;
       }
     }
-    return '';
+    if (selectedIndex == null) return '';
+    return _trackLabelForOverlay(subtitleTracks[selectedIndex], selectedIndex);
   }
 
   Duration _durationFromProgress(double progress) {
@@ -4771,16 +4827,32 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   /// 新播放器控制层：按显示名称切换音轨（名称来自 PopupMenuOverlay 音频菜单）。
   Future<void> _switchAudioTrackByName(String trackName) async {
-    final tracks = _playerService.tracksInfo
+    final audioTracks = _playerService.tracksInfo
         .where((t) => t['type'] == 'audio')
         .toList();
-    for (final track in tracks) {
+    // 1) 播放器轨道标签精确匹配。
+    for (final track in audioTracks) {
       if (_trackLabel(track) == trackName) {
         final trackId = track['id']?.toString() ?? '';
         if (trackId.isNotEmpty) {
           await _playerService.selectAudioTrack(trackId);
         }
         return;
+      }
+    }
+    // 2) unified 轨道标签（菜单显示格式）→ 按索引映射到播放器轨道，
+    //    保证点击菜单项能选中对应轨道（与点亮高亮同一套标签）。
+    final unified = ref.read(unifiedResourceProvider);
+    if (unified != null) {
+      for (var i = 0; i < unified.audios.length && i < audioTracks.length; i++) {
+        if (unifiedTrackLabel(unified.audios[i], unified.isFeiniu) ==
+            trackName) {
+          final trackId = audioTracks[i]['id']?.toString() ?? '';
+          if (trackId.isNotEmpty) {
+            await _playerService.selectAudioTrack(trackId);
+          }
+          return;
+        }
       }
     }
   }
@@ -4791,16 +4863,33 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       await _playerService.deselectSubtitleTrack();
       return;
     }
-    final tracks = _playerService.tracksInfo
+    final subtitleTracks = _playerService.tracksInfo
         .where((t) => t['type'] == 'text' || t['type'] == 'bitmap')
         .toList();
-    for (final track in tracks) {
+    // 1) 播放器轨道标签精确匹配。
+    for (final track in subtitleTracks) {
       if (_trackLabel(track) == trackName) {
         final trackId = track['id']?.toString() ?? '';
         if (trackId.isNotEmpty) {
           await _playerService.selectSubtitleTrack(trackId);
         }
         return;
+      }
+    }
+    // 2) unified 轨道标签 → 索引映射到播放器轨道。
+    final unified = ref.read(unifiedResourceProvider);
+    if (unified != null) {
+      for (var i = 0;
+          i < unified.subtitles.length && i < subtitleTracks.length;
+          i++) {
+        if (unifiedTrackLabel(unified.subtitles[i], unified.isFeiniu) ==
+            trackName) {
+          final trackId = subtitleTracks[i]['id']?.toString() ?? '';
+          if (trackId.isNotEmpty) {
+            await _playerService.selectSubtitleTrack(trackId);
+          }
+          return;
+        }
       }
     }
   }

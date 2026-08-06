@@ -295,45 +295,42 @@ class TopBar extends StatelessWidget {
         fit: BoxFit.contain,
         filterQuality: FilterQuality.high,
         gaplessPlayback: true,
+        // 外部 logo 加载失败时回退到文本标题，避免显示破图/错乱占位。
+        errorBuilder: (_, __, ___) => _buildLogoText(),
       );
     } else {
-      content = Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Flexible(
-            child: Text(
-              logoText,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 27,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 3,
-                height: 1,
-                shadows: [
-                  Shadow(
-                    color: Colors.black87,
-                    blurRadius: 6,
-                    offset: Offset(0, 2),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 4),
-          CustomPaint(
-            size: const Size(28, 28),
-            painter: _LogoChevronPainter(),
-          ),
-        ],
-      );
+      content = _buildLogoText();
     }
 
     return SizedBox(
       width: logoWidth,
       height: logoHeight,
       child: content,
+    );
+  }
+
+  Widget _buildLogoText() {
+    final text = logoText.trim().isEmpty ? 'WJPLAYER' : logoText.trim();
+    // 无 logo 时显示媒体名称：使用适中的标题字号（不再放大到 logo 级字号），
+    // 且标题后不再追加 V 形 chevron（豆瓣等源只有文字标题）。
+    return Text(
+      text,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 20,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 1,
+        height: 1,
+        shadows: [
+          Shadow(
+            color: Colors.black87,
+            blurRadius: 6,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
     );
   }
 
@@ -520,28 +517,6 @@ class _TopActionButton extends StatelessWidget {
       ),
     );
   }
-}
-
-class _LogoChevronPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = playerUiPink
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3.5
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-
-    final path = Path()
-      ..moveTo(2, 4)
-      ..lineTo(size.width / 2, size.height - 4)
-      ..lineTo(size.width - 2, 4);
-
-    canvas.drawPath(path, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 /// 底栏操作类型。

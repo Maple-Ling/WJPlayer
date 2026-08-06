@@ -633,45 +633,71 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
     );
   }
 
-  /// 手势拖动进度时的极简进度条（UI 隐藏时也可见）。
+  /// 手势拖动进度时的极简进度条（仅 UI 隐藏时显示；UI 显式时由控制栏
+  /// 进度条直接联动，不重复弹出）。拖动实时跟随手指，松手后 seekTo 精确落地不回弹。
   Widget _buildScrubbingProgress(BuildContext context, Size size) {
-    final dragProgress = widget.dragPreviewProgress ?? 0;
-    final progress = widget.duration.inMilliseconds > 0
-        ? (widget.position.inMilliseconds / widget.duration.inMilliseconds)
-        : 0.0;
+    final dragProgress = (widget.dragPreviewProgress ?? 0).clamp(0.0, 1.0);
+    final duration = widget.duration;
+    // 目标播放时间的绝对时间点（hh:mm:ss / mm:ss），显示在进度条上方一点。
+    final target = _posFromProg(dragProgress, duration);
     return Positioned(
       left: 0,
       right: 0,
-      top: size.height * 0.5,
+      top: size.height * 0.5 - 48,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 40),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              _formatDuration(widget.duration == Duration.zero
-                  ? _estimatePositionFromProgress(dragProgress, widget.duration)
-                  : widget.duration == Duration.zero
-                      ? Duration.zero
-                      : widget.duration == Duration.zero
-                          ? Duration.zero
-                          : _posFromProg(dragProgress, widget.duration)),
+              _formatDuration(target),
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
+                shadows: [
+                  Shadow(color: Colors.black87, blurRadius: 4),
+                ],
               ),
             ),
-            const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(2),
-              child: LinearProgressIndicator(
-                value: dragProgress.clamp(0.0, 1.0),
-                backgroundColor: Colors.white24,
-                valueColor: const AlwaysStoppedAnimation(
-                    Color(0xFF5B8DEF)),
-                minHeight: 4,
-              ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Text(
+                  _formatDuration(widget.position),
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 11,
+                    shadows: [
+                      Shadow(color: Colors.black87, blurRadius: 3),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: LinearProgressIndicator(
+                      value: dragProgress,
+                      backgroundColor: Colors.white24,
+                      valueColor:
+                          const AlwaysStoppedAnimation(Color(0xFF5B8DEF)),
+                      minHeight: 4,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  _formatDuration(duration),
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 11,
+                    shadows: [
+                      Shadow(color: Colors.black87, blurRadius: 3),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -684,10 +710,6 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
     return Duration(
         milliseconds: (prog * dur.inMilliseconds).round().clamp(
             0, dur.inMilliseconds));
-  }
-
-  Duration _estimatePositionFromProgress(double prog, Duration dur) {
-    return _posFromProg(prog, dur);
   }
 
   /// 缓冲/卡顿时的网速 + 转圈。
@@ -725,8 +747,7 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
   @override
   Widget build(BuildContext context) {
     // 锁定态禁止控制层抢占空白区域，底层视频 GestureDetector 继续接收播放手势；
-    // 解锁态空白点击隐藏 UI，按钮区域仍由自身命中。
-    final overlayInteractive = isUiVisible && !widget.isLocked;
+    // 解锁态空白点击由底层 _buildPlayerBody 的 onTap 切换控制栏显隐。
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth.isFinite
@@ -741,29 +762,12 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
         return Stack(
           fit: StackFit.expand,
           children: [
-            // 透传层：visible=false 时完全忽略所有点，让底层的
-            // _buildPlayerBody GestureDetector 接管全部手势（双击/长按/拖动）。
-            // visible=true 时由下方 GestureDetector 接管空白处点击。
-            Positioned.fill(
-              child: IgnorePointer(
-                ignoring: !overlayInteractive,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () {
-                    if (activeMenu != null) {
-                      _closeMenu();
-                      return;
-                    }
-                    // 空白处点击：隐藏控制栏（如果已显示）。
-                    if (isUiVisible) {
-                      setState(() => isUiVisible = false);
-                      widget.onUiVisibilityChanged?.call(false);
-                    }
-                  },
-                ),
-              ),
-            ),
-              IgnorePointer(
+            // 注意：这里不再放置全屏透传 GestureDetector。
+            // 若上层注册 onTap 会抢占手势竞技场，导致 UI 亮起时底层
+            // 双击/长按/拖动（亮度·音量·进度）全部失效。
+            // 空白点击切换控制栏由底层 _buildPlayerBody 的 onTap 承担，
+            // 菜单打开时的空白关闭由 PopupMenuOverlay 自身的遮罩承担。
+            IgnorePointer(
                 ignoring: !isUiVisible,
                 child: AnimatedOpacity(
                   duration: const Duration(milliseconds: 180),
@@ -827,14 +831,23 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                           child: Text(
                             [
                               if (widget.initialCore.isNotEmpty)
-                                widget.initialCore == 'exoPlayer' ? 'EXO' : 'MPV',
+                                widget.initialCore == 'exoPlayer'
+                                    ? 'EXO'
+                                    : 'MPV',
+                              if (widget.encoder.isNotEmpty) widget.encoder,
                               if (widget.bitrate.isNotEmpty) widget.bitrate,
-                              if (widget.mediaSize.isNotEmpty) widget.mediaSize,
+                              if (widget.frameRate.isNotEmpty)
+                                widget.frameRate,
+                              if (widget.mediaSize.isNotEmpty)
+                                widget.mediaSize,
                             ].join(' · '),
                             style: const TextStyle(
                               color: Colors.white70,
                               fontSize: 11,
-                              shadows: [Shadow(color: Colors.black87, blurRadius: 4)],
+                              shadows: [
+                                Shadow(
+                                    color: Colors.black87, blurRadius: 4),
+                              ],
                             ),
                           ),
                         ),
@@ -847,7 +860,14 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                           title: widget.title,
                           episode: widget.episode,
                           meta: widget.meta,
-                          position: widget.position,
+                          // UI 显式状态下的屏幕拖动：进度条实时跟随手指预览值，
+                          // 松手后 seekTo 精确落地（不回弹）。
+                          position: widget.isScrubbingPosition
+                              ? _posFromProg(
+                                  widget.dragPreviewProgress ?? 0,
+                                  widget.duration,
+                                )
+                              : widget.position,
                           duration: widget.duration,
                           bufferedProgress: widget.bufferedProgress,
                           isPlaying: widget.isPlaying,
@@ -997,8 +1017,10 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                   ),
                 ),
               if (_toastMessage != null) _buildToast(size),
-              // 手势拖动进度时，即使主控制栏已隐藏也单独渲染一条极简进度条。
-              if (widget.isScrubbingPosition) _buildScrubbingProgress(context, size),
+              // 手势拖动进度：仅 UI 隐藏时单独渲染极简进度条；
+              // UI 显式时控制栏进度条本身实时联动，不重复弹出。
+              if (widget.isScrubbingPosition && !isUiVisible)
+                _buildScrubbingProgress(context, size),
               // 卡顿缓冲时，中央显示网速 + 转圈。
               if (widget.isBuffering && !isUiVisible) _buildBufferingSpeed(context),
             ],

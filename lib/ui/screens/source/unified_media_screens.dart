@@ -153,17 +153,25 @@ class _UnifiedMediaHomeScreenState
     }
   }
 
+  bool _navInFlight = false;
+
   Future<void> _openEntry(ServerConfig server, UnifiedMediaEntry entry) async {
-    ref.read(currentServerProvider.notifier).state = server;
-    // 直接使用影视详情页组件（真实 entry），飞牛/emby 均走统一影视详情 UI。
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => UnifiedMediaDetailScreen(
-          server: server,
-          entry: entry,
+    if (_navInFlight) return;
+    _navInFlight = true;
+    try {
+      ref.read(currentServerProvider.notifier).state = server;
+      // 直接使用影视详情页组件（真实 entry），飞牛/emby 均走统一影视详情 UI。
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => UnifiedMediaDetailScreen(
+            server: server,
+            entry: entry,
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      _navInFlight = false;
+    }
   }
 
   Future<void> _openContinueDetail(
@@ -173,17 +181,23 @@ class _UnifiedMediaHomeScreenState
 
   Future<void> _playContinue(
       ServerConfig server, UnifiedContinueItem item) async {
-    ref.read(currentServerProvider.notifier).state = server;
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => UnifiedMediaDetailScreen(
-          server: server,
-          entry: item.entry,
-          autoPlay: true,
+    if (_navInFlight) return;
+    _navInFlight = true;
+    try {
+      ref.read(currentServerProvider.notifier).state = server;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => UnifiedMediaDetailScreen(
+            server: server,
+            entry: item.entry,
+            autoPlay: true,
+          ),
         ),
-      ),
-    );
-    if (mounted) await _load();
+      );
+      if (mounted) await _load();
+    } finally {
+      _navInFlight = false;
+    }
   }
 
   @override
@@ -308,18 +322,23 @@ class _UnifiedMediaLibraryScreenState
 
   List<UnifiedMediaEntry> get _sortedItems {
     final items = [..._items];
+    // 与影视栏"查看更多"排序逻辑完全一致：
+    // create_time 保持入库顺序（倒序时反转）；标题 A-Z；年份升序；评分降序；再按方向反转。
+    if (_sortKey == 'create_time') {
+      return _descending ? items : items.reversed.toList();
+    }
     int compare(UnifiedMediaEntry a, UnifiedMediaEntry b) {
       return switch (_sortKey) {
+        'rating' => (b.rating ?? -1).compareTo(a.rating ?? -1),
         'title' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
         'year' => (a.year ?? 0).compareTo(b.year ?? 0),
-        'rating' => (a.rating ?? -1.0).compareTo(b.rating ?? -1.0),
-        _ => a.id.compareTo(b.id),
+        _ => 0,
       };
     }
 
     items.sort((a, b) {
-      final result = compare(a, b);
-      return _descending ? -result : result;
+      final value = compare(a, b);
+      return _descending ? -value : value;
     });
     return items;
   }
@@ -340,30 +359,25 @@ class _UnifiedMediaLibraryScreenState
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.library.name),
+        // 排序：复用影视栏"查看更多"的排序选项与展示（kDiscoverSortOptions + 勾选态）。
         actions: [
           PopupMenuButton<String>(
             tooltip: '排序',
             icon: const Icon(Icons.sort_rounded),
             onSelected: _toggleSort,
             itemBuilder: (_) => [
-              for (final option in const [
-                (key: 'create_time', label: '入库时间'),
-                (key: 'title', label: '标题排序'),
-                (key: 'year', label: '出品年份'),
-                (key: 'rating', label: '评分'),
-              ])
+              for (final option in kDiscoverSortOptions)
                 PopupMenuItem(
                   value: option.key,
-                  child: Row(children: [
-                    Expanded(child: Text(option.label)),
-                    if (_sortKey == option.key)
-                      Icon(
-                        _descending
-                            ? Icons.arrow_downward_rounded
-                            : Icons.arrow_upward_rounded,
-                        size: 18,
-                      ),
-                  ]),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(option.label),
+                      if (option.key == _sortKey)
+                        const Icon(Icons.check_rounded,
+                            size: 18, color: Color(0xFF34C759)),
+                    ],
+                  ),
                 ),
             ],
           ),
@@ -664,30 +678,9 @@ class _UnifiedMediaDetailScreenState
         if (widget.autoPlay && mounted) await _play();
       }
       // 自动滚动到当前播放集附近：仅滚动定位，不改数组/顺序/位置。
-      if (targetNumber != null && targetNumber > 0 && mounted) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted || !_episodeController.hasClients) return;
-          final uiList = _uiEpisodes;
-          final start = _episodeRangeStart;
-          final end = start + 9;
-          // 当前分段内可见列表（与 _buildEpisodeCards 的过滤口径一致）
-          final visible = uiList
-              .where((e) {
-                final n = e.number <= 0 ? 1 : e.number;
-                return n >= start && n <= end;
-              })
-              .toList();
-          final visibleIdx =
-              visible.indexWhere((e) => e.number == targetNumber);
-          if (visibleIdx < 0) return;
-          final target = (visibleIdx * 228.0)
-              .clamp(0.0, _episodeController.position.maxScrollExtent);
-          _episodeController.animateTo(
-            target,
-            duration: const Duration(milliseconds: 320),
-            curve: Curves.easeOutCubic,
-          );
-        });
+      // 首次进入时页面可能仍在 loading（列表未挂载），内部会逐帧重试。
+      if (targetNumber != null && targetNumber > 0) {
+        _scrollToCurrentEpisode(targetNumber);
       }
     } catch (error) {
       if (!mounted) return;
@@ -795,19 +788,33 @@ class _UnifiedMediaDetailScreenState
     }
   }
 
+  /// 解析季号：仅识别明确的季格式（第 X 季 / Season X / S1 / season:X）。
+  /// 注意：Emby 的 season.id 是纯数字内部 ID（如 "123456"），不代表季号，
+  /// 因此不能对任意数字兜底，否则会把 ID 误判为季号导致季识别错误。
   int? _seasonNumber(String? seasonId) {
     if (seasonId == null) return null;
-    final match = RegExp(r'(?:season:)?(\d+)$').firstMatch(seasonId);
-    return int.tryParse(match?.group(1) ?? seasonId);
+    final match = RegExp(
+            r'第\s*(\d+)\s*季|season[:\s]*(\d+)|[Ss](\d+)\b',
+            caseSensitive: false)
+        .firstMatch(seasonId);
+    if (match == null) return null;
+    final group = match.group(1) ?? match.group(2) ?? match.group(3);
+    return int.tryParse(group ?? '');
   }
 
+  /// 最近播放的季/集：按 lastPlayedAt 取最新记录（_scopeRecords 顺序不保证按时间）。
   ({int? season, int? episode}) _latestPlayedEpisode() {
+    WatchHistoryRecord? latest;
     for (final record in _scopeRecords) {
-      if (record.seasonNumber != null && record.episodeNumber != null) {
-        return (season: record.seasonNumber, episode: record.episodeNumber);
+      if (record.seasonNumber == null || record.episodeNumber == null) {
+        continue;
+      }
+      if (latest == null || record.lastPlayedAt.isAfter(latest.lastPlayedAt)) {
+        latest = record;
       }
     }
-    return (season: null, episode: null);
+    if (latest == null) return (season: null, episode: null);
+    return (season: latest.seasonNumber, episode: latest.episodeNumber);
   }
 
   String _resumeLabel() {    final ticks = _resumePositionTicks;
@@ -825,18 +832,28 @@ class _UnifiedMediaDetailScreenState
         : '继续播放 ${two(m)}:${two(s)}';
   }
 
+  bool _playInFlight = false;
+
   Future<void> _play() async {
+    if (_playInFlight) return;
     final entry = _selectedEntry;
     if (entry == null) return;
-    // 点击播放即刻锁定横屏，网络解析在横屏播放器内等待，避免竖屏停留。
-    await SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
-    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    // Emby 走 /player/:id（内部自行解析媒体源，与外部详情页同路径，稳定可播）；
-    // 其它源（飞牛/网盘）走 /source-player（source-player 依赖 MediaSourceBackend.resolvePlay）。
-    if (widget.server.sourceKind == SourceKind.emby) {
+    // 防重复点击：连点播放键只 push 一个播放器，避免并发进入多个播放实例
+    // 导致路由栈错乱、方向锁竞争与"看似无响应"。
+    _playInFlight = true;
+    try {
+      // 点击播放即刻锁定横屏，网络解析在横屏播放器内等待，避免竖屏停留。
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+      if (!mounted) return;
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      // 方向锁定期间用户可能已返回，页面销毁后不再导航。
+      if (!mounted) return;
+      // Emby 走 /player/:id（内部自行解析媒体源，与外部详情页同路径，稳定可播）；
+      // 其它源（飞牛/网盘）走 /source-player（source-player 依赖 MediaSourceBackend.resolvePlay）。
+      if (widget.server.sourceKind == SourceKind.emby) {
       ref.read(selectedMediaSourceProvider.notifier).state = _resource?.id;
       ref.read(audioTrackProvider.notifier).state =
           _resource?.audios.isNotEmpty == true
@@ -877,6 +894,10 @@ class _UnifiedMediaDetailScreenState
       );
     }
     if (mounted) await _loadResources(entry);
+    } finally {
+      // push 完成后释放防抖标志，允许后续再次进入播放。
+      _playInFlight = false;
+    }
   }
 
   @override
@@ -1091,7 +1112,40 @@ class _UnifiedMediaDetailScreenState
         ),
       );
 
-  /// ---- A 模板数据转换层：Unified* 模型 → A 页 UI 展示数据 ----
+  /// 自动滚动到指定分集的最左侧位置。
+  /// 仅滚动视口，不修改数组/顺序/位置。列表尚未挂载时逐帧重试（最多 8 次），
+  /// 覆盖首次进入仍在 loading 的时序：此时 ListView 未 build，直接 animateTo 会丢失。
+  void _scrollToCurrentEpisode(int targetNumber, {int retry = 0}) {
+    if (!mounted || retry > 8) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!_episodeController.hasClients) {
+        _scrollToCurrentEpisode(targetNumber, retry: retry + 1);
+        return;
+      }
+      final uiList = _uiEpisodes;
+      final start = _episodeRangeStart;
+      final end = start + 9;
+      // 当前分段内可见列表（与 _buildEpisodeCards 的过滤口径一致）
+      final visible = uiList
+          .where((e) {
+            final n = e.number <= 0 ? 1 : e.number;
+            return n >= start && n <= end;
+          })
+          .toList();
+      final visibleIdx = visible.indexWhere((e) => e.number == targetNumber);
+      if (visibleIdx < 0) return;
+      final target = (visibleIdx * 228.0)
+          .clamp(0.0, _episodeController.position.maxScrollExtent);
+      _episodeController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  /// A 模板数据转换层：Unified* 模型 → A 页 UI 展示数据 ----
   /// 剧集展示模型：对齐 A 页分段胶囊 + 剧集卡片所需字段，保留业务引用 [entry]。
   List<_UiEpisode> get _uiEpisodes {
     final result = <_UiEpisode>[];
@@ -1113,9 +1167,11 @@ class _UnifiedMediaDetailScreenState
     return result;
   }
 
+  /// UI 展示用的季号解析：与 [_seasonNumber] 口径一致，仅识别明确的季格式。
   int? _uiSeasonNumber(String? value) {
     if (value == null) return null;
-    final match = RegExp(r'第\s*(\d+)\s*季|season[:\s]*(\d+)|(\d+)$',
+    final match = RegExp(
+            r'第\s*(\d+)\s*季|season[:\s]*(\d+)|[Ss](\d+)\b',
             caseSensitive: false)
         .firstMatch(value);
     if (match == null) return null;
@@ -1379,17 +1435,20 @@ class _UnifiedMediaDetailScreenState
                       child: PlaybackResourceCard(
                         serverName: match.serverName,
                         isBest: index == 0,
-                        // 单击选中：高亮当前点选的跨服务器资源；默认高亮命中排第一的
+                        // 单击选中高亮当前点选的跨服务器资源；默认高亮命中排第一的
                         isSelected: index == _selectedCrossServerIndex,
                         resolution: source?.qualityLabel,
                         dynamicRange: source?.primaryVideoStream?.videoRangeLabel,
                         codec: source?.primaryVideoStream?.videoCodecLabel,
                         size: source?.size,
                         bitrate: source?.primaryVideoStream?.bitRate,
-                        // 单击 = 选择该服务器资源
-                        onTap: () => setState(() {
-                          _selectedCrossServerIndex = index;
-                        }),
+                        // 单击 = 识别服务器并直接开始播放
+                        onTap: () {
+                          setState(() {
+                            _selectedCrossServerIndex = index;
+                          });
+                          _openCrossServerMatch(match);
+                        },
                         // 双击 = 进入该服务器对应的媒体详情页
                         onDoubleTap: () => _openServerDetail(match),
                       ),

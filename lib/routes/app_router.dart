@@ -386,11 +386,17 @@ class _MainShellState extends ConsumerState<MainShell> {
   void _handleShellPop() {
     final router = GoRouter.of(context);
     if (router.canPop()) {
-      router.pop();
+      // 延迟到下一帧再 pop：PopScope 回调正处于 pop 手势处理中，
+      // 同步导航可能导致 Navigator 状态不一致（"already popping"）而卡死。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) router.pop();
+      });
       return;
     }
     if (widget.navigationShell.currentIndex != 0) {
-      widget.navigationShell.goBranch(0);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) widget.navigationShell.goBranch(0);
+      });
       return;
     }
     final now = DateTime.now();
@@ -459,7 +465,7 @@ class _MainShellState extends ConsumerState<MainShell> {
     // 底部 tab 栏下方再间隔一个“同状态栏高度”的悬停空隙。
     final statusGap = showFloatingTabBar ? mediaQuery.padding.top : 0.0;
     final tabHeight = showFloatingTabBar
-        ? 64.0 + bottomPadding + statusGap
+        ? 64.0 + bottomPadding + statusGap + 44.0
         : 0.0;
     final shellBody = isKeyboardVisible
         ? widget.navigationShell
@@ -520,6 +526,9 @@ class _FloatingTabBar extends ConsumerWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     // 底部悬停空隙：间隔一个“同状态栏高度”的距离，不贴屏幕底边。
     final statusGap = MediaQuery.of(context).padding.top;
+    // 底部胶囊栏高度：与 capsuleItem 的固定高度（44）保持一致，
+    // 用于把底部状态栏整体再下移一个胶囊高度。
+    const capsuleHeight = 44.0;
     final navBg = isDark ? AppColors.darkNavBackground : AppColors.lightNavBackground;
     final selectedBg = isDark ? AppColors.darkNavSelected : AppColors.lightNavSelected;
     final textColor = isDark ? Colors.white : const Color(0xFF1C1C1E);
@@ -584,7 +593,7 @@ class _FloatingTabBar extends ConsumerWidget {
 
     return Container(
       alignment: Alignment.center,
-      margin: EdgeInsets.only(top: 8, bottom: statusGap + 8),
+      margin: EdgeInsets.only(top: 8, bottom: statusGap + 8 + capsuleHeight),
       child: SafeArea(
         top: false,
         child: Row(

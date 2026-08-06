@@ -115,7 +115,7 @@ class DiscoverSortPref {
 const kDiscoverSortOptions = <({String label, String key})>[
   (label: '入库时间', key: 'create_time'),
   (label: '标题排序', key: 'title'),
-  (label: '首映时间', key: 'year'),
+  (label: '年份', key: 'year'),
   (label: '评分', key: 'rating'),
 ];
 

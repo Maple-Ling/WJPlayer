@@ -67,7 +67,11 @@ class _PopToHomeState extends ConsumerState<PopToHome> {
         if (didPop) return;
         final hasServer = ref.read(serverListProvider).isNotEmpty;
         if (!widget.guardServer || hasServer) {
-          context.go('/home');
+          // 延迟到下一帧再导航：避免在 PopScope 回调（pop 手势处理中）
+          // 同步执行 go_router 导航导致路由栈状态不一致/死锁。
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) context.go('/home');
+          });
           return;
         }
         // 服务器列表页且无服务器：回不了首页，走两次退出。

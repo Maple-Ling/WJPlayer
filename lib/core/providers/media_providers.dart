@@ -429,7 +429,11 @@ bool _isTopLevelFeiniuEntry(SourceEntry entry) {
   final type = entry.raw?['type']?.toString().trim().toLowerCase();
   // 部分 fnOS 搜索接口省略 type，但仍返回可播放顶层条目；只明确排除分集/季/目录。
   if (type == null || type.isEmpty) return entry.id.isNotEmpty;
-  return type == 'movie' || type == 'tv' || type == 'series';
+  // 顶层可播条目：电影 / 剧集 / 视频文件（文件浏览型源常以 video 标识顶层条目）。
+  return type == 'movie' ||
+      type == 'tv' ||
+      type == 'series' ||
+      type == 'video';
 }
 
 /// 聚合搜索开关
@@ -716,8 +720,13 @@ final searchResultsProvider =
 
   if (isAggregate) {
     // 跨服务器聚合后平铺（桌面/TV 用平铺列表展示）。
-    final grouped = await ref.watch(aggregateSearchResultsProvider.future);
-    return grouped.values.expand((list) => list).toList();
+    // 注意：不能用 aggregateSearchResultsProvider.future —— 它是逐台增量的
+    // 无限流（async* 永不 close），.future 永不 resolve 会导致聚合搜索永远
+    // loading（"聚合搜索失效"根因）。取首个增量快照即返回；
+    // UI 层的聚合模式独立渲染分组视图，不依赖这里的平铺结果。
+    final first = await ref
+        .watch(aggregateSearchResultsProvider.stream.first);
+    return first.values.expand((list) => list).toList();
   }
 
   final currentServer = ref.watch(currentServerProvider);
