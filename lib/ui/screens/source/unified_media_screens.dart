@@ -1360,6 +1360,8 @@ class _UnifiedMediaDetailScreenState
                 itemBuilder: (_, index) {
                   final episode = _episodes[index];
                   final selected = _selectedEntry?.id == episode.id;
+                  // 集号角标：indexNumber 缺失时按列表顺序补（第 1 条 = 第 1 集）。
+                  final epNumber = episode.indexNumber ?? (index + 1);
                   return SizedBox(
                     width: 220,
                     child: InkWell(
@@ -1392,6 +1394,30 @@ class _UnifiedMediaDetailScreenState
                                       borderRadius: BorderRadius.circular(18),
                                     ),
                                   ),
+                                // 集号角标（左下）：与 afusekt 等播放器一致
+                                // 显示数字集号，缺失时按顺序补。
+                                Positioned(
+                                  left: 8,
+                                  bottom: 8,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 9, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black
+                                          .withValues(alpha: 0.65),
+                                      borderRadius:
+                                          BorderRadius.circular(999),
+                                    ),
+                                    child: Text(
+                                      '第 $epNumber 集',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ]),
                             ),
                           ),
