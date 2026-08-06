@@ -132,3 +132,28 @@ List<int> sortAudioIndexes(
   });
   return indexes;
 }
+
+/// 从条目名提取「标题主干」：反复去掉尾部常见后缀 token
+/// （年份 / 分辨率 / 编码 / 来源 / 语言标记，如 `.2023`、`.1080p`、`.x264`、
+/// `.WEB-DL`、`.国语`），提高跨服务器检索命中率——飞牛条目名常带这些后缀
+/// （如「凡人修仙传.2023.1080p」），而 Emby 搜索要求完整包含匹配，
+/// 带后缀的 query 会搜不到干净标题的条目。提取不出主干时原样返回。
+String normalizeSearchTitle(String raw) {
+  final t = raw.trim();
+  if (t.isEmpty) return t;
+  var result = t;
+  // 后缀 token：点号/空格分隔的常见标记（贪婪匹配到主干，逐个剥离）。
+  final suffix = RegExp(
+    r'^(.+?)[. ]'
+    r'((?:19|20)\d{2}|[248]k|2160p|1080p|720p|480p|x264|x265|h264|h265|hevc|av1|bluray|bdremux|remux|web-?dl|webrip|hdrip|bdrip|dvdrip|国语|粤语|中字|双语|chinese|mandarin)'
+    r'([. ]|$)',
+    caseSensitive: false,
+  );
+  while (true) {
+    final m = suffix.firstMatch(result);
+    if (m == null) break;
+    result = m.group(1)!;
+  }
+  final clean = result.trim();
+  return clean.isEmpty ? t : clean;
+}

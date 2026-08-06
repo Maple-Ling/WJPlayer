@@ -1051,11 +1051,12 @@ class _UnifiedMediaDetailScreenState
     final detail = _detail!;
     final entry = detail.entry;
     // 跨服检索关键词：优先外部详情标题（与影视 A 页同源：干净无后缀，命中率高），
-    // 缺失时回退服务器条目名（可能带年份/分辨率等后缀，服务器顶层搜索易落空）。
+    // 缺失时回退服务器条目名——先提取标题主干（去掉年份/分辨率等后缀，
+    // 飞牛条目名常带后缀，不规范化则 Emby 完整包含匹配搜不到）。
     final externalTitle = _externalDetail?.title?.trim();
     final resourceQuery = (externalTitle != null && externalTitle.isNotEmpty)
         ? externalTitle
-        : entry.name;
+        : normalizeSearchTitle(entry.name);
     final background = _backgroundColor ?? Theme.of(context).scaffoldBackgroundColor;
     return Scaffold(
       backgroundColor: background,

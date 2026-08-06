@@ -11,6 +11,7 @@ import '../providers/reveal_hidden_provider.dart';
 import '../services/app_logger.dart';
 import '../services/home_data_cache.dart';
 import '../sources/feiniu_backend.dart';
+import '../utils/track_preference.dart';
 import '../sources/media_source_backend.dart';
 
 /// 有界 LRU 保活：让导航级 provider 的结果在内存里保留「最近若干份」。
@@ -818,7 +819,16 @@ final rankingCrossServerMatchProvider = StreamProvider.autoDispose
       }
       final client = ref.read(serverApiClientProvider(server.id));
       if (client == null) return null;
-      final items = await client.search.search(query, cancelToken: cancelToken);
+      var items = await client.search.search(query, cancelToken: cancelToken);
+      if (items.isEmpty) {
+        // 兜底：query 带年份/分辨率等后缀（飞牛条目名常见如
+        // 「凡人修仙传.2023.1080p」）时 Emby 完整包含匹配必空——
+        // 提取标题主干（去掉后缀 token）再搜一次。
+        final clean = normalizeSearchTitle(query);
+        if (clean != query) {
+          items = await client.search.search(clean, cancelToken: cancelToken);
+        }
+      }
       // Emby search API 的 IncludeItemTypes 硬编码 Movie,Series，
       // 返回里不可能有 Episode，只保留 Movie/Series 顶层条目即可。
       final topLevel = items.where((item) {
