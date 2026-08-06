@@ -199,6 +199,9 @@ class MpvPlayerPlugin(
                 val playerId = call.argument<String>("playerId") ?: ""
                 val size = call.argument<Double>("size") ?: 0.5
                 // MPV 字幕默认恢复 1.0x，并允许设置面板动态调节。
+                // signfs 覆盖模式：只做缩放/位置调整、不覆盖 ASS 样式 ——
+                // 保证 sub-scale 对 ASS 字幕也生效（默认模式对 ASS 无效）。
+                getPlayer(playerId)?.setProperty("sub-ass-override", "signfs")
                 getPlayer(playerId)?.setProperty("sub-scale-by-window", "yes")
                 getPlayer(playerId)?.setProperty("sub-scale-with-window", "yes")
                 getPlayer(playerId)?.setProperty("sub-ass-scale-with-window", "yes")
@@ -206,6 +209,7 @@ class MpvPlayerPlugin(
                 getPlayer(playerId)?.setProperty("sub-scale", size.coerceIn(0.5, 2.0).toString())
                 getPlayer(playerId)?.setProperty("sub-use-margins", "yes")
                 getPlayer(playerId)?.setProperty("sub-ass-force-margins", "yes")
+                android.util.Log.i(TAG, "setSubtitleSize: size=$size -> sub-scale=${size.coerceIn(0.5, 2.0)}")
                 result.success(true)
             }
             "setSubtitlePosition" -> {
