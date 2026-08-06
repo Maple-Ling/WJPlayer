@@ -48,11 +48,15 @@ class UnifiedMediaDetailRouteExtra {
     required this.server,
     required this.entry,
     this.autoPlay = false,
+    this.targetEpisodeNumber,
   });
 
   final ServerConfig server;
   final UnifiedMediaEntry entry;
   final bool autoPlay;
+
+  /// 跨服播放跳转时指定的目标集号：详情页加载后优先定位并播放该集。
+  final int? targetEpisodeNumber;
 }
 
 
@@ -475,11 +479,15 @@ class UnifiedMediaDetailScreen extends ConsumerStatefulWidget {
     required this.server,
     required this.entry,
     this.autoPlay = false,
+    this.targetEpisodeNumber,
   });
 
   final ServerConfig server;
   final UnifiedMediaEntry entry;
   final bool autoPlay;
+
+  /// 跨服播放跳转指定的目标集号：autoPlay 时优先定位并播放该集。
+  final int? targetEpisodeNumber;
 
   @override
   ConsumerState<UnifiedMediaDetailScreen> createState() =>
@@ -671,11 +679,17 @@ class _UnifiedMediaDetailScreenState
         seasonId,
       );
       if (!mounted || _selectedSeasonId != seasonId) return;
+      final target = widget.targetEpisodeNumber != null
+          ? episodes
+              .where((e) => e.indexNumber == widget.targetEpisodeNumber)
+              .firstOrNull
+          : null;
       final preferred = episodes
           .where((episode) => episode.id == detail.initialEntryId)
           .firstOrNull;
-      final selected =
-          preferred ?? (episodes.isEmpty ? null : episodes.first);
+      final selected = target ??
+          preferred ??
+          (episodes.isEmpty ? null : episodes.first);
       setState(() {
         _episodes = episodes;
         _selectedEntry = selected;
@@ -1437,9 +1451,10 @@ class _UnifiedMediaDetailScreenState
           ? (feiniuType == 'tv' || feiniuType == 'series')
           : match.item.type == 'Series';
       if (isTopLevelTv) {
-        // 点击播放 = 直接播放：进该服务器详情页并自动开播（继续上次/首集），
-        // 与 A 页"点击即播"的体验一致；双击（_openServerDetail）才仅进详情浏览。
-        _openServerDetail(match, autoPlay: true);
+        // 点击播放 = 直接播放：进该服务器详情页并自动开播用户所选集
+        // （未选集则继续上次/首集）；双击（_openServerDetail）才仅进详情浏览。
+        _openServerDetail(match,
+            autoPlay: true, targetEpisodeNumber: _selectedEntry?.indexNumber);
         return;
       }
       if (!mounted) return;
@@ -1473,7 +1488,8 @@ class _UnifiedMediaDetailScreenState
   }
 
   /// 双击跨服务器资源卡：进入该服务器对应的媒体详情页（复用 UnifiedMediaDetailScreen）。
-  void _openServerDetail(ServerMatchInfo match, {bool autoPlay = false}) {
+  void _openServerDetail(ServerMatchInfo match,
+      {bool autoPlay = false, int? targetEpisodeNumber}) {
     // 与 A 页一致：优先 match.sourceServerId（飞牛打标），缺失回退
     // match.item.sourceServerId（Emby 由公共链路在 item 上打标）。
     final server = ref
@@ -1489,8 +1505,8 @@ class _UnifiedMediaDetailScreenState
     if (server == null) return;
     ref.read(currentServerProvider.notifier).state = server;
     // Emby/飞牛的媒体详情统一入口：先切服务器再 push /detail/:id。
-    // 带真实类型 entry + autoPlay 的 extra（避免伪造 Movie type 导致飞牛
-    // 剧集数据拉取不完整；autoPlay=true 时详情页加载后自动开播）。
+    // 带真实类型 entry + autoPlay + 目标集号的 extra（避免伪造 Movie type
+    // 导致飞牛剧集数据拉取不完整；autoPlay 时优先播放所选集）。
     final itemId = match.item.id;
     if (itemId.isNotEmpty) {
       context.push(
@@ -1503,6 +1519,7 @@ class _UnifiedMediaDetailScreenState
             type: match.item.type,
           ),
           autoPlay: autoPlay,
+          targetEpisodeNumber: targetEpisodeNumber,
         ),
       );
     } else if (match.sourceEntry != null) {
@@ -1512,6 +1529,7 @@ class _UnifiedMediaDetailScreenState
           server: server,
           entry: unifiedEntryFromSource(match.sourceEntry!),
           autoPlay: autoPlay,
+          targetEpisodeNumber: targetEpisodeNumber,
         ),
       );
     }

@@ -11,6 +11,7 @@ import '../../../core/providers/media_providers.dart';
 import '../../../core/providers/server_providers.dart';
 import '../../../core/sources/source_playback.dart';
 import '../../utils/media_helpers.dart';
+import '../source/unified_media_screens.dart';
 import '../../widgets/common/collapsible_overview.dart';
 import '../../widgets/common/media_widgets.dart';
 import '../../widgets/common/adaptive_poster_blend.dart';
@@ -470,13 +471,20 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
       ref.read(currentServerProvider.notifier).state = server;
       if (!context.mounted) return;
       // 飞牛顶层剧集（tv/series）无直接媒体流：resolvePlay 拿不到 media_guid
-      // 必报「未获取到播放媒体」，与 BCD 一致改为进该服务器详情选集播放。
+      // 必报「未获取到播放媒体」。进该服务器详情页自动播放所选集
+      // （未选集则继续上次/首集），与 BCD 行为一致。
       final feiniuType =
           source.raw?['type']?.toString().trim().toLowerCase();
       if (feiniuType == 'tv' || feiniuType == 'series') {
-        AppToast.show(context, '整剧资源：已进入「${server.name}」详情页，请选择剧集播放',
-            position: AppToastPosition.topCenter);
-        context.push('/detail/${Uri.encodeComponent(source.id)}');
+        context.push(
+          '/detail/${Uri.encodeComponent(source.id)}',
+          extra: UnifiedMediaDetailRouteExtra(
+            server: server,
+            entry: unifiedEntryFromSource(source),
+            autoPlay: true,
+            targetEpisodeNumber: _episode?.number,
+          ),
+        );
         return;
       }
       context.push('/source-player', extra: SourcePlayback(server: server, entry: source));

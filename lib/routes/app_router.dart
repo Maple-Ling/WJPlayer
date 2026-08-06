@@ -188,6 +188,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               server: extra.server,
               entry: extra.entry,
               autoPlay: extra.autoPlay,
+              targetEpisodeNumber: extra.targetEpisodeNumber,
             );
           }
           return UnifiedEmbyDetailRoute(

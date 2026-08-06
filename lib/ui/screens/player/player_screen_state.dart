@@ -3463,7 +3463,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         ? (feiniuType == 'tv' || feiniuType == 'series')
         : match.item.type == 'Series';
     if (isTopLevelTv) {
-      // 点击聚合剧集资源 = 直接播放：进该服务器详情页并自动开播
+      // 点击聚合剧集资源 = 直接播放：进该服务器详情页并自动开播当前集
       // （与 BCD 详情页点击播放一致）。
       _playerNavInFlight = true;
       context.push(
@@ -3476,6 +3476,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             type: match.item.type,
           ),
           autoPlay: true,
+          targetEpisodeNumber:
+              ref.read(currentPlayingItemProvider)?.indexNumber,
         ),
       );
       _playerNavInFlight = false;
