@@ -2299,7 +2299,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             ),
         ],
       ),
-    );
+    ),
+  );
   }
 
   Widget _buildVideoArea() {
