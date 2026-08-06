@@ -17,7 +17,7 @@ env:
 
 concurrency:
   group: android-arm64-${{ github.ref }}
-  # cancel-in-progress: false  — 保留并行运行，不取消旧 CI
+  cancel-in-progress: true  # 同 branch 新 push 取消排队中的旧 CI，避免一直排队超时
 
 jobs:
   build:

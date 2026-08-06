@@ -363,6 +363,11 @@ class DanmakuPainter extends CustomPainter {
     for (final ti in born) {
       final lane = cache.laneOf[ti.index];
       if (lane == null) continue;
+      // 防御：历史脏数据（-1）不参与尾条登记（否则 laneTail[-1] 越界）。
+      if (lane < 0) {
+        cache.laneOf.remove(ti.index);
+        continue;
+      }
       if (_computeX(ti, size) + ti.width < 0) {
         cache.laneOf.remove(ti.index);
         continue;
@@ -439,6 +444,9 @@ class DanmakuPainter extends CustomPainter {
           }
         }
       }
+      // 防御：无可用轨道时本帧不登记（laneOf 存 -1 会在下一帧
+      // laneTail[-1] 索引越界崩溃，即日志中的 RangeError）。
+      if (selectedLane < 0) continue;
       cache.laneOf[ti.index] = selectedLane;
       ti.startY = selectedLane * _trackHeight + _padding;
       laneTail[selectedLane] = ti;
