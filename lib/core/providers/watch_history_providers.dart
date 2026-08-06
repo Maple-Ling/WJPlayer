@@ -10,10 +10,7 @@ import 'app_preferences.dart';
 import 'media_providers.dart';
 import 'playback_providers.dart';
 import 'server_providers.dart';
-
-final watchHistoryStoreProvider = Provider<WatchHistoryStore>((ref) {
-  return WatchHistoryStore();
-});
+import 'watch_history_store_provider.dart';
 
 final watchHistoryProvider = Provider<WatchHistoryService>((ref) {
   return WatchHistoryService(

@@ -12,6 +12,7 @@ import '../services/server_icon_cache.dart';
 import '../sources/source_credentials.dart';
 import '../sources/source_kind.dart';
 import 'app_preferences.dart';
+import 'watch_history_store_provider.dart';
 
 export '../sources/source_kind.dart' show SourceKind;
 
@@ -150,7 +151,9 @@ class ServerLine {
 final authStateProvider = StateProvider<AuthState>((ref) => AuthState.unauthenticated);
 
 final serverListProvider = StateNotifierProvider<ServerListNotifier, List<ServerConfig>>((ref) {
-  return ServerListNotifier();
+  return ServerListNotifier(
+    watchHistoryStore: ref.watch(watchHistoryStoreProvider),
+  );
 });
 
 final currentServerProvider = StateNotifierProvider<CurrentServerNotifier, ServerConfig?>((ref) {
@@ -278,7 +281,10 @@ class CurrentServerNotifier extends StateNotifier<ServerConfig?> {
 }
 
 class ServerListNotifier extends StateNotifier<List<ServerConfig>> {
-  ServerListNotifier() : super(_loadServersSync()) {
+  /// 观看记录存储：服务器被标记隐藏时清理其历史记录（隐藏服务器不输出记录）。
+  final WatchHistoryStore? watchHistoryStore;
+
+  ServerListNotifier({this.watchHistoryStore}) : super(_loadServersSync()) {
     // 初始加载不经过 set state 覆写，这里补一次白名单同步。
     _syncInsecureTlsHosts();
     // 首启一次性把「网络 URL 图标」物化为本地文件，之后启动直接离线显示、不再重拉。
@@ -432,12 +438,19 @@ class ServerListNotifier extends StateNotifier<List<ServerConfig>> {
   }
 
   /// 隐藏 / 显示服务器（管理页三点菜单；隐藏后不记播放记录）。
+  /// 仅「非隐藏 → 隐藏」时清理该服务器已有观看记录（隐藏服务器不输出记录，
+  /// 旧记录一并删除）；重复点击/初始即隐藏不触发，避免误删。
   void setHidden(String serverId, bool hidden) {
+    final wasHidden =
+        state.any((s) => s.id == serverId && s.hidden == true);
     state = state.map((server) {
       if (server.id == serverId) return server.copyWith(hidden: hidden);
       return server;
     }).toList();
     _saveServers();
+    if (hidden && !wasHidden) {
+      unawaited(watchHistoryStore?.deleteByScopePrefix(serverId));
+    }
   }
 }
 

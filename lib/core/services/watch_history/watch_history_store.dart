@@ -71,6 +71,25 @@ class WatchHistoryStore {
     });
   }
 
+  /// 删除某服务器（scopeKey 前缀 `serverId:`）的全部观看记录。
+  /// 服务器被标记隐藏后调用：隐藏服务器不输出记录，旧记录一并清理。
+  Future<void> deleteByScopePrefix(String serverId) {
+    return _enqueueWrite(() async {
+      final document = await loadDocument();
+      final prefix = '$serverId:';
+      final records = document.records
+          .where((entry) => !entry.scopeKey.startsWith(prefix))
+          .toList(growable: false);
+      await _writeDocument(
+        WatchHistoryDocument(
+          schemaVersion: 1,
+          updatedAt: DateTime.now().toUtc(),
+          records: records,
+        ),
+      );
+    });
+  }
+
   Future<void> saveRecord(
     WatchHistoryRecord record, {
     Iterable<String> replaceRecordIds = const [],
