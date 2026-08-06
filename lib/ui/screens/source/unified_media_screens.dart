@@ -500,7 +500,7 @@ class _UnifiedMediaDetailScreenState
   // 用户是否手动选过音轨/内核：手动选择优先于策略默认与 HDR 自动切换。
   bool _audioTouched = false;
   bool _coreTouched = false;
-  int _selectedCrossServerIndex = 0;
+  int _selectedCrossServerIndex = -1;
   // 单击跨服务器资源卡选中的匹配（用于顶部播放按钮直接播放该服务器资源）。
   ServerMatchInfo? _selectedCrossServerMatch;
   // 跨服务器资源播放防抖：连点播放键/资源卡只 push 一个页面，杜绝导航栈堆积。
