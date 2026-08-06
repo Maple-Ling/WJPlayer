@@ -397,7 +397,7 @@ class MainShell extends ConsumerStatefulWidget {
 class _MainShellState extends ConsumerState<MainShell> {
   // 性能要点：滚动时只更新 ValueNotifier，由 ValueListenableBuilder 局部重建
   // 浮动 TabBar 的透明度，避免每个滚动事件 setState 整个 shell（含 navigationShell）。
-  final ValueNotifier<double> _tabOpacity = ValueNotifier<double>(1.0);
+  final ValueNotifier<bool> _tabCollapsed = ValueNotifier<bool>(false);
   DateTime? _lastBackPress;
 
   // 分支内 push 的页面（如从服务器管理页进入的 /home、/edit、/add 等）先逐级返回；
@@ -452,15 +452,14 @@ class _MainShellState extends ConsumerState<MainShell> {
   bool _onScrollNotification(ScrollNotification notification) {
     if (!_isHomePage) return false;
 
-    // 按滚动方向控制底部栏：内容下滑（手指上滑浏览）→ 隐藏并保持；
-    // 内容上滑（手指下滑回看）→ 显示。滚动停止保持当前状态，
-    // 不再 ScrollEnd 立即恢复（旧行为导致"隐藏后又弹回"）。
+    // 按滚动方向控制底部栏：内容下滑（手指上滑浏览）→ 收缩成仅搜索按钮
+    // 并保持；内容上滑（回看）→ 展开完整 tab 栏。
     if (notification is ScrollUpdateNotification) {
       final delta = notification.scrollDelta ?? 0;
       if (delta > 1.5) {
-        _tabOpacity.value = 0.0;
+        _tabCollapsed.value = true;
       } else if (delta < -1.5) {
-        _tabOpacity.value = 1.0;
+        _tabCollapsed.value = false;
       }
     }
     return false;
@@ -470,7 +469,7 @@ class _MainShellState extends ConsumerState<MainShell> {
   void didUpdateWidget(covariant MainShell oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.currentPath != widget.currentPath && _isServerListPage) {
-      _tabOpacity.value = 1.0;
+      _tabCollapsed.value = false;
     }
     if (oldWidget.currentPath != widget.currentPath &&
         widget.currentPath == '/history') {
@@ -480,7 +479,7 @@ class _MainShellState extends ConsumerState<MainShell> {
 
   @override
   void dispose() {
-    _tabOpacity.dispose();
+    _tabCollapsed.dispose();
     super.dispose();
   }
 
@@ -517,17 +516,12 @@ class _MainShellState extends ConsumerState<MainShell> {
           floatingActionButtonLocation:
               FloatingActionButtonLocation.centerDocked,
           floatingActionButton: showFloatingTabBar
-              ? ValueListenableBuilder<double>(
-                  valueListenable: _tabOpacity,
-                  builder: (context, value, _) => IgnorePointer(
-                    // 完全隐藏时不再拦截触摸（透明度 0 的 Opacity 仍会命中）。
-                    ignoring: value < 0.5,
-                    child: Opacity(
-                      opacity: _isServerListPage ? 1.0 : value,
-                      child: _FloatingTabBar(
-                        navigationShell: widget.navigationShell,
-                      ),
-                    ),
+              ? ValueListenableBuilder<bool>(
+                  valueListenable: _tabCollapsed,
+                  builder: (context, collapsed, _) => _FloatingTabBar(
+                    navigationShell: widget.navigationShell,
+                    collapsed: _isServerListPage ? false : collapsed,
+                    onExpand: () => _tabCollapsed.value = false,
                   ),
                 )
               : null,
@@ -538,8 +532,16 @@ class _MainShellState extends ConsumerState<MainShell> {
 }
 
 class _FloatingTabBar extends ConsumerWidget {
-  const _FloatingTabBar({required this.navigationShell});
+  const _FloatingTabBar({
+    required this.navigationShell,
+    this.collapsed = false,
+    this.onExpand,
+  });
   final StatefulNavigationShell navigationShell;
+
+  /// 收缩模式：仅显示搜索按钮（滚动下滑时）；点击搜索按钮展开完整栏。
+  final bool collapsed;
+  final VoidCallback? onExpand;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -573,7 +575,9 @@ class _FloatingTabBar extends ConsumerWidget {
       );
     }
 
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
       decoration: BoxDecoration(
@@ -589,30 +593,51 @@ class _FloatingTabBar extends ConsumerWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              padding: const EdgeInsets.all(3),
-              decoration: BoxDecoration(color: navBg, borderRadius: BorderRadius.circular(36)),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  item(0, Icons.movie_filter_rounded, '影视'),
-                  item(1, Icons.history_rounded, '记录'),
-                  item(2, Icons.dns_rounded, '服务器'),
-                  item(4, Icons.settings_rounded, '设置'),
-                ],
+            // 收缩模式：4 个 tab 隐藏，只留搜索按钮；点击搜索按钮展开。
+            if (!collapsed) ...[
+              Container(
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(color: navBg, borderRadius: BorderRadius.circular(36)),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    item(0, Icons.movie_filter_rounded, '影视'),
+                    item(1, Icons.history_rounded, '记录'),
+                    item(2, Icons.dns_rounded, '服务器'),
+                    item(4, Icons.settings_rounded, '设置'),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
+              const SizedBox(width: 8),
+            ],
             GestureDetector(
-              onTap: () => navigationShell.goBranch(3),
-              child: Container(
+              onTap: () {
+                // 收缩态点击搜索按钮 = 展开完整栏；展开态 = 进入搜索页。
+                if (collapsed) {
+                  onExpand?.call();
+                  return;
+                }
+                navigationShell.goBranch(3);
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: navigationShell.currentIndex == 3 ? selectedBg : navBg,
+                  // 收缩态高亮搜索按钮，提示"点击展开"。
+                  color: collapsed || navigationShell.currentIndex == 3
+                      ? selectedBg
+                      : navBg,
                   shape: BoxShape.circle,
                 ),
-                child: Icon(Icons.search_rounded, size: 22, color: textColor),
+                child: Icon(
+                  collapsed
+                      ? Icons.expand_less_rounded
+                      : Icons.search_rounded,
+                  size: 22,
+                  color: textColor,
+                ),
               ),
             ),
           ],
