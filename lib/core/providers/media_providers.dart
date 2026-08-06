@@ -589,7 +589,7 @@ final aggregateSearchByQueryProvider = StreamProvider.autoDispose
 final aggregateFeiniuSearchProvider = FutureProvider.autoDispose
     .family<List<FeiniuSearchGroup>, String>((ref, rawQuery) async {
   final outcome =
-      await ref.watch(aggregateSearchByQueryProvider(rawQuery).stream.last);
+      await ref.watch(aggregateSearchByQueryProvider(rawQuery).stream).last;
   return outcome.feiniuGroups;
 });
 

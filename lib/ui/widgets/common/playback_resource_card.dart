@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
-import '../../core/api/api_interfaces.dart';
-import '../../core/providers/media_providers.dart';
-import '../../core/sources/feiniu_backend.dart';
-import '../../core/sources/unified_media_adapter.dart';
+import '../../../core/api/api_interfaces.dart';
+import '../../../core/providers/media_providers.dart';
+import '../../../core/sources/feiniu_backend.dart';
+import '../../../core/sources/unified_media_adapter.dart';
 
 /// 跨服匹配胶囊信息（统一解析入口）。
 ///
@@ -75,7 +75,7 @@ MatchPlaybackInfo matchPlaybackInfo(ServerMatchInfo match) {
 /// "23.976 fps" / "24 fps" / "60 fps"，其余保留两位小数去尾零。
 String? _frameRateLabel(double? rate) {
   if (rate == null || rate <= 0) return null;
-  const common = <double, String>{
+  final common = <double, String>{
     23.976: '23.976 fps',
     24: '24 fps',
     25: '25 fps',

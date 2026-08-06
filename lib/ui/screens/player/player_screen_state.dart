@@ -1863,6 +1863,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   isPlaying: _playerService.isPlaying,
                   position: _playerService.position,
                   duration: _playerService.duration,
+                  bufferedProgress: _playerService.bufferedProgress,
                   isScrubbingPosition: _playerService.isScrubbingPosition,
                   dragPreviewProgress: _playerService.isScrubbingPosition
                       ? _playerService.displayProgress
