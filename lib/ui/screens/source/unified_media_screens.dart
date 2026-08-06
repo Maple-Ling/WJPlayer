@@ -2588,8 +2588,11 @@ class _UnifiedServerSwitcher extends ConsumerWidget {
     final servers = ref
         .watch(serverListProvider)
         .where((server) =>
-            server.sourceKind == SourceKind.emby ||
-            server.sourceKind == SourceKind.feiniu)
+            // 隐藏的服务器不显示在顶部切换器里（与列表/聚合搜索的
+            // 可见性规则一致；此处恒过滤，不随三击 reveal 显示）。
+            server.hidden != true &&
+            (server.sourceKind == SourceKind.emby ||
+                server.sourceKind == SourceKind.feiniu))
         .toList();
     final scheme = Theme.of(context).colorScheme;
     return PopupMenuButton<String>(
