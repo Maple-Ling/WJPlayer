@@ -5,19 +5,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   late VideoPlayerService _playerService;
   bool _showRemaining = false;
   bool _isLongPressing = false;
-  // 轻点判定（全屏点击切换控制栏）：记录按下位置/时间；抬起后延迟
-  // 150ms 确认不是连点/双击才 toggle——连点（一秒约 7 次，间隔≈143ms）
-  // 的第二次按下会取消第一次的 pending，避免「点两下 UI 闪来闪去」。
-  // _tapWasDoubleTap：按下时若取消了 pending，说明这是连点/双击的后续
-  // 一击，抬起时跳过设置 pending（否则双击第二击抬起仍会 toggle，
-  // 表现为「UI 隐藏时双击还会弹出界面」）。
+  // 轻点判定（全屏点击切换控制栏）：记录按下位置/时间。抬起后**立即**
+  // toggle（灵敏跟手），并开启 250ms 回滚窗口——窗口内再次按下（双击/
+  // 连点）由 _onTapDown 回滚 UI 状态，动画未完成即反向、视觉无感。
   Offset _tapDownPosition = Offset.zero;
   DateTime _tapDownTime = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _pendingTapTimer;
   // 陀螺仪画面翻转：手机上下颠倒（加速度计 y 轴符号翻转）→ 画面 180° 翻转。
   bool _videoFlipped = false;
   StreamSubscription<AccelerometerEvent>? _accelSub;
-  bool _tapWasDoubleTap = false;
+  // 立即 toggle + 回滚：单击立即切换 UI；250ms 内再次按下则回滚
+  // （双击/连点不弹 UI，动画未完成即反向，视觉无感）。
+  bool _togglePendingRollback = false;
+  Timer? _rollbackTimer;
   bool _isSliderDragging = false;
   double? _sliderDragValue;
   bool _decoderSwitchInFlight = false;
@@ -1876,7 +1876,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     WakelockPlus.disable();
     _accelSub?.cancel();
     _accelSub = null;
-    _pendingTapTimer?.cancel();
+    _rollbackTimer?.cancel();
     _statusTimer?.cancel();
     SystemInfoService.instance.stop();
     _streamTranslator?.stop();
@@ -2527,34 +2527,32 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   void _onTapDown(PointerDownEvent event) {
     if (_playerService.isLocked) return;
-    // 连点/双击的后续一击：取消上一次点击的 pending toggle（不触发 UI 切换），
-    // 并标记本次为连击（抬起时不再设置 pending）。
-    _tapWasDoubleTap = _pendingTapTimer != null;
-    _pendingTapTimer?.cancel();
-    _pendingTapTimer = null;
+    // 双击/连点的后续一击（250ms 回滚窗口内）：把上一次点击的 toggle 回滚
+    // 回原状态。UI 有 180ms 淡入动画，回滚时动画仅进行到一半即反向，
+    // 视觉上几乎无感——单击立即响应（灵敏），双击/连点不弹 UI。
+    if (_togglePendingRollback) {
+      _playerService.toggleControls();
+      return;
+    }
     _tapDownPosition = event.position;
     _tapDownTime = DateTime.now();
   }
 
-  /// 全屏轻点抬起：位移 <20px 且时长 <150ms（非拖动/长按）→ 延迟 150ms
-  /// 确认 toggle 控制栏。150ms 内再有按下（连点/双击）会取消 pending——
-  /// 双击的播放/暂停/快进功能仍由 onDoubleTapDown 承担，UI 不被连点闪动。
+  /// 全屏轻点抬起：位移 <20px 且时长 <150ms（非拖动/长按）→ **立即**
+  /// toggle 控制栏（无延迟，跟手），并开启 250ms 回滚窗口——
+  /// 窗口内再有按下（双击/连点）由 [_onTapDown] 回滚 UI 状态。
+  /// 双击的播放/暂停/快进功能仍由 onDoubleTapDown 承担。
   void _onTapUp(PointerUpEvent event) {
     if (_playerService.isLocked || _isLongPressing) return;
-    if (_tapWasDoubleTap) {
-      // 本次是连点/双击的后续一击：不设置 pending（否则第二击抬起后
-      // 150ms 仍会 toggle，UI 隐藏时双击会把界面弹出来）。
-      _tapWasDoubleTap = false;
-      return;
-    }
     final now = DateTime.now();
     final dt = now.difference(_tapDownTime);
     final dist = (event.position - _tapDownPosition).distance;
     if (dt > const Duration(milliseconds: 150) || dist > 20) return;
-    _pendingTapTimer?.cancel();
-    _pendingTapTimer = Timer(const Duration(milliseconds: 150), () {
-      if (!mounted || _playerService.isLocked) return;
-      _playerService.toggleControls();
+    _playerService.toggleControls();
+    _togglePendingRollback = true;
+    _rollbackTimer?.cancel();
+    _rollbackTimer = Timer(const Duration(milliseconds: 250), () {
+      _togglePendingRollback = false;
     });
   }
 
