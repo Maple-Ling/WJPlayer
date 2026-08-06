@@ -339,14 +339,16 @@ class DanmakuPainter extends CustomPainter {
       added++;
     }
 
-    // 轨道分配采用「冻结 + 追尾检查」模型：
+    // 轨道分配采用「冻结 + 追尾检查 + 类型分区」模型：
+    // - 固定弹幕（type 4 底部 / 5 顶部）独占顶部若干轨道
+    //   （0..fixedLaneCount-1，5 秒占轨到期腾轨顺延），滚动弹幕用其余轨道
+    //   （fixedLaneCount..）——分区互不重叠，杜绝「单轨几条弹幕上下重叠」；
     // - 弹幕入轨后轨道号冻结（laneOf），跨帧复用 → 不 Y 跳动闪烁
     //   （每帧全量重排会让同一弹幕在不同帧被分到不同轨道，视觉上像
     //   单轨多条弹幕互相交替显示）；
-    // - 每帧只做追尾检查：同轨尾条右界与自身左界重叠（不同速/异常）才
-    //   解除冻结重分配；出屏弹幕释放轨道；
-    // - 固定弹幕（type 4 底部 / 5 顶部）用 _assignLane 独立占轨
-    //   （居中显示 5 秒、到期腾轨顺延），滚动弹幕只与滚动弹幕碰撞。
+    // - 每帧只做追尾检查：同轨尾条与自身左右重叠才解除冻结重分配；
+    //   出屏弹幕释放轨道。
+    final fixedLaneCount = (trackCount * 0.3).floor().clamp(1, 4);
     final laneTail = List<_DanmakuTrackItem?>.filled(trackCount, null);
     final scrollOccupant = List<_DanmakuTrackItem?>.filled(trackCount, null);
     final topOccupant = List<_DanmakuTrackItem?>.filled(trackCount, null);
@@ -388,8 +390,9 @@ class DanmakuPainter extends CustomPainter {
         cache.laneOf.remove(ti.index); // 追尾 → 解除冻结重新分配
       }
       if (ti.item.type == 4 || ti.item.type == 5) {
-        final lane = _assignLane(
-            ti, size, scrollOccupant, topOccupant, bottomOccupant, trackCount);
+        final lane = _assignLane(ti, size, scrollOccupant, topOccupant,
+            bottomOccupant, trackCount,
+            maxLane: fixedLaneCount);
         _recordOccupant(ti, lane, scrollOccupant, topOccupant, bottomOccupant);
         cache.laneOf[ti.index] = lane;
         ti.startY = lane * _trackHeight + _padding;
@@ -397,7 +400,8 @@ class DanmakuPainter extends CustomPainter {
         continue;
       }
       var selectedLane = -1;
-      for (var lane = 0; lane < trackCount; lane++) {
+      // 滚动弹幕只使用固定弹幕区之外的轨道（分区，避免同轨重叠）。
+      for (var lane = fixedLaneCount; lane < trackCount; lane++) {
         final tail = laneTail[lane];
         if (tail == null) {
           selectedLane = lane;
@@ -414,7 +418,7 @@ class DanmakuPainter extends CustomPainter {
       // （laneOf 未登记），等下一帧轨道让出后再入轨——避免强制同轨追尾。
       if (selectedLane < 0) {
         var earliest = double.infinity;
-        for (var lane = 0; lane < trackCount; lane++) {
+        for (var lane = fixedLaneCount; lane < trackCount; lane++) {
           final tail = laneTail[lane];
           if (tail == null) {
             selectedLane = lane;
@@ -475,11 +479,15 @@ class DanmakuPainter extends CustomPainter {
       List<_DanmakuTrackItem?> scrollOccupant,
       List<_DanmakuTrackItem?> topOccupant,
       List<_DanmakuTrackItem?> bottomOccupant,
-      int trackCount) {
+      int trackCount,
+      {int maxLane = -1}) {
     final type = ti.item.type;
+    // 固定弹幕（顶部/底部）独占 0..maxLane-1 轨道区（默认全池），
+    // 与滚动弹幕分区互不重叠（滚动弹幕从 maxLane 起用）。
+    final limit = maxLane > 0 ? maxLane : trackCount;
     if (type == 4 || type == 5) {
       final occ = type == 4 ? bottomOccupant : topOccupant;
-      for (var i = 0; i < trackCount; i++) {
+      for (var i = 0; i < limit; i++) {
         final e = occ[i];
         // 固定弹幕停留 _topBottomDuration 秒，过了就腾出该轨。
         if (e == null || _currentSeconds - e.item.time > _topBottomDuration) {
@@ -488,7 +496,7 @@ class DanmakuPainter extends CustomPainter {
       }
       var fallbackLane = 0;
       var earliestRelease = double.infinity;
-      for (var i = 0; i < trackCount; i++) {
+      for (var i = 0; i < limit; i++) {
         final e = occ[i];
         if (e == null) return i;
         final release = e.item.time + _topBottomDuration;
