@@ -799,9 +799,22 @@ final rankingCrossServerMatchProvider = StreamProvider.autoDispose
   Future<ServerMatchInfo?> matchOne(ServerConfig server) async {
     try {
       if (server.sourceKind == SourceKind.feiniu) {
-        final entries = await ref.read(feiniuSearchResultsProvider(
+        var entries = await ref.read(feiniuSearchResultsProvider(
           (serverId: server.id, query: query),
         ).future);
+        if (entries.isEmpty) {
+          // 兜底：原始 query（可能带后缀/副标题）飞牛 contains 匹配必空时，
+          // 按候选列表（去后缀/冒号截断主干）重搜，与 Emby 分支对称。
+          for (final candidate in searchTitleCandidates(query)) {
+            final more = await ref.read(feiniuSearchResultsProvider(
+              (serverId: server.id, query: candidate),
+            ).future);
+            if (more.isNotEmpty) {
+              entries = more;
+              break;
+            }
+          }
+        }
         final picked = _pickBestFeiniuMatch(entries, query);
         if (picked == null) return null;
         picked.item.sourceServerId = server.id;
