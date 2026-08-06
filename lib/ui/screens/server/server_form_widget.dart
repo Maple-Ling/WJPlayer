@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/emby_api.dart';
@@ -434,15 +435,34 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
 
       // 仅 Emby/Jellyfin 走 Emby 登录并拉取服务器信息；
       // 飞牛保存时主动登录一次拿 token 写入 authToken，避免运行时频繁 login 触发 429。
+      final isEdit = _isEdit;
+      // 地址是否变更：编辑模式下线路首地址与原有 baseUrl 不同视为"改了地址"。
+      final urlChanged = isEdit && fullUrl != widget.existing!.baseUrl;
       if (sourceKind == SourceKind.emby) {
         final client = EmbyApiClient(baseUrl: fullUrl);
-        final serverInfo = await client.server.getPublicInfo(fullUrl);
-        fallbackName = serverInfo.serverName;
+        // 需要连通校验的情形：添加模式（拦截坏服务器入库）、编辑且改了地址
+        // （确认新地址可用）、或名称留空需自动获取。
+        // 仅改备注/名称/凭据（地址未变）时跳过校验，服务器暂不可达也能保存。
+        if (name.isEmpty || !isEdit || urlChanged) {
+          try {
+            final serverInfo = await client.server.getPublicInfo(fullUrl);
+            fallbackName = serverInfo.serverName;
+          } catch (_) {
+            if (!isEdit || urlChanged) rethrow;
+            // 编辑 + 地址未变 + 服务器暂不可达：名称留空时用主机名兜底，仍允许保存。
+            fallbackName = Uri.tryParse(fullUrl)?.host ?? '';
+          }
+        }
         if (username.isNotEmpty) {
-          final authResult =
-              await client.auth.login(username: username, password: password);
-          userId = authResult.userId;
-          authToken = authResult.accessToken;
+          try {
+            final authResult =
+                await client.auth.login(username: username, password: password);
+            userId = authResult.userId;
+            authToken = authResult.accessToken;
+          } catch (_) {
+            // 编辑模式：登录失败不阻塞保存，运行时用 password 重试（对齐飞牛）。
+            if (!isEdit) rethrow;
+          }
         }
       } else if (sourceKind == SourceKind.feiniu) {
         if (username.isNotEmpty) {
@@ -505,6 +525,32 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
 
   /// 规范化提示（沿用原添加页逻辑）。
   String _formatError(dynamic e) {
+    // DioException 原文（如 "DioException [connectionError]: ..."）对用户不友好，
+    // 先转成可读的中文提示，再走原有规则。
+    if (e is DioException) {
+      final status = e.response?.statusCode;
+      final type = e.type;
+      if (type == DioExceptionType.connectionTimeout ||
+          type == DioExceptionType.receiveTimeout ||
+          type == DioExceptionType.sendTimeout) {
+        return '连接服务器超时，请检查地址、端口和当前网络';
+      }
+      if (type == DioExceptionType.connectionError ||
+          type == DioExceptionType.unknown && e.message?.contains('SocketException') == true) {
+        return '无法连接服务器：\n1. 地址或端口是否正确\n2. 当前网络是否能访问该服务器';
+      }
+      if (status != null) {
+        if (status == 400) {
+          return '服务器返回 400 错误，可能原因：\n1. URL 路径重复（如 /emby/emby）\n2. 服务器不是 Emby/Jellyfin\n3. 需要修改路径（尝试将路径改为 / 或其他）\n\n请检查浏览器中能访问的完整地址，确保和输入一致';
+        }
+        if (status == 401) return '认证失败：用户名或密码错误';
+        if (status == 403) return '访问被拒绝';
+        if (status == 404) return '服务器接口不存在，请检查 URL 和路径是否正确';
+        if (status == 502) return '服务器网关错误';
+        if (status >= 500) return '服务器内部错误（HTTP $status）';
+      }
+      return '服务器请求失败：${e.message ?? e.type.name}';
+    }
     final msg = e.toString().toLowerCase();
     if (msg.contains('failed host lookup') ||
         msg.contains('no address associated with hostname') ||

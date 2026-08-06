@@ -475,12 +475,12 @@ class _MainShellState extends ConsumerState<MainShell> {
     final isKeyboardVisible = mediaQuery.viewInsets.bottom > 0;
     final showFloatingTabBar = _supportsFloatingTabBar && !isKeyboardVisible;
     final bottomPadding = mediaQuery.padding.bottom;
-    // 底部 tab 栏下方原本间隔一个“同状态栏高度”的悬停空隙。
-    // 需求：整体**向下**移动两倍胶囊高度（胶囊高 44），即把悬停空隙缩小
-    // 2×44，让 tab 栏 + 搜索图标更贴近屏幕底部（clamp 防负）。
+    // 底部 tab 栏：胶囊+搜索图标已放大 1.2 倍（胶囊高 52.8），
+    // 整体相对此前"下移 2 倍胶囊"位置上移 0.5 倍胶囊高度（净下移 1.5×52.8）。
+    // tabHeight 与 _FloatingTabBar 占高同步，防止内容被 tab 栏遮挡。
     final statusGap = showFloatingTabBar ? mediaQuery.padding.top : 0.0;
     final tabHeight = showFloatingTabBar
-        ? (64.0 + bottomPadding + statusGap - 2 * 44.0)
+        ? (64.0 + 8.0 + bottomPadding + statusGap - 1.5 * 52.8)
             .clamp(0.0, double.infinity)
         : 0.0;
     final shellBody = isKeyboardVisible
@@ -542,9 +542,9 @@ class _FloatingTabBar extends ConsumerWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     // 底部悬停空隙：间隔一个“同状态栏高度”的距离，不贴屏幕底边。
     final statusGap = MediaQuery.of(context).padding.top;
-    // 底部胶囊栏高度：与 capsuleItem 的固定高度（44）保持一致，
-    // 用于把底部状态栏整体再下移一个胶囊高度。
-    const capsuleHeight = 44.0;
+    // 胶囊 + 搜索图标整体放大 1.2 倍（44 → 52.8），
+    // 后续位移量一律以放大后的胶囊高度为基准。
+    const capsuleHeight = 44.0 * 1.2; // 52.8
     final navBg = isDark ? AppColors.darkNavBackground : AppColors.lightNavBackground;
     final selectedBg = isDark ? AppColors.darkNavSelected : AppColors.lightNavSelected;
     final textColor = isDark ? Colors.white : const Color(0xFF1C1C1E);
@@ -561,24 +561,24 @@ class _FloatingTabBar extends ConsumerWidget {
       return GestureDetector(
         onTap: () => navigationShell.goBranch(index),
         child: Container(
-          width: 66,
-          height: 44,
+          width: 66 * 1.2, // 79.2
+          height: capsuleHeight,
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: selected ? selectedBg : Colors.transparent,
-            borderRadius: BorderRadius.circular(30),
+            borderRadius: BorderRadius.circular(30 * 1.2),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 22, color: selected ? textColor : mutedColor),
+              Icon(icon, size: 22 * 1.2, color: selected ? textColor : mutedColor),
               if (selected) ...[
-                const SizedBox(width: 7),
+                const SizedBox(width: 8.4),
                 Text(
                   label,
                   style: TextStyle(
                     color: textColor,
-                    fontSize: 13,
+                    fontSize: 13 * 1.2,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -595,14 +595,14 @@ class _FloatingTabBar extends ConsumerWidget {
       return GestureDetector(
         onTap: () => navigationShell.goBranch(3),
         child: Container(
-          width: 48,
-          height: 48,
+          width: 48 * 1.2, // 57.6
+          height: 48 * 1.2,
           decoration: BoxDecoration(
             color: selected ? selectedBg : navBg,
             shape: BoxShape.circle,
             boxShadow: [shadow],
           ),
-          child: Icon(Icons.search_rounded, size: 22, color: textColor),
+          child: Icon(Icons.search_rounded, size: 22 * 1.2, color: textColor),
         ),
       );
     }
@@ -611,8 +611,9 @@ class _FloatingTabBar extends ConsumerWidget {
       alignment: Alignment.center,
       margin: EdgeInsets.only(
         top: 8,
-        // 向下移动两倍胶囊高度（相对原悬停空隙 statusGap+8 减 2×44）。
-        bottom: (statusGap + 8 - 2 * capsuleHeight)
+        // 以放大后胶囊高度（52.8）为基准：此前向下移动 2 倍胶囊，
+        // 本次整体**上移 0.5 倍胶囊高度**，净下移 = 1.5 × 胶囊（clamp 防负）。
+        bottom: (statusGap + 8 - 1.5 * capsuleHeight)
             .clamp(0.0, double.infinity),
       ),
       child: SafeArea(
@@ -622,10 +623,10 @@ class _FloatingTabBar extends ConsumerWidget {
           children: [
             // 左：影视 / 记录 / 服务器 / 设置，组合成一个胶囊，空间等分
             Container(
-              padding: const EdgeInsets.all(3),
+              padding: const EdgeInsets.all(3.6),
               decoration: BoxDecoration(
                 color: navBg,
-                borderRadius: BorderRadius.circular(36),
+                borderRadius: BorderRadius.circular(36 * 1.2),
                 boxShadow: [shadow],
               ),
               child: Row(
