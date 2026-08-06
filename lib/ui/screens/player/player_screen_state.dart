@@ -2123,34 +2123,30 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   Widget _buildPlayerBody(MediaItem? item, BoxConstraints constraints) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      // 注意：不再注册 onTap 切换控制栏 —— onTap 与 onDoubleTapDown 共存时
-      // 单击需等双击超时（~300ms），且手指微动>slop 会被 scale 抢走，表现为
-      // "点了没反应"。改为 child 最底层 Listener 用原始指针事件做轻点判定：
-      // 立即响应、无竞技场延迟；按钮区由上层处理，双击/长按/拖动照常走手势。
-      onDoubleTapDown: _onDoubleTapDown,
-      onLongPressStart: (_) => _onLongPressStart(),
-      onLongPressEnd: (_) => _onLongPressEnd(),
-      // 用 Scale 手势统一处理：单指→沿用亮度/音量/进度拖动；双指→缩放画面。
-      // GestureDetector 不允许同时挂 pan(drag) 与 scale，故由 scale 分流。
-      onScaleStart: (details) => _onScaleStart(details, constraints),
-      onScaleUpdate: (details) =>
-          _onScaleUpdate(details, constraints),
-      onScaleEnd: _onScaleEnd,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // 最底层：全屏轻点判定层（Listener 透传，不抢上层按钮/手势）。
-          Positioned.fill(
-            child: Listener(
-              behavior: HitTestBehavior.translucent,
-              onPointerDown: _onTapDown,
-              onPointerUp: _onTapUp,
-              child: const SizedBox.expand(),
-            ),
-          ),
-          if (_playerService.coreType == PlayerCoreType.exoPlayer)
+    // 轻点判定 Listener 放 GestureDetector **外层**（translucent）：全屏任何
+    // 位置点击都先经过它（不被 child Stack 上层短路），同时透传给下层
+    // GestureDetector 保证双击/长按/拖动照常。onTap 不注册——onTap 与
+    // onDoubleTapDown 共存时单击需等双击超时(~300ms)，且微动>slop 会被
+    // scale 抢走，表现为"点了没反应"；改用原始指针事件立即 toggle。
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: _onTapDown,
+      onPointerUp: _onTapUp,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onDoubleTapDown: _onDoubleTapDown,
+        onLongPressStart: (_) => _onLongPressStart(),
+        onLongPressEnd: (_) => _onLongPressEnd(),
+        // 用 Scale 手势统一处理：单指→沿用亮度/音量/进度拖动；双指→缩放画面。
+        // GestureDetector 不允许同时挂 pan(drag) 与 scale，故由 scale 分流。
+        onScaleStart: (details) => _onScaleStart(details, constraints),
+        onScaleUpdate: (details) =>
+            _onScaleUpdate(details, constraints),
+        onScaleEnd: _onScaleEnd,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (_playerService.coreType == PlayerCoreType.exoPlayer)
             ClipRect(
               child: Transform.scale(
                 scale: _videoZoom,
