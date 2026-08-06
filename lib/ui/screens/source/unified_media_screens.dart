@@ -2591,8 +2591,14 @@ class _UnifiedServerSwitcher extends ConsumerWidget {
             server.sourceKind == SourceKind.emby ||
             server.sourceKind == SourceKind.feiniu)
         .toList();
+    final scheme = Theme.of(context).colorScheme;
     return PopupMenuButton<String>(
       tooltip: '切换服务器',
+      offset: const Offset(0, -56),
+      position: PopupMenuPosition.under,
+      color: scheme.surfaceContainerHighest,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 6,
       onSelected: (serverId) {
         if (serverId == '__manage__') {
           context.go('/servers');
@@ -2605,42 +2611,100 @@ class _UnifiedServerSwitcher extends ConsumerWidget {
         context.go('/home');
       },
       itemBuilder: (_) => [
-        for (final server in servers)
-          PopupMenuItem<String>(
-            value: server.id,
-            child: Row(children: [
-              const Icon(Icons.video_library_rounded, size: 20),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: Text(server.name, overflow: TextOverflow.ellipsis)),
-              if (server.id == current.id)
-                const Icon(Icons.check_rounded, size: 18),
-            ]),
-          ),
-        const PopupMenuDivider(),
-        const PopupMenuItem<String>(
-          value: '__manage__',
-          child: Row(children: [
-            Icon(Icons.settings_rounded, size: 20),
-            SizedBox(width: 10),
-            Text('管理服务器'),
-          ]),
-        ),
+        _ServerListMenuEntry(servers: servers, currentId: current.id),
       ],
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 48, maxWidth: 220),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          const Icon(Icons.video_library_rounded, size: 22),
+          // 影视源胶囊同款：绿色·指示 + 加粗文字 + 下箭头。
+          Container(
+            width: 8,
+            height: 8,
+            decoration: const BoxDecoration(
+              color: Color(0xFF34C759),
+              shape: BoxShape.circle,
+            ),
+          ),
           const SizedBox(width: 8),
           Flexible(
             child: Text(current.name,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w700)),
+                style: const TextStyle(
+                    fontWeight: FontWeight.w800, fontSize: 16)),
           ),
+          const SizedBox(width: 2),
           const Icon(Icons.keyboard_arrow_down_rounded, size: 20),
         ]),
       ),
     );
+  }
+}
+
+/// 服务器选择菜单项：最多显示 10 个服务器（46px×10），超出上下滚动；
+/// 选中项绿色勾选（影视源胶囊同款 0xFF34C759）；底部保留「管理服务器」入口。
+class _ServerListMenuEntry extends PopupMenuEntry<String> {
+  const _ServerListMenuEntry({required this.servers, required this.currentId});
+  final List<ServerConfig> servers;
+  final String currentId;
+
+  @override
+  double get height =>
+      (46.0 * servers.length).clamp(46.0, 460.0).toDouble() + 57;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 460),
+        child: ListView(
+          shrinkWrap: true,
+          padding: EdgeInsets.zero,
+          children: [
+            for (final server in servers)
+              InkWell(
+                onTap: () => Navigator.pop(context, server.id),
+                child: SizedBox(
+                  height: 46,
+                  child: Row(children: [
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Text(server.name,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: server.id == currentId
+                                ? FontWeight.w800
+                                : FontWeight.w600,
+                            color: scheme.onSurface,
+                          )),
+                    ),
+                    if (server.id == currentId)
+                      const Icon(Icons.check_rounded,
+                          size: 20, color: Color(0xFF34C759)),
+                    const SizedBox(width: 14),
+                  ]),
+                ),
+              ),
+          ],
+        ),
+      ),
+      const Divider(height: 1),
+      InkWell(
+        onTap: () => Navigator.pop(context, '__manage__'),
+        child: SizedBox(
+          height: 48,
+          child: Row(children: [
+            const SizedBox(width: 14),
+            Icon(Icons.settings_rounded, size: 20, color: scheme.onSurface),
+            const SizedBox(width: 10),
+            Text('管理服务器',
+                style: TextStyle(
+                    fontSize: 15, color: scheme.onSurface)),
+          ]),
+        ),
+      ),
+    ]);
   }
 }
 
