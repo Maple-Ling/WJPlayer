@@ -9,21 +9,13 @@
 ##页面截图
 
 
-[![]![1000285431](https://t2.pixhost.to/thumbs/9907/756430014_1000285431.jpg)
+![Screenshot-1](https://i.postimg.cc/NFp0xyjX/Screenshot-2026-08-07-17-17-35-07-b38d774aa1bb7770ed6f2d83069c95e3.jpg)
+![Screenshot-2](https://i.postimg.cc/QNbVDzJN/Screenshot-2026-08-07-17-17-39-77-b38d774aa1bb7770ed6f2d83069c95e3.jpg)
+![Screenshot-3](https://i.postimg.cc/c1m6WzBH/Screenshot-2026-08-07-17-17-50-51-b38d774aa1bb7770ed6f2d83069c95e3.jpg)
+![Screenshot-4](https://i.postimg.cc/hvpG0JtM/Screenshot-2026-08-07-17-17-57-32-b38d774aa1bb7770ed6f2d83069c95e3.jpg)
+![Screenshot-5](https://i.postimg.cc/6qYQh7pc/Screenshot-2026-08-07-17-18-04-05-b38d774aa1bb7770ed6f2d83069c95e3.jpg)
+![Screenshot-6](https://i.postimg.cc/6qYQh7pH/Screenshot-2026-08-07-17-18-24-56-b38d774aa1bb7770ed6f2d83069c95e3.jpg)
 
-![1000285430](https://t2.pixhost.to/thumbs/9907/756430016_1000285430.jpg)
-
-![1000285439](https://t2.pixhost.to/thumbs/9907/756430017_1000285439.jpg)
-
-![1000285438](https://t2.pixhost.to/thumbs/9907/756430022_1000285438.jpg)
-
-![1000285416](https://t2.pixhost.to/thumbs/9907/756430024_1000285416.jpg)
-
-![1000285432](https://t2.pixhost.to/thumbs/9907/756430028_1000285432.jpg)
-
-![1000285435](https://t2.pixhost.to/thumbs/9907/756430031_1000285435.jpg)
-
-![1000285434](https://t2.pixhost.to/thumbs/9907/756430034_1000285434.jpg)
 
 ## 功能特性
 
