@@ -40,6 +40,7 @@ import '../../../core/services/translation/translation_actions.dart';
 import '../../../core/services/translation/translation_engine.dart';
 import '../../../core/services/translation/streaming_subtitle_translator.dart';
 import '../../../core/services/intro_skip_controller.dart';
+import '../../../core/api/danmaku/danmaku_service.dart';
 import '../../../core/services/danmaku_auto_loader.dart';
 import '../../../core/utils/danmaku_postprocess.dart';
 import '../../../core/utils/playback_error_text.dart';

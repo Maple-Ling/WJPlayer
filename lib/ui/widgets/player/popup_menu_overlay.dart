@@ -1803,7 +1803,7 @@ class PopupMenuOverlay extends ConsumerWidget {
   final VoidCallback onClearOutro;
   final VoidCallback onExternalSubtitleRequested;
 
-  Widget _menu({UnifiedMediaResource? unifiedResource}) {
+  Widget _menu({UnifiedMediaResource? unifiedResource, WidgetRef? ref}) {
     switch (activeMenu!) {
       case PopupMenuId.danmaku:
         return PopupDanmakuMenu(
@@ -2018,7 +2018,7 @@ class PopupMenuOverlay extends ConsumerWidget {
     if (menu == null) return const SizedBox.shrink();
 
     final isInlineAggregate = menu == PopupMenuId.aggregate;
-    final menuChild = _menu(unifiedResource: unifiedResource);
+    final menuChild = _menu(unifiedResource: unifiedResource, ref: ref);
     return Stack(
       fit: StackFit.expand,
       children: [
