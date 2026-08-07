@@ -1808,12 +1808,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   void _feedDanmakuAt(Duration rawPosition) {
     final loader = _danmakuLoader;
     if (loader == null) return;
-    // 倍速同步：加载器按当前倍速拉长窗口防断层（canvas_danmaku 引擎侧
-    // 同时调速渲染）。此处每次喂入前比对，覆盖所有 setSpeed 入口。
-    final speed = _playerService.speed;
-    if ((speed - loader.speedRate).abs() > 0.001) {
-      loader.setSpeed(speed);
-    }
     final position = rawPosition -
         Duration(
             milliseconds:
@@ -1864,6 +1858,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _danmakuLoader = DanmakuLoader(
       items: items,
       controller: controller,
+      initialPositionMs: _playerService.position.inMilliseconds,
       feedFilter: _danmakuFeedFilter,
     );
     // 不在此立即喂弹幕：_indexDanmaku 可能在 build 期间（_buildVideoArea 的
