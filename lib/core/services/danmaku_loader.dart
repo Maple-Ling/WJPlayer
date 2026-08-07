@@ -63,7 +63,7 @@ class DanmakuLoader {
     required DanmakuController<dynamic> controller,
     this.maxShowCount = 45,
     this.initialPositionMs = 0,
-    this.feedFilter = _alwaysFeed,
+    this.feedFilter = _defaultTrue,
   })  : _items = items,
         _controller = controller,
         _fedMs = initialPositionMs - _seedAheadMs;
