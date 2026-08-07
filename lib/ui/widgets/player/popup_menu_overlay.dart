@@ -1803,7 +1803,7 @@ class PopupMenuOverlay extends ConsumerWidget {
   final VoidCallback onClearOutro;
   final VoidCallback onExternalSubtitleRequested;
 
-  Widget _menu({UnifiedMediaResource? unifiedResource, WidgetRef? ref}) {
+  Widget _menu({UnifiedMediaResource? unifiedResource, required WidgetRef ref}) {
     switch (activeMenu!) {
       case PopupMenuId.danmaku:
         return PopupDanmakuMenu(
