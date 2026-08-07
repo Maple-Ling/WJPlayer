@@ -13,12 +13,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   Timer? _pendingTapTimer;
   // 延迟中的单击 toggle：双击/连点窗口内由 _onTapDown 取消，UI 完全不变化。
   Timer? _pendingTapToggle;
-  // 陀螺仪画面翻转：手机上下颠倒（加速度计 y 轴符号翻转）→ 画面 180° 翻转。
+  // 陀螺仪画面翻转：横屏下 x 轴符号直接判定方向（x<0 翻转 180°）。
   bool _videoFlipped = false;
   StreamSubscription<AccelerometerEvent>? _accelSub;
-  /// 横屏翻转基准：首次检测到横屏时的 x 轴符号（1 = landscapeRight, -1 = landscapeLeft）。
-  /// 后续 x 符号与此不同时判定为 180° 翻转。竖屏时重置为 0。
-  int _landscapeFlipBaseline = 0;
   bool _isSliderDragging = false;
   double? _sliderDragValue;
   bool _decoderSwitchInFlight = false;
@@ -1961,10 +1958,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       backgroundColor: Colors.black,
       body: LayoutBuilder(
         builder: (context, constraints) {
-          return Stack(
-            fit: StackFit.expand,
-            children: [
-              _buildPlayerBody(item, constraints),
+          return AnimatedRotation(
+            // 陀螺仪翻转：整屏（视频+字幕+控制 UI）一起 180° 旋转——
+            // Transform 旋转后 hit test 自动逆变换，触摸坐标对应旋转后视觉。
+            turns: _videoFlipped ? 0.5 : 0,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOutCubic,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                _buildPlayerBody(item, constraints),
               // 新播放器控制层：视频层之上叠加 PlayerOverlay（TopBar/BottomBar/
               // SideButtons/PopupMenuOverlay + 状态栏），替换原胶囊菜单控制层。
               Positioned.fill(
@@ -2143,7 +2146,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   bottom: 92,
                   child: SourceQualityButton(onSelect: _switchSourceQuality),
                 ),
-            ],
+              ],
+            ),
           );
         },
       ),
@@ -2174,29 +2178,18 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // 陀螺仪翻转：手机上下颠倒时画面 180° 旋转（含字幕层一起翻）。
-            AnimatedRotation(
-              turns: _videoFlipped ? 0.5 : 0,
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOutCubic,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (_playerService.coreType == PlayerCoreType.exoPlayer)
-                    ClipRect(
-                      child: Transform.scale(
-                        scale: _videoZoom,
-                        child: _buildVideoArea(),
-                      ),
-                    )
-                  else
-                    _buildVideoArea(),
-                  // Exo 字幕固定在播放器层，不参与视频比例/填充/裁剪。
-                  if (_playerService.coreType == PlayerCoreType.exoPlayer)
-                    _buildExoSubtitleOverlay(),
-                ],
-              ),
-            ),
+            if (_playerService.coreType == PlayerCoreType.exoPlayer)
+              ClipRect(
+                child: Transform.scale(
+                  scale: _videoZoom,
+                  child: _buildVideoArea(),
+                ),
+              )
+            else
+              _buildVideoArea(),
+            // Exo 字幕固定在播放器层，不参与视频比例/填充/裁剪。
+            if (_playerService.coreType == PlayerCoreType.exoPlayer)
+              _buildExoSubtitleOverlay(),
             if (!Platform.isAndroid && _playerService.brightness < 1.0)
             Positioned.fill(
               child: IgnorePointer(
@@ -2528,22 +2521,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         samplingPeriod: SensorInterval.normalInterval,
       ).listen((event) {
         if (!mounted) return;
-        // 仅横屏生效：重力在 X 轴为主（|x| > |y|）才判定为横屏
+        // 仅横屏生效：重力在 X 轴为主（|x| > |y|）才判定为横屏。
+        // 不用「基线+符号比较」：翻转瞬间 x 过零会被误判竖屏、基线重置，
+        // 导致首次翻转不生效、二次才翻转的滞后。直接由 x 符号判定方向：
+        // x > 0（手机右侧朝下）与 x < 0（左侧朝下）互为 180°。
         final ax = event.x.abs();
         final ay = event.y.abs();
-        final isLandscapeNow = ax > ay;
-        if (!isLandscapeNow) {
-          // 竖屏：重置基准，不翻转画面
-          if (_landscapeFlipBaseline != 0) {
-            _landscapeFlipBaseline = 0;
-          }
-          return;
-        }
-        // 横屏：以首次检测到的 x 符号为基准，符号翻转即视为 180° 旋转
-        if (_landscapeFlipBaseline == 0) {
-          _landscapeFlipBaseline = event.x > 0 ? 1 : -1;
-        }
-        final flipped = (event.x > 0 ? 1 : -1) != _landscapeFlipBaseline;
+        if (ax <= ay) return; // 竖屏（或翻转瞬间）：不干预画面方向
+        // 死区：重力分量太小时传感器噪声大，保持当前方向不抖。
+        if (ax < 4.0) return;
+        final flipped = event.x < 0;
         if (flipped != _videoFlipped) {
           setState(() => _videoFlipped = flipped);
         }
@@ -2571,10 +2558,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _tapDownTime = DateTime.now();
   }
 
-  /// 全屏轻点抬起：位移 <20px 且时长 <150ms（非拖动/长按）→ 延迟 250ms
+  /// 全屏轻点抬起：位移 <20px 且时长 <150ms（非拖动/长按）→ 延迟 300ms
   /// 执行 toggle（双击窗口内第二击由 [_onTapDown] 取消，UI 零闪现）。
-  /// 单击 250ms 后切换控制栏；延迟由 Listener 原始指针承担，无手势竞技场
-  /// 等待，事件不丢失。
+  /// 单击 300ms 后切换控制栏；延迟由 Listener 原始指针承担，无手势竞技场
+  /// 等待，事件不丢失。窗口取 300ms 与 Flutter 双击识别上限一致——
+  /// 所有被识别为双击的点击，第一击 toggle 都会被第二击取消。
   void _onTapUp(PointerUpEvent event) {
     if (_playerService.isLocked || _isLongPressing) return;
     final now = DateTime.now();
@@ -2582,7 +2570,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     final dist = (event.position - _tapDownPosition).distance;
     if (dt > const Duration(milliseconds: 150) || dist > 20) return;
     _pendingTapToggle?.cancel();
-    _pendingTapToggle = Timer(const Duration(milliseconds: 250), () {
+    _pendingTapToggle = Timer(const Duration(milliseconds: 300), () {
       _pendingTapToggle = null;
       if (mounted) _playerService.toggleControls();
     });

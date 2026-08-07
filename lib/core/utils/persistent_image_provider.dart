@@ -232,17 +232,44 @@ class PersistentNetworkImageProvider
   }
 
   Future<HttpClientResponse> _getResponse(Uri resolved) async {
-    final HttpClientRequest request = await httpClient.getUrl(resolved);
-    headers?.forEach((String name, String value) {
-      // set 而非 add：httpClient.userAgent 已注入 kAppUserAgent，用 add 会叠成
-      // 双 User-Agent（WJPlayer/x + 浏览器UA），被不少 CDN 拒绝→图标全红。
-      request.headers.set(name, value);
-    });
-    final HttpClientResponse response = await request.close();
-    if (timeLimit != null) {
-      response.timeout(timeLimit!);
+    // 手动跟随 3xx：Dart HttpClient 自动跟随在跨源重定向（如 CDN 域名 307 →
+    // 内网穿透 ddns:随机端口）时会按 RFC 6454 丢弃 Authorization/Cookie 头，
+    // 导致飞牛/Emby 图片鉴权失败（红色报错图）。这里每跳显式保留全部请求头，
+    // 301/302/303 转 GET（图片本就是 GET），最多 5 跳。
+    var current = resolved;
+    for (var hop = 0; hop < 5; hop++) {
+      final HttpClientRequest request = await httpClient.getUrl(current);
+      headers?.forEach((String name, String value) {
+        // set 而非 add：httpClient.userAgent 已注入 kAppUserAgent，用 add 会叠成
+        // 双 User-Agent（WJPlayer/x + 浏览器UA），被不少 CDN 拒绝→图标全红。
+        request.headers.set(name, value);
+      });
+      final HttpClientResponse response = await request.close();
+      final status = response.statusCode;
+      if (status >= 300 && status < 400) {
+        final location = response.headers.value(HttpHeaders.locationHeader);
+        await response.drain<void>();
+        if (location == null || location.isEmpty) return response;
+        current = location.startsWith('http')
+            ? Uri.parse(location)
+            : current.resolve(location);
+        continue;
+      }
+      if (timeLimit != null) {
+        response.timeout(timeLimit!);
+      }
+      return response;
     }
-    return response;
+    // 超过 5 跳：返回最后一跳响应（不无限跟随）。
+    final HttpClientRequest last = await httpClient.getUrl(current);
+    headers?.forEach((String name, String value) {
+      last.headers.set(name, value);
+    });
+    final HttpClientResponse lastResponse = await last.close();
+    if (timeLimit != null) {
+      lastResponse.timeout(timeLimit!);
+    }
+    return lastResponse;
   }
 
   Future<HttpClientResponse?> _tryGetResponse(Uri resolved) async {
@@ -269,7 +296,11 @@ class PersistentNetworkImageProvider
     final revision = ProxyRuntime.instance.revision;
     if (_sharedHttpClient == null || _sharedClientRevision != revision) {
       _sharedHttpClient?.close(force: true);
-      _sharedHttpClient = createProxiedHttpClient()..autoUncompress = false;
+      // followRedirects=false：重定向由 _getResponse 手动跟随（跨源保留
+      // Authorization/Cookie 鉴权头，Dart 自动跟随会按 RFC 6454 丢弃）。
+      _sharedHttpClient = createProxiedHttpClient()
+        ..autoUncompress = false
+        ..followRedirects = false;
       _sharedClientRevision = revision;
     }
     HttpClient client = _sharedHttpClient!;

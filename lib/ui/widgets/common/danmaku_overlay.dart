@@ -555,12 +555,13 @@ class DanmakuPainter extends CustomPainter {
     return fallbackLane;
   }
 
-  /// 固定弹幕（顶部/底部，居中显示 5 秒）：
-  /// B 站 4=底部/5=顶部；腾讯/爱奇艺/优酷 2=顶部/3=底部——统一兼容。
-  static bool _isFixed(int type) =>
-      type == 2 || type == 3 || type == 4 || type == 5;
-  static bool _isTop(int type) => type == 2 || type == 5;
-  static bool _isBottom(int type) => type == 3 || type == 4;
+  /// 固定弹幕（顶部/底部，居中显示 5 秒）：**仅** 4=底部/5=顶部。
+  /// B 站/弹弹Play 的 1/2/3 都是滚动弹幕（2/3 与 1 同义），若把 2/3 当固定
+  /// 会把大量滚动弹幕挤进顶部/底部固定区 → 不滚动直接显示 + 互相重叠。
+  /// 腾讯/爱奇艺/优酷 2=顶部/3=底部 已由 normalizeDanmakuType 映射为 5/4。
+  static bool _isFixed(int type) => type == 4 || type == 5;
+  static bool _isTop(int type) => type == 5;
+  static bool _isBottom(int type) => type == 4;
   /// 逆向滚动（B 站 mode 6：左→右）。
   static bool _isReverse(int type) => type == 6;
 
