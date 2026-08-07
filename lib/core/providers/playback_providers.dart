@@ -636,19 +636,6 @@ final customDanmakuFontPathProvider =
   );
 });
 
-final rememberBrightnessProvider =
-    StateNotifierProvider<PreferenceNotifier<bool>, bool>((ref) {
-  return PreferenceNotifier<bool>(
-    defaultValue: true,
-    readValue: (prefs) => prefs.getBool('wjplayer_remember_brightness'),
-    writeValue: (prefs, value) async {
-      await prefs.setBool('wjplayer_remember_brightness', value);
-    },
-  );
-});
-
-final playerBrightnessProvider = StateProvider<double>((ref) => 1.0);
-
 final subtitleFontProvider =
     StateNotifierProvider<PreferenceNotifier<String>, String>((ref) {
   return PreferenceNotifier<String>(

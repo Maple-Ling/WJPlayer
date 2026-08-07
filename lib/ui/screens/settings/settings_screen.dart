@@ -119,7 +119,6 @@ Map<String, dynamic> _buildBackupPayload(WidgetRef ref) {
       'preferredSubtitleLanguage': ref.read(preferredSubtitleLanguageProvider),
       'preferredAudioLanguage': ref.read(preferredAudioLanguageProvider),
       'preferredVersion': ref.read(preferredVersionProvider),
-      'rememberBrightness': ref.read(rememberBrightnessProvider),
       'subtitleFont': ref.read(subtitleFontProvider),
       'mpvDolbyVisionFix': ref.read(mpvDolbyVisionFixProvider),
       'dolbyAutoGpuNextSw': ref.read(dolbyAutoGpuNextSwProvider),
@@ -238,10 +237,6 @@ Future<void> _restoreBackupPayload(
   if (settings['preferredVersion'] is String) {
     ref.read(preferredVersionProvider.notifier).state =
         settings['preferredVersion'] as String;
-  }
-  if (settings['rememberBrightness'] is bool) {
-    ref.read(rememberBrightnessProvider.notifier).state =
-        settings['rememberBrightness'] as bool;
   }
   if (settings['subtitleFont'] is String) {
     ref.read(subtitleFontProvider.notifier).state =

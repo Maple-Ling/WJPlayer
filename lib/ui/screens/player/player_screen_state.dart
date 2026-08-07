@@ -5,11 +5,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   late VideoPlayerService _playerService;
   bool _showRemaining = false;
   bool _isLongPressing = false;
-  // ---- canvas_danmaku 弹幕调度（按秒分组 + 播放位置喂弹幕 + seek 重喂）----
+  // ---- canvas_danmaku 弹幕调度（滑动窗口加载：游标+二分+去重+seek 重喂）----
   DanmakuController<dynamic>? _danmakuController;
-  final Map<int, List<DanmakuItem>> _danmakuBySecond = {};
+  DanmakuLoader? _danmakuLoader;
   List<DanmakuItem>? _lastIndexedDanmaku;
-  int _lastFedSecond = -1;
   Duration _lastFeedPosition = Duration.zero;
   bool _lastPlayingState = true;
   // 轻点判定（全屏点击切换控制栏）：记录按下位置/时间。抬起后延迟 300ms
@@ -22,8 +21,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   Timer? _pendingTapToggle;
   // 上一击是「双击第二击」（tapDown 取消了 pending）：其 tapUp 不再 toggle。
   bool _tapWasDoubleTap = false;
-  // 陀螺仪画面翻转：横屏下 x 轴符号直接判定方向（x<0 翻转 180°）。
-  bool _videoFlipped = false;
+  // 陀螺仪画面翻转：横屏下 x 轴符号直接判定方向（x<0 翻转 180°），
+  // 翻转转为切换系统方向（landscapeLeft↔Right），不再用 Transform。
   StreamSubscription<AccelerometerEvent>? _accelSub;
   bool _isSliderDragging = false;
   double? _sliderDragValue;
@@ -1798,64 +1797,30 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     }
   }
 
-  /// 弹幕按秒喂入：位置跳变（seek/回退 >1.5s）时清空重喂；弹幕延迟
+  /// 弹幕按滑动窗口喂入：交给 DanmakuLoader 处理（游标+二分+去重）。
+  /// 位置跳变（seek/回退 >1.5s）时由 loader.onSeek 清空重喂；弹幕延迟
   /// （danmakuDelay）作用在喂入位置前，与旧实现语义一致。
   void _feedDanmakuAt(Duration rawPosition) {
-    final controller = _danmakuController;
-    final items = _lastIndexedDanmaku;
-    if (controller == null || items == null || items.isEmpty) return;
+    final loader = _danmakuLoader;
+    if (loader == null) return;
+    // 倍速同步：加载器按当前倍速拉长窗口防断层（canvas_danmaku 引擎侧
+    // 同时调速渲染）。此处每次喂入前比对，覆盖所有 setSpeed 入口。
+    final speed = _playerService.speed;
+    if ((speed - loader.speedRate).abs() > 0.001) {
+      loader.setSpeed(speed);
+    }
     final position = rawPosition -
         Duration(
             milliseconds:
                 (ref.read(danmakuDelayProvider) * 1000).round());
     if (position < Duration.zero) return;
-    final second = position.inSeconds;
-    final delta = position - _lastFeedPosition;
-    if (position < _lastFeedPosition ||
-        delta.inMilliseconds.abs() > 1500) {
+    if (position - _lastFeedPosition > const Duration(milliseconds: 1500) ||
+        position < _lastFeedPosition) {
       // seek / 回退：清空当前弹幕，重新从当前位置开始喂。
-      controller.clear();
-      _lastFedSecond = -1;
+      loader.reset(position);
     }
     _lastFeedPosition = position;
-    if (second == _lastFedSecond) return;
-    _lastFedSecond = second;
-    final batch = _danmakuBySecond[second];
-    if (batch == null) return;
-    // 密度过滤：保留比例 = 0.3 + density×0.7（density 1.0 全量、0 约 30%），
-    // 按弹幕 time 散列均匀丢弃，避免同一秒连续几条被整段丢弃。
-    final keepPercent = 0.3 + ref.read(danmakuDensityProvider).clamp(0.0, 1.0) * 0.7;
-    for (final item in batch) {
-      if (item.text.isEmpty) continue;
-      // 悬浮/滚动 × 彩色/白色 四开关：feed 时实时读取，切换后新弹幕自然生效（无感）。
-      // 白色 = color == 16777215；同一类两个开关都关则该类弹幕不显示。
-      if (item.type == 4 || item.type == 5) {
-        if (item.color == 16777215
-            ? !ref.read(danmakuFloatingWhiteProvider)
-            : !ref.read(danmakuFloatingColorfulProvider)) {
-          continue;
-        }
-      } else if (item.color == 16777215
-          ? !ref.read(danmakuScrollWhiteProvider)
-          : !ref.read(danmakuScrollColorfulProvider)) {
-        continue;
-      }
-      if (((item.time * 7919) % 1000) / 1000 > keepPercent) continue;
-      controller.addDanmaku(DanmakuContentItem<dynamic>(
-        item.text,
-        color: Color(item.color | 0xFF000000),
-        type: _canvasDanmakuType(item.type),
-        count: item.count > 1 ? item.count : null,
-      ));
-    }
-  }
-
-  /// 弹幕 type → canvas_danmaku 类型：4=底部、5=顶部，其余（1/2/3 滚动、
-  /// 6 逆向、7+ 特殊）统一右→左滚动（逆向/高级弹幕不做特判）。
-  static DanmakuItemType _canvasDanmakuType(int type) {
-    if (type == 4) return DanmakuItemType.bottom;
-    if (type == 5) return DanmakuItemType.top;
-    return DanmakuItemType.scroll;
+    loader.onPositionChanged(position.inMilliseconds);
   }
 
   /// 弹幕设置 → canvas_danmaku DanmakuOption：
@@ -1882,17 +1847,45 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     );
   }
 
-  /// 弹幕列表变化（加载/重过滤）时重建按秒索引并清空已上屏弹幕。
+  /// 弹幕列表变化（加载/重过滤/切集）时：重建滑动窗口 loader 并重喂。
   void _indexDanmaku(List<DanmakuItem> items) {
-    _danmakuBySecond.clear();
-    for (final item in items) {
-      final s = item.time.floor();
-      if (s < 0) continue;
-      _danmakuBySecond.putIfAbsent(s, () => []).add(item);
-    }
-    _danmakuController?.clear();
-    _lastFedSecond = -1;
+    _lastIndexedDanmaku = items;
+    final controller = _danmakuController;
+    _danmakuLoader?.dispose();
+    _danmakuLoader = null;
+    if (controller == null || items.isEmpty) return;
+    // 逐条过滤：悬浮/滚动 × 彩色/白色 四开关 + 密度过滤在喂入时实时读取
+    //（切换后新弹幕自然生效，无感），语义与旧实现一致。
+    _danmakuLoader = DanmakuLoader(
+      items: items,
+      controller: controller,
+      feedFilter: _danmakuFeedFilter,
+    );
     _lastFeedPosition = _playerService.position;
+    _danmakuLoader!.onPositionChanged(_playerService.position.inMilliseconds);
+  }
+
+  /// 弹幕喂入过滤：彩色/白 × 悬浮/滚动四开关 + 密度保持。返回 false 表示丢弃。
+  bool _danmakuFeedFilter(DanmakuItem item) {
+    if (item.text.isEmpty) return false;
+    // 悬浮/滚动 × 彩色/白色 四开关：白色 = color == 16777215；
+    // 同一类两个开关都关则该类弹幕不显示。
+    if (item.type == 4 || item.type == 5) {
+      if (item.color == 16777215
+          ? !ref.read(danmakuFloatingWhiteProvider)
+          : !ref.read(danmakuFloatingColorfulProvider)) {
+        return false;
+      }
+    } else if (item.color == 16777215
+        ? !ref.read(danmakuScrollWhiteProvider)
+        : !ref.read(danmakuScrollColorfulProvider)) {
+      return false;
+    }
+    // 密度过滤：保留比例 = 0.3 + density×0.7，按 time 散列均匀丢弃。
+    final keepPercent =
+        0.3 + ref.read(danmakuDensityProvider).clamp(0.0, 1.0) * 0.7;
+    if (((item.time * 7919) % 1000) / 1000 > keepPercent) return false;
+    return true;
   }
 
   /// ExoPlayer 解码器初始化失败（DTS 等手机 MediaCodec 不支持）时自动切
@@ -2016,6 +2009,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _accelSub?.cancel();
     _accelSub = null;
     _pendingTapToggle?.cancel();
+    _danmakuLoader?.dispose();
+    _danmakuLoader = null;
     _danmakuController = null;
     _statusTimer?.cancel();
     SystemInfoService.instance.stop();
@@ -2089,13 +2084,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       backgroundColor: Colors.black,
       body: LayoutBuilder(
         builder: (context, constraints) {
-          return AnimatedRotation(
-            // 陀螺仪翻转：整屏（视频+字幕+控制 UI）一起 180° 旋转——
-            // Transform 旋转后 hit test 自动逆变换，触摸坐标对应旋转后视觉。
-            turns: _videoFlipped ? 0.5 : 0,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOutCubic,
-            child: Stack(
+          // 陀螺仪翻转改为切换系统方向（方案A）：Android 旋转整个 Activity，
+          // 状态栏/控制栏/亮度音量滑块随系统重排，不再用 AnimatedRotation 假装翻转。
+          return Stack(
               fit: StackFit.expand,
               children: [
                 _buildPlayerBody(item, constraints),
@@ -2310,8 +2301,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   child: SourceQualityButton(onSelect: _switchSourceQuality),
                 ),
               ],
-            ),
-          );
+            );
         },
       ),
     );
@@ -2546,20 +2536,24 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             if (danmakuEnabled && danmakuItems.isNotEmpty)
               Positioned.fill(
                 // canvas_danmaku 渲染引擎：固定动画时长（宽弹幕更快，B 站
-                // 语义）+ 逐条防重叠；弹幕按秒由 _feedDanmakuAt 喂入。
-                child: DanmakuScreen<dynamic>(
-                  createdController: (c) {
-                    _danmakuController = c;
-                    // 重新挂载后从当前位置重喂（清空上一生命周期残留）。
-                    _lastFedSecond = -1;
-                  },
-                  option: _buildDanmakuOption(
-                    fontSize: danmakuFontSize,
-                    opacity: danmakuOpacity,
-                    area: danmakuDisplayArea,
-                    stroke: danmakuStroke,
-                    speed: ref.read(danmakuSpeedProvider),
-                    fontFamily: danmakuFontFamily,
+                // 语义）+ 逐条防重叠；弹幕按滑动窗口由 _feedDanmakuAt 喂入。
+                // RepaintBoundary 隔离弹幕层重绘，避免弹幕刷新拖累视频层/手势层。
+                child: RepaintBoundary(
+                  child: DanmakuScreen<dynamic>(
+                    createdController: (c) {
+                      _danmakuController = c;
+                      // 控制器重建后同步倍速并重喂当前窗口。
+                      _danmakuLoader?.setSpeed(_playerService.speed);
+                      _indexDanmaku(_lastIndexedDanmaku ?? const []);
+                    },
+                    option: _buildDanmakuOption(
+                      fontSize: danmakuFontSize,
+                      opacity: danmakuOpacity,
+                      area: danmakuDisplayArea,
+                      stroke: danmakuStroke,
+                      speed: ref.read(danmakuSpeedProvider),
+                      fontFamily: danmakuFontFamily,
+                    ),
                   ),
                 ),
               ),
@@ -2690,12 +2684,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _gestureIsZoom = false;
   }
 
-  /// 全屏轻点按下：记录位置与时间（供抬起时判定轻点）。
   /// 陀螺仪画面翻转：仅在**横屏**下生效。监听加速度计 X 轴，
-  /// 手机左右旋转 180°（landscapeLeft ↔ landscapeRight，x 符号翻转）→ 画面 180° 翻转。
-  /// 竖屏不自动翻转（用户可手动点击旋转按钮）。带死区（>4 m/s²）防抖动；
-  /// 传感器不可用/无权限时静默（画面不变）。
+  /// 手机左右旋转 180°（landscapeLeft ↔ landscapeRight，x 符号翻转）→ 切换系统方向。
+  /// 由 Android 旋转整个 Activity（状态栏/控制栏/亮度音量滑块/文字全部随手持转正），
+  /// 不再用 Transform 假装翻转。竖屏不自动翻转（用户可手动点击旋转按钮）。
+  /// 带死区（>4 m/s²）防抖动；传感器不可用/无权限时静默（画面不变）。
   void _startAccelerometerFlipDetection() {
+    // 上次陀螺仪翻转方向（方法级闭包状态，订阅生命周期内持续有效）。
+    var lastGyroFlipped = false;
     try {
       _accelSub = accelerometerEventStream(
         samplingPeriod: SensorInterval.normalInterval,
@@ -2711,8 +2707,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         // 死区：重力分量太小时传感器噪声大，保持当前方向不抖。
         if (ax < 4.0) return;
         final flipped = event.x < 0;
-        if (flipped != _videoFlipped) {
-          setState(() => _videoFlipped = flipped);
+        // 翻转=切换系统方向（方案A）。用静态变量记住当前翻转态做去抖比较，
+        // 无需 setState：系统方向变化会触发 Activity 旋转重排（状态栏/控制栏/
+        // 亮度音量滑块/文字全部随手持转正）。
+        if (flipped != lastGyroFlipped) {
+          lastGyroFlipped = flipped;
+          SystemChrome.setPreferredOrientations([
+            flipped
+                ? DeviceOrientation.landscapeRight
+                : DeviceOrientation.landscapeLeft,
+          ]);
         }
       }, onError: (_) {
         _accelSub?.cancel();

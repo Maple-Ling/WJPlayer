@@ -60,6 +60,14 @@ class VideoPlayerService extends ChangeNotifier {
   static int _pageSystemControlsSessionCount = 0;
   static Future<void>? _pageSystemControlsRestore;
 
+  /// app 运行期播放器亮度档位记忆（大厂语义）：
+  /// - 首次进入播放器：null → 读取系统当前亮度
+  /// - 播放器内调过亮度：写入此值
+  /// - 再次进入播放器（同一次 app 会话，含切内核/换线路重建 service）：按此档位，
+  ///   不再读系统（退出播放器清除了窗口覆盖后系统亮度可能已变，不能覆盖用户档位）。
+  /// app 重启自然清零（不持久化，符合"每次打开 app 后只第一次获取系统亮度"）。
+  static double? _sessionBrightness;
+
   PlayerAdapter? _adapter;
   PlayerCoreType _coreType = PlayerCoreType.exoPlayer;
   bool _hasReportedStart = false;
@@ -1411,10 +1419,17 @@ class VideoPlayerService extends ChangeNotifier {
         _systemControls.invokeMethod<num>('getBrightness'),
         _systemControls.invokeMethod<num>('getMediaVolume'),
       ]);
-      if (values[0] != null) {
+      // 亮度档位记忆（大厂语义）：
+      // - 同一次 app 会话内已调过播放器亮度（_sessionBrightness 非空）→ 按上次的来，
+      //   不再读系统（否则退出播放器清除覆盖后，再次进入会跟系统亮度而不是用户档位）。
+      // - 首次进入播放器（无记忆）→ 读系统当前亮度。
+      if (_sessionBrightness != null) {
+        _currentBrightness = _sessionBrightness!;
+      } else if (values[0] != null) {
         _currentBrightness =
             values[0]!.toDouble().clamp(0.01, 1.0).toDouble();
       }
+      // 音量是全局 STREAM_MUSIC，系统值即档位，直接取当前值即可（天然记忆）。
       if (values[1] != null) {
         _currentVolume = values[1]!.toDouble().clamp(0.0, 1.0).toDouble();
       }
@@ -1480,23 +1495,14 @@ class VideoPlayerService extends ChangeNotifier {
       if (capture != null) await capture;
       await Future<void>.delayed(Duration.zero);
       if (_pageSystemControlsSessionCount != 0) return;
-      final snapshot = _pageSystemControlsSnapshot;
-      if (snapshot == null) return;
       try {
-        if (snapshot.brightness != null) {
-          await _systemControls.invokeMethod<num>('setBrightness', {
-            'value': snapshot.brightness,
-          });
-        }
-        if (snapshot.volume != null) {
-          await _systemControls.invokeMethod<num>('setMediaVolume', {
-            'value': snapshot.volume,
-          });
-        }
+        // 退出播放器 → 大厂语义（腾讯/B站/iQiyi）：
+        // - 亮度：清除窗口覆盖（screenBrightness=-1），让窗口实时跟随系统当前亮度。
+        //   不恢复"进入时旧值"——否则用户退出前在系统里改过亮度又会被盖回去。
+        // - 音量：是全局 STREAM_MUSIC，本身就是系统值，退出不需要恢复/操作。
+        await _systemControls.invokeMethod<num>('restoreBrightness');
       } catch (_) {
-        // 页面退出时尽力恢复；单个通道失败不能阻止页面销毁。
-      } finally {
-        _pageSystemControlsSnapshot = null;
+        // 页面退出时尽力恢复；失败不阻塞页面销毁。
       }
     }();
     _pageSystemControlsRestore = future;
@@ -1519,31 +1525,22 @@ class VideoPlayerService extends ChangeNotifier {
   }
 
   /// App 进入后台（切任务栏/回桌面/切走）：播放器仍存活但离开播放界面，
-  /// 立即把系统亮度/音量恢复为进入播放器时的原始值，不让播放器内的调节
-  /// 值影响用户在桌面/其它 app 的观感。会话与快照保持不动，回前台由
+  /// 清除播放器的亮度窗口覆盖，让窗口实时跟随系统当前亮度；音量是全局媒体音量，
+  /// 本身就是系统值不必改动。会话/档位保持不动，回前台由
   /// [reapplyForForeground] 重新应用播放器内的调节值。
   Future<void> restoreForBackground() async {
     if (!Platform.isAndroid) return;
-    final snapshot = _pageSystemControlsSnapshot;
-    if (snapshot == null) return;
     try {
-      if (snapshot.brightness != null) {
-        await _systemControls.invokeMethod<num>('setBrightness', {
-          'value': snapshot.brightness,
-        });
-      }
-      if (snapshot.volume != null) {
-        await _systemControls.invokeMethod<num>('setMediaVolume', {
-          'value': snapshot.volume,
-        });
-      }
+      await _systemControls.invokeMethod<num>('restoreBrightness');
     } catch (_) {
-      // 单个通道失败不阻塞恢复。
+      // 单个通道失败不阻塞。
     }
   }
 
   /// App 回到前台（从任务栏/桌面返回播放界面）：把播放器内当前调节的
-  /// 音量/亮度重新应用到系统（与 [restoreForBackground] 配对）。
+  /// 亮度/音量重新应用到系统（与 [restoreForBackground] 配对）。
+  /// - 亮度：重新设置窗口覆盖为播放器档位（_currentBrightness）。
+  /// - 音量：应用 _currentVolume（手势时已从系统校准，即最新系统值）。
   Future<void> reapplyForForeground() async {
     if (!Platform.isAndroid) return;
     try {
@@ -1561,6 +1558,8 @@ class VideoPlayerService extends ChangeNotifier {
   /// 设置系统窗口亮度。系统通道不可用时保留软件亮度值，保证其它平台不崩溃。
   Future<void> setBrightness(double brightness) async {
     _currentBrightness = brightness.clamp(0.01, 1.0).toDouble();
+    // 记录 app 运行期亮度档位：同会话再次进入播放器时按上次的来（大厂语义）。
+    _sessionBrightness = _currentBrightness;
     try {
       final value = await _systemControls.invokeMethod<num>(
         'setBrightness',
@@ -1571,30 +1570,6 @@ class VideoPlayerService extends ChangeNotifier {
       // 非 Android 或旧版本插件回退到画面遮罩。
     }
     notifyListeners();
-  }
-
-  /// 保存当前亮度仅用于播放器重建期间恢复；退出播放页不覆盖系统原始亮度。
-  Future<void> saveBrightness() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble('player_brightness', _currentBrightness);
-  }
-
-  /// 从系统读取当前窗口亮度，不能读取时再回退历史值。
-  Future<void> loadBrightness() async {
-    try {
-      final value = await _systemControls.invokeMethod<num>('getBrightness');
-      if (value != null) {
-        _currentBrightness = value.toDouble().clamp(0.01, 1.0).toDouble();
-        notifyListeners();
-        return;
-      }
-    } catch (_) {}
-    final prefs = await SharedPreferences.getInstance();
-    final savedBrightness = prefs.getDouble('player_brightness');
-    if (savedBrightness != null) {
-      _currentBrightness = savedBrightness.clamp(0.01, 1.0).toDouble();
-      notifyListeners();
-    }
   }
 
   /// 显示/隐藏控制栏。锁定态下仍可切换：只影响那颗解锁按钮的显隐（完整控制栏另有 !isLocked 门控）。
