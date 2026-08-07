@@ -13,6 +13,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   Timer? _pendingTapTimer;
   // 延迟中的单击 toggle：双击/连点窗口内由 _onTapDown 取消，UI 完全不变化。
   Timer? _pendingTapToggle;
+  // 上一击是「双击第二击」（tapDown 取消了 pending）：其 tapUp 不再 toggle。
+  bool _tapWasDoubleTap = false;
   // 陀螺仪画面翻转：横屏下 x 轴符号直接判定方向（x<0 翻转 180°）。
   bool _videoFlipped = false;
   StreamSubscription<AccelerometerEvent>? _accelSub;
@@ -2545,11 +2547,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   void _onTapDown(PointerDownEvent event) {
     if (_playerService.isLocked) return;
-    // 双击/连点的后续一击（250ms 窗口内）：取消延迟中的单击 toggle，
-    // UI 完全不闪现（双击的播放/暂停/快进由 onDoubleTapDown 承担）。
+    // 双击/连点的后续一击（300ms 窗口内）：取消延迟中的单击 toggle，
+    // 并标记这一击为「双击第二击」——其抬起不再触发 toggle（UI 零变化）。
     if (_pendingTapToggle != null) {
       _pendingTapToggle!.cancel();
       _pendingTapToggle = null;
+      _tapWasDoubleTap = true;
       _tapDownPosition = event.position;
       _tapDownTime = DateTime.now();
       return;
@@ -2559,12 +2562,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   /// 全屏轻点抬起：位移 <20px 且时长 <150ms（非拖动/长按）→ 延迟 300ms
-  /// 执行 toggle（双击窗口内第二击由 [_onTapDown] 取消，UI 零闪现）。
-  /// 单击 300ms 后切换控制栏；延迟由 Listener 原始指针承担，无手势竞技场
-  /// 等待，事件不丢失。窗口取 300ms 与 Flutter 双击识别上限一致——
-  /// 所有被识别为双击的点击，第一击 toggle 都会被第二击取消。
+  /// 执行 toggle。窗口内被第二击取消的（双击场景）本方法不再建定时器——
+  /// 语义：窗口内检测到「非单击」（双击/连点）则 UI 完全不管；只有真正
+  /// 的单击（300ms 无第二击）才切换控制栏显隐。
   void _onTapUp(PointerUpEvent event) {
     if (_playerService.isLocked || _isLongPressing) return;
+    if (_tapWasDoubleTap) {
+      // 双击第二击：第一击的 toggle 已被取消，这里也不再 toggle。
+      _tapWasDoubleTap = false;
+      return;
+    }
     final now = DateTime.now();
     final dt = now.difference(_tapDownTime);
     final dist = (event.position - _tapDownPosition).distance;
