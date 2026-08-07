@@ -609,6 +609,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         unawaited(syncController.scrobbleStart(item, progress: startProgress));
       },
       onProgress: (info) async {
+        // 让出当前帧：progress 上报（网络请求构造/历史写入的同步段）在
+        // 5 秒 Timer tick 同步执行会阻塞主线程丢帧——弹幕 Ticker 丢一帧
+        // 位移跳 ~2px（表现为每 5 秒弹幕轻跳一两个像素）。endOfFrame 等当
+        // 帧渲染完成后再执行上报，避免阻塞弹幕 ticker。
+        await WidgetsBinding.instance.endOfFrame;
         try {
           await api.playback.reportPlaybackProgress(info);
         } catch (_) {}
