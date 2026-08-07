@@ -1861,8 +1861,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       controller: controller,
       feedFilter: _danmakuFeedFilter,
     );
+    // 不在此立即喂弹幕：_indexDanmaku 可能在 build 期间（_buildVideoArea 的
+    // identical 分支）被调用，同步 addDanmaku 会触发 TextPainter 布局等昂贵
+    // 操作导致渲染中断白屏。由 _onPlayerUpdate 的 _feedDanmakuAt（非 build
+    // 路径，每 200ms）自然喂入当前窗口。
     _lastFeedPosition = _playerService.position;
-    _danmakuLoader!.onPositionChanged(_playerService.position.inMilliseconds);
   }
 
   /// 弹幕喂入过滤：彩色/白 × 悬浮/滚动四开关 + 密度保持。返回 false 表示丢弃。
@@ -2537,13 +2540,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
               Positioned.fill(
                 // canvas_danmaku 渲染引擎：固定动画时长（宽弹幕更快，B 站
                 // 语义）+ 逐条防重叠；弹幕按滑动窗口由 _feedDanmakuAt 喂入。
-                // RepaintBoundary 隔离弹幕层重绘，避免弹幕刷新拖累视频层/手势层。
-                child: RepaintBoundary(
-                  child: DanmakuScreen<dynamic>(
+                // 引擎内部已用 RepaintBoundary.wrap 隔离弹幕层重绘，无需外层再包。
+                child: DanmakuScreen<dynamic>(
                     createdController: (c) {
                       _danmakuController = c;
-                      // 控制器重建后同步倍速并重喂当前窗口。
-                      _danmakuLoader?.setSpeed(_playerService.speed);
+                      // 只绑定 controller 并确保 loader 关联到新 controller，
+                      // 不在 initState 阶段立即喂弹幕：此时轨道/宽度尚未初始化，
+                      // addDanmaku 会被丢弃。弹幕由 _onPlayerUpdate 的
+                      // _feedDanmakuAt 每 200ms 自然喂入。
+                      _danmakuLoader?.dispose();
+                      _danmakuLoader = null;
                       _indexDanmaku(_lastIndexedDanmaku ?? const []);
                     },
                     option: _buildDanmakuOption(
@@ -2555,7 +2561,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                       fontFamily: danmakuFontFamily,
                     ),
                   ),
-                ),
               ),
           ],
         );
