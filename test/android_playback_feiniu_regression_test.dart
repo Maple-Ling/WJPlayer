@@ -8,9 +8,12 @@ import 'package:wjplayer/core/sources/source_kind.dart';
 
 void main() {
   group('Emby 557 protocol compatibility', () {
-    test('keeps upstream client identity used by protected media streams', () {
-      expect(kEmbyProtocolClient, 'LinPlayer');
-      expect(kEmbyProtocolDeviceId, 'linplayer-mobile');
+    test('keeps upstream UA used by protected media streams', () {
+      // 客户端名跟随 UI 品牌：服务器后台「正在播放」设备名显示 WJPlayer。
+      expect(kEmbyProtocolClient, 'WJPlayer');
+      expect(kEmbyProtocolDeviceId, 'wjplayer-mobile');
+      // User-Agent 保持上游 LinPlayer 兼容标识：部分服务端/反代
+      // 按 UA 白名单放行流媒体请求（后台不展示 UA，改名会破坏兼容）。
       expect(kAppUserAgent, startsWith('LinPlayer/'));
       expect(kPreloadUserAgent, startsWith('LinplayerPreload/'));
     });
