@@ -130,7 +130,10 @@ dependencies {
     // 由 FFmpeg 兜底解码（ExoPlayerPlugin 已设 EXTENSION_RENDERER_MODE_PREFER
     // + enableDecoderFallback，缺此依赖时扩展渲染器不可用、静默回退硬件解码，
     // 设备无对应 MediaCodec 解码器即播放失败/无声）。
-    implementation("androidx.media3:media3-decoder-ffmpeg:$media3Version")
+    // 说明：androidx.media3:media3-decoder-ffmpeg 官方从未发布到 Maven 仓库，
+    // 使用 Jellyfin 预编译版（包名保留 androidx.media3.decoder.ffmpeg，
+    // DefaultRenderersFactory 反射可发现；GPL-3.0，本仓库已开源）。
+    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.6.1+1")
 
     // Mature ASS integration for Media3/ExoPlayer.
     implementation("io.github.peerless2012:ass-media:0.4.0")
