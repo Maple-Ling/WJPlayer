@@ -424,6 +424,23 @@ class ServerListNotifier extends StateNotifier<List<ServerConfig>> {
     _saveServers();
   }
 
+  /// 按可见列表（过滤/搜索/隐藏显示后的当前页面列表）的拖放结果重排
+  /// 完整服务器列表：未出现在 [visibleIds] 中的服务器（如隐藏项）保持
+  /// 原相对顺序，避免 visible 索引与 state 索引错位导致拖动回弹/位置乱。
+  void reorderByVisibleIds(List<String> visibleIds) {
+    final idSet = visibleIds.toSet();
+    final byId = <String, ServerConfig>{for (final s in state) s.id: s};
+    final ordered = <ServerConfig>[];
+    for (final id in visibleIds) {
+      final server = byId[id];
+      if (server != null) ordered.add(server);
+    }
+    ordered.addAll(state.where((s) => !idSet.contains(s.id)));
+    if (ordered.length != state.length) return;
+    state = ordered;
+    _saveServers();
+  }
+
   void setActiveLine(String serverId, int lineIndex) {
     state = state.map((server) {
       if (server.id == serverId) {

@@ -206,7 +206,8 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
   Widget _buildServerList(BuildContext context, List<ServerConfig> servers) {
     // 双排（grid）：flutter_reorderable_grid_view 支持长按单卡片拖动排序；
     // 单排：官方 ReorderableListView。排序结果统一走
-    // serverListProvider.reorderServers 持久化。
+    // serverListProvider.reorderByVisibleIds（按可见列表 id 重排，
+    // 隐藏/过滤项保持原相对顺序，杜绝 visible 索引与 state 索引错位）。
     if (_gridLayout) {
       return ReorderableBuilder<ServerConfig>(
         children: [
@@ -221,10 +222,19 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
         ],
         scrollController: _gridScrollController,
         // 默认 enableLongPress=true：长按卡片拖动排序（手机端）。
+        // 注意：库要求「拖动及释放动画期间禁止更新 children」（否则白屏/
+        // 位置乱），onReorder 松手时回调一次，此处延迟到释放动画结束后
+        // 再同步 provider，避免重建打断库内部动画。
         onReorder: (reorder) {
-          ref
-              .read(serverListProvider.notifier)
-              .reorderTo(reorder(servers));
+          final ordered = reorder(servers);
+          final ids = [for (final s in ordered) s.id];
+          Future<void>.delayed(const Duration(milliseconds: 400), () {
+            if (mounted) {
+              ref
+                  .read(serverListProvider.notifier)
+                  .reorderByVisibleIds(ids);
+            }
+          });
         },
         builder: (children) => GridView(
           controller: _gridScrollController,
@@ -243,7 +253,15 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
       padding: const EdgeInsets.all(16),
       itemCount: servers.length,
       onReorder: (oldIndex, newIndex) {
-        ref.read(serverListProvider.notifier).reorderServers(oldIndex, newIndex);
+        // 基于可见列表的 id 顺序重排完整 state（隐藏/过滤项不参与索引换算，
+        // 避免 visible != state 时索引错位导致拖动回弹）。
+        final ids = [for (final s in servers) s.id];
+        final movedId = ids.removeAt(oldIndex);
+        final target = newIndex > oldIndex ? newIndex - 1 : newIndex;
+        ids.insert(target, movedId);
+        ref
+            .read(serverListProvider.notifier)
+            .reorderByVisibleIds(ids);
       },
       itemBuilder: (context, index) {
         final server = servers[index];
