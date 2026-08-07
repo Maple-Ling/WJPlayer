@@ -129,6 +129,14 @@ class _DanmakuOverlayState extends State<DanmakuOverlay>
   }
 }
 
+/// 一条滚动弹幕的轨道发射记录（用于同轨防重叠精确判定）。
+class LaneLaunch {
+  final int index;
+  final double time;
+  final double width;
+  const LaneLaunch(this.index, this.time, this.width);
+}
+
 /// 跨帧持久的段落布局缓存（按 items 引用 + 字号 + 宽度 + 描边 失效）。
 class DanmakuLayoutCache {
   List<DanmakuItem>? _items;
@@ -148,11 +156,13 @@ class DanmakuLayoutCache {
   int? _laneTrackCount;
   double? _laneSpeed;
 
-  /// 每个滚动轨道的最后一次发射时刻（video seconds）与其宽度。
-  /// 用于同速滚动弹幕的时间间距判定（`间隙速度 ≥ 前条宽度` 才允许入轨），
-  /// 以杜绝「宽弹幕把后条顶到重叠」。换轨道/速度时清空重算。
-  final Map<int, double> lastLaunchTime = {};
-  final Map<int, double> lastLaunchWidth = {};
+  /// 每个滚动轨道上**仍在屏**的弹幕发射记录（index → 入轨时刻 + 宽度）。
+  /// 新弹幕选轨时逐条判定 `(now - r.time) * speed >= r.width + padding`
+  /// 才允许入轨（同速下后条不会在右边缘与前条重叠）——与 B 站
+  /// DanmakuFlameMaster 的 willHitInDuration 逐条矩形判定同思路。
+  /// 注意：不能只记「最后发射一条、出屏即删」——窄弹幕后发射先出屏会
+  /// 提前清空记录，而更早的更宽弹幕仍在屏，导致新弹幕误入同轨重叠。
+  final Map<int, List<LaneLaunch>> laneLaunches = {};
 
   void ensure(List<DanmakuItem> items, double fontSize, double width,
       bool stroke, String? fontFamily) {
@@ -172,10 +182,9 @@ class DanmakuLayoutCache {
     _strokeParas = List<ui.Paragraph?>.filled(items.length, null);
     _widths = List<double>.filled(items.length, 0);
     // 换集/换字号 → 索引与宽度全变，轨道分配与发射记录一起重来；
-    // 漏清 lastLaunchTime 会让新弹幕按过期发射记录选轨（幽灵占用）→ 重叠。
+    // 漏清发射记录会让新弹幕按过期记录选轨（幽灵占用）→ 重叠。
     laneOf.clear();
-    lastLaunchTime.clear();
-    lastLaunchWidth.clear();
+    laneLaunches.clear();
   }
 
   /// 轨道数或速度变了（旋转/改显示区域/改速度）→ 已冻结的轨道号失效，清空重排。
@@ -184,8 +193,7 @@ class DanmakuLayoutCache {
       _laneTrackCount = trackCount;
       _laneSpeed = speed;
       laneOf.clear();
-      lastLaunchTime.clear();
-      lastLaunchWidth.clear();
+      laneLaunches.clear();
     }
   }
 
@@ -195,8 +203,7 @@ class DanmakuLayoutCache {
     _strokeParas = const [];
     _widths = const [];
     laneOf.clear();
-    lastLaunchTime.clear();
-    lastLaunchWidth.clear();
+    laneLaunches.clear();
   }
 
   double widthOf(int i) => _widths[i];
@@ -378,14 +385,17 @@ class DanmakuPainter extends CustomPainter {
       ..sort((a, b) => a.item.time.compareTo(b.item.time));
 
     // 幽灵占用清理：可见窗口（±_visibleWindow）之外的弹幕不再绘制，若不移除
-    // 会残留 laneOf/lastLaunchTime——拖动进度条（seek）后时间跳变，旧弹幕的
+    // 会残留 laneOf/laneLaunches——拖动进度条（seek）后时间跳变，旧弹幕的
     // 轨道被幽灵占用，新弹幕选轨判定失真 → 重叠/错乱/不显示。
     final visibleIndexSet = {for (final ti in visibleItems) ti.index};
     for (final entry in cache.laneOf.entries.toList()) {
       if (!visibleIndexSet.contains(entry.key)) {
         cache.laneOf.remove(entry.key);
-        cache.lastLaunchTime.remove(entry.value);
-        cache.lastLaunchWidth.remove(entry.value);
+        final launches = cache.laneLaunches[entry.value];
+        if (launches != null) {
+          launches.removeWhere((r) => r.index == entry.key);
+          if (launches.isEmpty) cache.laneLaunches.remove(entry.value);
+        }
       }
     }
 
@@ -395,10 +405,10 @@ class DanmakuPainter extends CustomPainter {
       if (lane == null) continue;
       if (_computeX(ti, size) + ti.width < 0) {
         cache.laneOf.remove(ti.index);
-        if (cache.lastLaunchTime.containsKey(lane)) {
-          // 该条是这条轨道的最后发射者（时间最大），出屏后释放发射档位。
-          cache.lastLaunchTime.remove(lane);
-          cache.lastLaunchWidth.remove(lane);
+        final launches = cache.laneLaunches[lane];
+        if (launches != null) {
+          launches.removeWhere((r) => r.index == ti.index);
+          if (launches.isEmpty) cache.laneLaunches.remove(lane);
         }
         continue;
       }
@@ -442,18 +452,25 @@ class DanmakuPainter extends CustomPainter {
       }
       var selectedLane = -1;
       // 滚动弹幕只使用固定弹幕区之外的轨道。用上次发射时间 + 前条宽度
-      // 判定「入轨时是否会在前条出屏后与之重叠」：
-      //   同速下，若 距上次发射的时间×速度 ≥ 前条宽度（+padding），
-      //   则新条入轨后跟前条永不相交（前条已让出头部）。否则本帧等待。
+      // 判定「入轨时是否会与前条重叠」：逐条检查该轨道仍在屏的发射记录，
+      // 同速下后条追不上前条，只需保证后条出生时（右边缘）前条已完全进入
+      // 屏幕（`(now - r.time) × speed ≥ r.width`）——与 DanmakuFlameMaster
+      // willHitInDuration 逐条判定同思路，杜绝「窄条先出屏清空记录后，
+      // 更早的更宽条仍在屏，新条误入同轨重叠」。
       for (var lane = fixedLaneCount; lane < trackCount; lane++) {
-        final lastT = cache.lastLaunchTime[lane];
-        if (lastT == null) {
+        final launches = cache.laneLaunches[lane];
+        if (launches == null || launches.isEmpty) {
           selectedLane = lane;
           break;
         }
-        final gap = _currentSeconds - lastT;
-        final headroom = cache.lastLaunchWidth[lane]! + _padding;
-        if (gap * _speed >= headroom) {
+        var usable = true;
+        for (final r in launches) {
+          if ((_currentSeconds - r.time) * _speed < r.width + _padding) {
+            usable = false;
+            break;
+          }
+        }
+        if (usable) {
           selectedLane = lane;
           break;
         }
@@ -462,8 +479,9 @@ class DanmakuPainter extends CustomPainter {
       // 不强制同轨追尾，也不写 -1。
       if (selectedLane < 0) continue;
       cache.laneOf[ti.index] = selectedLane;
-      cache.lastLaunchTime[selectedLane] = _currentSeconds;
-      cache.lastLaunchWidth[selectedLane] = ti.width;
+      cache.laneLaunches
+          .putIfAbsent(selectedLane, () => [])
+          .add(LaneLaunch(ti.index, _currentSeconds, ti.width));
       ti.startY = selectedLane * _trackHeight + _padding;
       laneTail[selectedLane] = ti;
       assignedThisFrame++;
