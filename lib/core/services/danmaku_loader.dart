@@ -8,9 +8,8 @@
 ///   之间**新经过**的弹幕（即此刻该上屏的弹幕），绝不提前批量加载未来弹幕。
 ///   位图创建（引擎侧 generateParagraph/recordDanmakuImage）量 = 每 200ms 实际
 ///   产生的弹幕条数（通常几条到几十条），不会因预加载 20 秒产生位图风暴。
-/// - **游标 [_cursorIndex]**：已喂散弹幕在 _items 中的索引，只增不减；
-///   正常顺播时每次从 _cursorIndex 往后增量 scan，O(1) 起步。
-/// - **二分 [_lowerBound]**：seek 跳变时 O(log n) 重定位，不遍历全量、不建临时 List。
+/// - **二分 [_lowerBound]**：每次按时间窗 O(log n) 定位起点/终点，不遍历全量、
+///   不建临时 List、不追赶历史（超单帧预算的弹幕直接丢弃，宁缺毋卡）。
 /// - **[seenIds] Set<int>**：整数指纹去重（值类型零对象引用），同条弹幕只入队一次。
 /// - **seek**：调用 [reset]，controller.clear() 清屏 + 清空 seen + 游标归零重喂。
 /// - **倍速**：加载窗口按倍速缩短/拉长；引擎侧动画速度由播放页 updateOption 控制。
@@ -40,9 +39,6 @@ class DanmakuLoader {
 
   /// 增量喂入的起点（毫秒，构造即设定，避免首次全量喂历史）。
   final int initialPositionMs;
-
-  /// 游标：已处理到 _items 的索引，只增不减（正常顺播绝无回退）。
-  int _cursorIndex = 0;
 
   /// 上次喂入的播放位置（毫秒）：增量喂入的起点。
   int _fedMs = 0;
@@ -76,7 +72,6 @@ class DanmakuLoader {
   void reset(Duration position) {
     _controller.clear();
     _seenIds.clear();
-    _cursorIndex = 0;
     // 从新位置往前回退 300ms 作为首次喂入起点：seek 后立即上屏最近 300ms
     // 的弹幕（量小、无位图风暴），后续增量平滑推进。
     _fedMs = position.inMilliseconds - _seedAheadMs;
@@ -99,23 +94,23 @@ class DanmakuLoader {
 
   void _feed(Duration d) {
     final posMs = d.inMilliseconds;
-    final fromMs = _fedMs;
-    _fedMs = posMs;
-    if (posMs < fromMs) {
+    if (posMs < _fedMs) {
       // 位置回退（seek/跳变）：由上层跳变检测调 reset 清屏重喂；兜底防漏。
       reset(d);
       return;
     }
+    final fromMs = _fedMs;
+    _fedMs = posMs;
 
-    // 增量区间 = [fromMs, posMs]（刚经过的时间段内的弹幕此刻该上屏）。
-    // 只喂这一小段，绝不提前批量加载未来 20s（那是位图风暴 → GC 停顿）。
+    // 严格时间窗：只喂 [fromMs, posMs] 刚经过时间段内的弹幕（此刻该上屏的）。
+    // 绝无追赶——如果该时段弹幕数超过单帧预算，超出部分直接丢弃（宁可少弹幕，
+    // 不因追喂历史弹幕造成持续位图创建卡顿）。这才是大厂密度控制的本质。
+    final startIdx = _lowerBound(fromMs);
     final endIdx = _lowerBound(posMs);
-    if (endIdx <= _cursorIndex && endIdx <= _lowerBound(fromMs)) return;
+    if (endIdx <= startIdx) return;
 
-    final startIdx = max(_cursorIndex, _lowerBound(fromMs));
-    if (startIdx >= endIdx) return;
-
-    // 单帧入队上限：限制位图创建量，防瞬时超高密度段一帧建太多。
+    // 单帧预算：超出的丢弃（不推进游标到 endIdx，但也不会回头补喂——
+    // 因为 fromMs 只前进不后退，被丢的弹幕永远过了播放时刻，丢弃即放弃）。
     final until = min(endIdx, startIdx + maxShowCount);
     for (var i = startIdx; i < until; i++) {
       final item = _items[i];
@@ -125,8 +120,6 @@ class DanmakuLoader {
         _emit(item);
       }
     }
-    // _cursorIndex 只增不减：推进到本次已处理的末端，下次从其继续。
-    if (until > _cursorIndex) _cursorIndex = until;
   }
 
   // ------------- 二分查找 -------------
