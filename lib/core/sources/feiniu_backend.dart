@@ -259,7 +259,8 @@ class FeiniuBackend implements MediaSourceBackend {
         : map is List
             ? 'List(${map.length})'
             : '${map.runtimeType}';
-    AppLogger().i('Feiniu', '$method $suffix -> HTTP ${resp.statusCode} $summary');
+    AppLogger().i('Feiniu',
+        '${isPost ? 'POST' : 'GET'} $suffix -> HTTP ${resp.statusCode} $summary');
     final code = map is Map ? (map['code'] as num?)?.toInt() : null;
     // 非零业务码或响应非 {code,msg,data} 信封都先重登重试一次：
     // CDN/穿透链路可能间歇返回错误内容，重试兜底（幂等 GET 无副作用，
