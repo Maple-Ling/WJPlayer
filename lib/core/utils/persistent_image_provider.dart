@@ -239,6 +239,8 @@ class PersistentNetworkImageProvider
     var current = resolved;
     for (var hop = 0; hop < 5; hop++) {
       final HttpClientRequest request = await httpClient.getUrl(current);
+      // 关闭本请求自动跟随：重定向由下方循环手动处理（跨源保留鉴权头）。
+      request.followRedirects = false;
       headers?.forEach((String name, String value) {
         // set 而非 add：httpClient.userAgent 已注入 kAppUserAgent，用 add 会叠成
         // 双 User-Agent（WJPlayer/x + 浏览器UA），被不少 CDN 拒绝→图标全红。
@@ -296,11 +298,9 @@ class PersistentNetworkImageProvider
     final revision = ProxyRuntime.instance.revision;
     if (_sharedHttpClient == null || _sharedClientRevision != revision) {
       _sharedHttpClient?.close(force: true);
-      // followRedirects=false：重定向由 _getResponse 手动跟随（跨源保留
-      // Authorization/Cookie 鉴权头，Dart 自动跟随会按 RFC 6454 丢弃）。
-      _sharedHttpClient = createProxiedHttpClient()
-        ..autoUncompress = false
-        ..followRedirects = false;
+      // 自动跟随由每请求的 request.followRedirects=false 关闭（_getResponse
+      // 手动跟随，跨源保留 Authorization/Cookie 鉴权头）。
+      _sharedHttpClient = createProxiedHttpClient()..autoUncompress = false;
       _sharedClientRevision = revision;
     }
     HttpClient client = _sharedHttpClient!;
