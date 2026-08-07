@@ -11,12 +11,16 @@ const String kAppVersion =
     String.fromEnvironment('APP_VERSION', defaultValue: '1.0.0');
 
 /// Emby 协议兼容身份。UI 品牌仍为 WJPlayer/无界影视。
-const String kEmbyProtocolClient = 'LinPlayer';
-const String kEmbyProtocolDeviceId = 'linplayer-mobile';
+/// 服务器后台「正在播放」显示客户端名，取自 X-Emby-Client /
+/// MediaBrowser Client —— 用 WJPlayer 品牌，与 UI 一致。
+const String kEmbyProtocolClient = 'WJPlayer';
+const String kEmbyProtocolDeviceId = 'wjplayer-mobile';
 
 /// 兼容上游 557 的网络协议 User-Agent。
 ///
-/// 这是部分 Emby 服务端/反代用于放行流媒体请求的协议标识，不等同于 UI 品牌。
+/// 这是部分 Emby 服务端/反代用于放行流媒体请求的协议标识，不等同于 UI
+/// 品牌，后台不展示该值；改名为 WJPlayer 可能被按 UA 白名单放行的服务器
+/// 拒绝播放，故保留 LinPlayer 兼容标识。
 const String kAppUserAgent = 'LinPlayer/$kAppVersion';
 
 /// 兼容上游 557 的预加载 User-Agent。
