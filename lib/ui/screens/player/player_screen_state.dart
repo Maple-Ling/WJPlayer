@@ -1822,8 +1822,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _lastFedSecond = second;
     final batch = _danmakuBySecond[second];
     if (batch == null) return;
+    // 密度过滤：保留比例 = 0.3 + density×0.7（density 1.0 全量、0 约 30%），
+    // 按弹幕 time 散列均匀丢弃，避免同一秒连续几条被整段丢弃。
+    final keepPercent = 0.3 + ref.read(danmakuDensityProvider).clamp(0.0, 1.0) * 0.7;
     for (final item in batch) {
       if (item.text.isEmpty) continue;
+      if (((item.time * 7919) % 1000) / 1000 > keepPercent) continue;
       controller.addDanmaku(DanmakuContentItem<dynamic>(
         item.text,
         color: Color(item.color | 0xFF000000),
@@ -1839,6 +1843,30 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     if (type == 4) return DanmakuItemType.bottom;
     if (type == 5) return DanmakuItemType.top;
     return DanmakuItemType.scroll;
+  }
+
+  /// 弹幕设置 → canvas_danmaku DanmakuOption：
+  /// 字号 12-36（0-1 因子）、速度 → 动画时长（0.5 默认 10s，越快 duration 越短）、
+  /// 透明度/显示区域/描边/自定义字体直传。
+  DanmakuOption _buildDanmakuOption({
+    required double fontSize,
+    required double opacity,
+    required double area,
+    required bool stroke,
+    required double speed,
+    String? fontFamily,
+  }) {
+    return DanmakuOption(
+      fontSize: 12 + 24 * fontSize.clamp(0.0, 1.0),
+      area: area.clamp(0.0, 1.0),
+      opacity: opacity.clamp(0.0, 1.0),
+      // 速度因子 0.5 默认 → 10s；越大越快（duration 越短）。
+      duration: 10.0 / (0.5 + speed.clamp(0.0, 1.0)).clamp(0.4, 1.5),
+      strokeWidth: stroke ? 1.5 : 0,
+      lineHeight: 1.6,
+      fontFamily: fontFamily,
+      safeArea: false,
+    );
   }
 
   /// 弹幕列表变化（加载/重过滤）时重建按秒索引并清空已上屏弹幕。
@@ -1902,13 +1930,27 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   bool _showSkipButton = false;
   Timer? _skipButtonTimer;
 
-  void _checkSkipOpening() {
-    final openingStart = ref.read(skipOpeningStartProvider);
-    final openingEnd = ref.read(skipOpeningEndProvider);
-    final autoSkip = ref.read(skipAutoModeProvider);
-    if (openingStart <= 0 || openingEnd <= 0 || openingEnd <= openingStart) {
-      return;
+  /// 跳过片头片尾按影视存储：剧集用 seriesId（同剧各集共用），
+  /// 源直链用服务器+条目，其余用条目 id。
+  String get _skipTimesKey {
+    final item = ref.read(currentPlayingItemProvider);
+    if (item != null && item.seriesId != null && item.seriesId!.isNotEmpty) {
+      return 'series:${item.seriesId}';
     }
+    final sp = _activeSourcePlay;
+    if (sp != null) return 'src:${sp.server.id}:${sp.entry.id}';
+    return 'item:${widget.itemId}';
+  }
+
+  SkipTimes get _skipTimes =>
+      ref.read(skipTimesProvider.notifier).forKey(_skipTimesKey);
+
+  void _checkSkipOpening() {
+    final t = _skipTimes;
+    if (!t.hasOpening) return;
+    final openingStart = t.openingStart;
+    final openingEnd = t.openingEnd;
+    final autoSkip = t.autoSkip;
 
     final pos = _playerService.position.inSeconds;
     final inOpening = pos >= openingStart && pos < openingEnd;
@@ -1931,7 +1973,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   void _onSkipOpeningPressed() {
-    final openingEnd = ref.read(skipOpeningEndProvider);
+    final openingEnd = _skipTimes.openingEnd;
     _playerService.seekTo(Duration(seconds: openingEnd));
     setState(() => _showSkipButton = false);
     _skipButtonTimer?.cancel();
@@ -2137,8 +2179,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   initialLine: lineName,
                   initialAudioTrack: _currentAudioTrackLabel(),
                   initialSubtitleTrack: _currentSubtitleTrackLabel(),
-                  initialIntroTime: _formatSkipTime(ref.watch(skipOpeningEndProvider)),
-                  initialOutroTime: _formatSkipTime(ref.watch(skipEndingStartProvider)),
+                  initialIntroTime: _formatSkipTime(
+                      ref.watch(skipTimesProvider)[_skipTimesKey]?.openingEnd ?? 0),
+                  initialOutroTime: _formatSkipTime(
+                      ref.watch(skipTimesProvider)[_skipTimesKey]?.endingStart ?? 0),
                   sources: _overlayAggregateSources(
                     item,
                     mediaInfo,
@@ -2437,6 +2481,18 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           _lastIndexedDanmaku = danmakuItems;
           _indexDanmaku(danmakuItems);
         }
+        // 设置变化同步到引擎：canvas_danmaku 的 widget.option 只在 initState
+        // 生效，动态修改必须走 controller.updateOption（幂等，引擎内部比较）。
+        _danmakuController?.updateOption(_buildDanmakuOption(
+          fontSize: danmakuFontSize,
+          opacity: danmakuOpacity,
+          area: danmakuDisplayArea,
+          stroke: danmakuStroke,
+          speed: _playerService.speed > 0
+              ? ref.read(danmakuSpeedProvider)
+              : ref.read(danmakuSpeedProvider),
+          fontFamily: danmakuFontFamily,
+        ));
         return Stack(
           fit: StackFit.expand,
           children: [
@@ -2454,15 +2510,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                     // 重新挂载后从当前位置重喂（清空上一生命周期残留）。
                     _lastFedSecond = -1;
                   },
-                  option: DanmakuOption(
-                    fontSize: 12 + 24 * danmakuFontSize.clamp(0.0, 1.0),
-                    area: danmakuDisplayArea.clamp(0.0, 1.0),
-                    opacity: danmakuOpacity.clamp(0.0, 1.0),
-                    duration: 10,
-                    strokeWidth: danmakuStroke ? 1.5 : 0,
-                    lineHeight: 1.6,
+                  option: _buildDanmakuOption(
+                    fontSize: danmakuFontSize,
+                    opacity: danmakuOpacity,
+                    area: danmakuDisplayArea,
+                    stroke: danmakuStroke,
+                    speed: ref.read(danmakuSpeedProvider),
                     fontFamily: danmakuFontFamily,
-                    safeArea: false,
                   ),
                 ),
               ),
@@ -4156,12 +4210,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   void _showSkipCapsule() {
-    final openingSec = ref.read(skipOpeningStartProvider);
-    final endingSec = ref.read(skipEndingStartProvider);
-    final autoSkip = ref.read(skipAutoModeProvider);
-    // 片头/片尾区间：默认 0=未设置；非 0 视为已开启该段跳过。
-    final hasOpening = openingSec > 0;
-    final hasEnding = endingSec > 0;
+    final t = _skipTimes;
+    final hasOpening = t.hasOpening;
+    final hasEnding = t.hasEnding;
+    final notifier = ref.read(skipTimesProvider.notifier);
+    final key = _skipTimesKey;
     _showCapsuleMenu(
       title: '跳过片头片尾',
       items: [
@@ -4173,14 +4226,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
               // 用当前播放位置作为片头结束点。
               final pos = _playerService.position.inSeconds;
               if (pos > 5) {
-                ref.read(skipOpeningStartProvider.notifier).state = 5;
-                ref.read(skipOpeningEndProvider.notifier).state = pos;
+                notifier.update(
+                    key, _skipTimes.copyWith(openingStart: 5, openingEnd: pos));
               }
               AppToast.show(context, '片头跳过已开启',
                   position: AppToastPosition.topCenter);
             } else {
-              ref.read(skipOpeningStartProvider.notifier).state = 0;
-              ref.read(skipOpeningEndProvider.notifier).state = 0;
+              notifier.update(
+                  key, _skipTimes.copyWith(openingStart: 0, openingEnd: 0));
               AppToast.show(context, '片头跳过已关闭',
                   position: AppToastPosition.topCenter);
             }
@@ -4194,15 +4247,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
               final pos = _playerService.position.inSeconds;
               final duration = _playerService.duration.inSeconds;
               if (duration > 0 && pos < duration - 5) {
-                ref.read(skipEndingStartProvider.notifier).state = pos;
-                ref.read(skipEndingEndProvider.notifier).state =
-                    duration - 3;
+                notifier.update(
+                    key,
+                    _skipTimes.copyWith(
+                        endingStart: pos, endingEnd: duration - 3));
               }
               AppToast.show(context, '片尾跳过已开启',
                   position: AppToastPosition.topCenter);
             } else {
-              ref.read(skipEndingStartProvider.notifier).state = 0;
-              ref.read(skipEndingEndProvider.notifier).state = 0;
+              notifier.update(
+                  key, _skipTimes.copyWith(endingStart: 0, endingEnd: 0));
               AppToast.show(context, '片尾跳过已关闭',
                   position: AppToastPosition.topCenter);
             }
@@ -4218,8 +4272,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         ),
         capsuleSwitch(
           label: '自动跳过',
-          value: autoSkip,
-          onChanged: (v) => ref.read(skipAutoModeProvider.notifier).state = v,
+          value: t.autoSkip,
+          onChanged: (v) {
+            notifier.update(key, _skipTimes.copyWith(autoSkip: v));
+            ref.read(autoSkipSegmentsProvider.notifier).state = v;
+          },
         ),
       ],
     );
@@ -4928,7 +4985,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   void _setAutoSkip(bool value) {
-    ref.read(skipAutoModeProvider.notifier).state = value;
+    ref
+        .read(skipTimesProvider.notifier)
+        .update(_skipTimesKey, _skipTimes.copyWith(autoSkip: value));
     ref.read(autoSkipSegmentsProvider.notifier).state = value;
     AppToast.show(context, value ? '自动跳过已开启' : '自动跳过已关闭',
         position: AppToastPosition.topCenter);
@@ -4936,14 +4995,18 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   void _recordSkipTime(PopupSkipRecord record) {
     final seconds = _parseTimeToSeconds(record.time);
+    final notifier = ref.read(skipTimesProvider.notifier);
+    final key = _skipTimesKey;
     if (record.type == '片头') {
-      ref.read(skipOpeningStartProvider.notifier).state = 5;
-      ref.read(skipOpeningEndProvider.notifier).state = seconds;
+      notifier.update(
+          key, _skipTimes.copyWith(openingStart: 5, openingEnd: seconds));
     } else {
       final duration = _playerService.duration.inSeconds;
-      ref.read(skipEndingStartProvider.notifier).state = seconds;
-      ref.read(skipEndingEndProvider.notifier).state =
-          duration > seconds ? duration - 3 : duration;
+      notifier.update(
+          key,
+          _skipTimes.copyWith(
+              endingStart: seconds,
+              endingEnd: duration > seconds ? duration - 3 : duration));
     }
     AppToast.show(context, '已记录${record.type}时间: ${record.time}',
         position: AppToastPosition.topCenter);
@@ -4957,15 +5020,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   void _clearOpeningSkip() {
-    ref.read(skipOpeningStartProvider.notifier).state = 0;
-    ref.read(skipOpeningEndProvider.notifier).state = 0;
+    ref
+        .read(skipTimesProvider.notifier)
+        .update(_skipTimesKey, _skipTimes.copyWith(openingStart: 0, openingEnd: 0));
     AppToast.show(context, '已清除片头跳过时间',
         position: AppToastPosition.topCenter);
   }
 
   void _clearEndingSkip() {
-    ref.read(skipEndingStartProvider.notifier).state = 0;
-    ref.read(skipEndingEndProvider.notifier).state = 0;
+    ref
+        .read(skipTimesProvider.notifier)
+        .update(_skipTimesKey, _skipTimes.copyWith(endingStart: 0, endingEnd: 0));
     AppToast.show(context, '已清除片尾跳过时间',
         position: AppToastPosition.topCenter);
   }
@@ -5574,7 +5639,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _showRightPanel(
       title: '跳过片头',
       children: [
-        _SkipDialog(currentPosition: _playerService.position),
+        _SkipDialog(
+          currentPosition: _playerService.position,
+          skipKey: _skipTimesKey,
+        ),
       ],
     );
   }

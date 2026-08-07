@@ -661,6 +661,98 @@ final skipOpeningEndProvider = StateProvider<int>((ref) => 0);
 final skipEndingStartProvider = StateProvider<int>((ref) => 0);
 final skipEndingEndProvider = StateProvider<int>((ref) => 0);
 final skipAutoModeProvider = StateProvider<bool>((ref) => false);
+
+/// 单个影视的跳过片头片尾设置（按剧级 key 存储，各影视独立）。
+class SkipTimes {
+  final int openingStart;
+  final int openingEnd;
+  final int endingStart;
+  final int endingEnd;
+  final bool autoSkip;
+  const SkipTimes({
+    this.openingStart = 0,
+    this.openingEnd = 0,
+    this.endingStart = 0,
+    this.endingEnd = 0,
+    this.autoSkip = false,
+  });
+
+  bool get hasOpening => openingStart > 0 && openingEnd > openingStart;
+  bool get hasEnding => endingStart > 0 && endingEnd > endingStart;
+
+  SkipTimes copyWith({
+    int? openingStart,
+    int? openingEnd,
+    int? endingStart,
+    int? endingEnd,
+    bool? autoSkip,
+  }) {
+    return SkipTimes(
+      openingStart: openingStart ?? this.openingStart,
+      openingEnd: openingEnd ?? this.openingEnd,
+      endingStart: endingStart ?? this.endingStart,
+      endingEnd: endingEnd ?? this.endingEnd,
+      autoSkip: autoSkip ?? this.autoSkip,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'os': openingStart,
+        'oe': openingEnd,
+        'es': endingStart,
+        'ee': endingEnd,
+        'auto': autoSkip,
+      };
+
+  factory SkipTimes.fromJson(Map<String, dynamic> j) => SkipTimes(
+        openingStart: (j['os'] as num?)?.toInt() ?? 0,
+        openingEnd: (j['oe'] as num?)?.toInt() ?? 0,
+        endingStart: (j['es'] as num?)?.toInt() ?? 0,
+        endingEnd: (j['ee'] as num?)?.toInt() ?? 0,
+        autoSkip: j['auto'] == true,
+      );
+}
+
+/// 每个影视独立的跳过片头片尾设置，持久化到 SharedPreferences。
+final skipTimesProvider =
+    StateNotifierProvider<SkipTimesNotifier, Map<String, SkipTimes>>((ref) {
+  return SkipTimesNotifier();
+});
+
+class SkipTimesNotifier extends StateNotifier<Map<String, SkipTimes>> {
+  SkipTimesNotifier() : super(_load());
+
+  static const _key = 'wjplayer_skip_times';
+
+  static Map<String, SkipTimes> _load() {
+    try {
+      final raw =
+          AppPreferencesStore.instance.getString(_key);
+      if (raw == null || raw.isEmpty) return {};
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return {};
+      return decoded.map((k, v) => MapEntry(
+          k.toString(),
+          v is Map ? SkipTimes.fromJson(Map<String, dynamic>.from(v)) : const SkipTimes()));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  void _save() {
+    try {
+      AppPreferencesStore.instance.setString(
+          _key, jsonEncode(state.map((k, v) => MapEntry(k, v.toJson()))));
+    } catch (_) {}
+  }
+
+  SkipTimes forKey(String key) => state[key] ?? const SkipTimes();
+
+  void update(String key, SkipTimes times) {
+    state = {...state, key: times};
+    _save();
+  }
+}
 final sleepTimerRemainingProvider = StateProvider<Duration?>((ref) => null);
 final subtitleDelayProvider = StateProvider<double>((ref) => 0.0);
 final audioDelayProvider = StateProvider<double>((ref) => 0.0);

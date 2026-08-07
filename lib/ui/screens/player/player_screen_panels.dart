@@ -233,7 +233,10 @@ class _TopActionButton extends StatelessWidget {
 class _SkipDialog extends ConsumerStatefulWidget {
   final Duration currentPosition;
 
-  const _SkipDialog({required this.currentPosition});
+  /// 当前影视的跳过设置 key（同剧共用，各影视独立）。
+  final String skipKey;
+
+  const _SkipDialog({required this.currentPosition, required this.skipKey});
 
   @override
   ConsumerState<_SkipDialog> createState() => _SkipDialogState();
@@ -247,11 +250,10 @@ class _SkipDialogState extends ConsumerState<_SkipDialog> {
   @override
   void initState() {
     super.initState();
-    final openingStartSec = ref.read(skipOpeningStartProvider);
-    final openingEndSec = ref.read(skipOpeningEndProvider);
-    _openingStart = Duration(seconds: openingStartSec);
-    _openingEnd = Duration(seconds: openingEndSec);
-    _autoSkip = ref.read(skipAutoModeProvider);
+    final times = ref.read(skipTimesProvider.notifier).forKey(widget.skipKey);
+    _openingStart = Duration(seconds: times.openingStart);
+    _openingEnd = Duration(seconds: times.openingEnd);
+    _autoSkip = times.autoSkip;
   }
 
   @override
@@ -316,11 +318,14 @@ class _SkipDialogState extends ConsumerState<_SkipDialog> {
           label: '保存',
           filled: true,
           onTap: () {
-            ref.read(skipOpeningStartProvider.notifier).state =
-                _openingStart.inSeconds;
-            ref.read(skipOpeningEndProvider.notifier).state =
-                _openingEnd.inSeconds;
-            ref.read(skipAutoModeProvider.notifier).state = _autoSkip;
+            ref.read(skipTimesProvider.notifier).update(
+                widget.skipKey,
+                const SkipTimes().copyWith(
+                  openingStart: _openingStart.inSeconds,
+                  openingEnd: _openingEnd.inSeconds,
+                  autoSkip: _autoSkip,
+                ));
+            ref.read(autoSkipSegmentsProvider.notifier).state = _autoSkip;
             Navigator.pop(context);
             AppToast.show(context, '跳过设置已保存',
                 position: AppToastPosition.topCenter);
