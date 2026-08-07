@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:canvas_danmaku/canvas_danmaku.dart' hide DanmakuItem;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -25,7 +26,6 @@ import '../../../core/providers/sync_providers.dart';
 import '../../../core/providers/download_providers.dart';
 import '../../../core/services/download/download_helper.dart';
 import '../../widgets/common/danmaku_search_widget.dart';
-import '../../widgets/common/danmaku_overlay.dart';
 import '../../widgets/common/media_widgets.dart';
 import '../../utils/media_helpers.dart';
 import '../source/unified_media_screens.dart';

@@ -5,7 +5,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   late VideoPlayerService _playerService;
   bool _showRemaining = false;
   bool _isLongPressing = false;
-  // 轻点判定（全屏点击切换控制栏）：记录按下位置/时间。抬起后延迟 250ms
+  // ---- canvas_danmaku 弹幕调度（按秒分组 + 播放位置喂弹幕 + seek 重喂）----
+  DanmakuController<dynamic>? _danmakuController;
+  final Map<int, List<DanmakuItem>> _danmakuBySecond = {};
+  List<DanmakuItem>? _lastIndexedDanmaku;
+  int _lastFedSecond = -1;
+  Duration _lastFeedPosition = Duration.zero;
+  bool _lastPlayingState = true;
+  // 轻点判定（全屏点击切换控制栏）：记录按下位置/时间。抬起后延迟 300ms
   // 执行 toggle（双击窗口内第二击取消，UI 零闪现；单击延迟可感但无手势
   // 竞技场等待，事件不丢失）。
   Offset _tapDownPosition = Offset.zero;
@@ -1772,6 +1779,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _maybeAutoFallbackCore();
     _checkSkipOpening();
     _introSkip.onPosition(_playerService.position);
+    // 弹幕调度：按播放位置喂当前秒弹幕；暂停/恢复同步弹幕动画。
+    _feedDanmakuAt(_playerService.position);
+    if (_lastPlayingState != _playerService.isPlaying) {
+      _lastPlayingState = _playerService.isPlaying;
+      if (_playerService.isPlaying) {
+        _danmakuController?.resume();
+      } else {
+        _danmakuController?.pause();
+      }
+    }
     final sp = _activeSourcePlay;
     if (sp != null &&
         _playerService.isCompleted &&
@@ -1779,6 +1796,62 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       _sourceCompletionReported = true;
       unawaited(_reportSourceProgress(sp, force: true));
     }
+  }
+
+  /// 弹幕按秒喂入：位置跳变（seek/回退 >1.5s）时清空重喂；弹幕延迟
+  /// （danmakuDelay）作用在喂入位置前，与旧实现语义一致。
+  void _feedDanmakuAt(Duration rawPosition) {
+    final controller = _danmakuController;
+    final items = _lastIndexedDanmaku;
+    if (controller == null || items == null || items.isEmpty) return;
+    final position = rawPosition -
+        Duration(
+            milliseconds:
+                (ref.read(danmakuDelayProvider) * 1000).round());
+    if (position < Duration.zero) return;
+    final second = position.inSeconds;
+    final delta = position - _lastFeedPosition;
+    if (position < _lastFeedPosition ||
+        delta.inMilliseconds.abs() > 1500) {
+      // seek / 回退：清空当前弹幕，重新从当前位置开始喂。
+      controller.clear();
+      _lastFedSecond = -1;
+    }
+    _lastFeedPosition = position;
+    if (second == _lastFedSecond) return;
+    _lastFedSecond = second;
+    final batch = _danmakuBySecond[second];
+    if (batch == null) return;
+    for (final item in batch) {
+      if (item.text.isEmpty) continue;
+      controller.addDanmaku(DanmakuContentItem<dynamic>(
+        item.text,
+        color: Color(item.color | 0xFF000000),
+        type: _canvasDanmakuType(item.type),
+        count: item.count > 1 ? item.count : null,
+      ));
+    }
+  }
+
+  /// 弹幕 type → canvas_danmaku 类型：4=底部、5=顶部，其余（1/2/3 滚动、
+  /// 6 逆向、7+ 特殊）统一右→左滚动（逆向/高级弹幕不做特判）。
+  static DanmakuItemType _canvasDanmakuType(int type) {
+    if (type == 4) return DanmakuItemType.bottom;
+    if (type == 5) return DanmakuItemType.top;
+    return DanmakuItemType.scroll;
+  }
+
+  /// 弹幕列表变化（加载/重过滤）时重建按秒索引并清空已上屏弹幕。
+  void _indexDanmaku(List<DanmakuItem> items) {
+    _danmakuBySecond.clear();
+    for (final item in items) {
+      final s = item.time.floor();
+      if (s < 0) continue;
+      _danmakuBySecond.putIfAbsent(s, () => []).add(item);
+    }
+    _danmakuController?.clear();
+    _lastFedSecond = -1;
+    _lastFeedPosition = _playerService.position;
   }
 
   /// ExoPlayer 解码器初始化失败（DTS 等手机 MediaCodec 不支持）时自动切
@@ -1888,6 +1961,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _accelSub?.cancel();
     _accelSub = null;
     _pendingTapToggle?.cancel();
+    _danmakuController = null;
     _statusTimer?.cancel();
     SystemInfoService.instance.stop();
     _streamTranslator?.stop();
@@ -2342,8 +2416,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     final danmakuEnabled = ref.watch(danmakuEnabledProvider);
     final danmakuOpacity = ref.watch(danmakuOpacityProvider);
     final danmakuFontSize = ref.watch(danmakuFontSizeProvider);
-    final danmakuSpeed = ref.watch(danmakuSpeedProvider);
-    final danmakuDensity = ref.watch(danmakuDensityProvider);
     final danmakuDelay = ref.watch(danmakuDelayProvider);
     final danmakuDisplayArea = ref.watch(danmakuDisplayAreaProvider);
     final danmakuStroke = ref.watch(danmakuStrokeProvider);
@@ -2360,8 +2432,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         );
         final isMpv = _playerService.coreType == PlayerCoreType.mpv ||
             _playerService.coreType == PlayerCoreType.nativeMpv;
-        final delayedPosition = _playerService.position -
-            Duration(milliseconds: (danmakuDelay * 1000).round());
+        // 弹幕列表变化（加载/去重重过滤）→ 重建按秒索引（幂等引用比较）。
+        if (!identical(_lastIndexedDanmaku, danmakuItems)) {
+          _lastIndexedDanmaku = danmakuItems;
+          _indexDanmaku(danmakuItems);
+        }
         return Stack(
           fit: StackFit.expand,
           children: [
@@ -2371,18 +2446,24 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
               Positioned.fromRect(rect: contentRect, child: videoWidget),
             if (danmakuEnabled && danmakuItems.isNotEmpty)
               Positioned.fill(
-                child: DanmakuOverlay(
-                  items: danmakuItems,
-                  position: delayedPosition,
-                  isPlaying: _playerService.isPlaying,
-                  playbackRate: _playerService.speed,
-                  opacity: danmakuOpacity,
-                  fontSizeFactor: danmakuFontSize,
-                  speedFactor: danmakuSpeed,
-                  densityFactor: danmakuDensity,
-                  displayArea: danmakuDisplayArea,
-                  stroke: danmakuStroke,
-                  fontFamily: danmakuFontFamily,
+                // canvas_danmaku 渲染引擎：固定动画时长（宽弹幕更快，B 站
+                // 语义）+ 逐条防重叠；弹幕按秒由 _feedDanmakuAt 喂入。
+                child: DanmakuScreen<dynamic>(
+                  createdController: (c) {
+                    _danmakuController = c;
+                    // 重新挂载后从当前位置重喂（清空上一生命周期残留）。
+                    _lastFedSecond = -1;
+                  },
+                  option: DanmakuOption(
+                    fontSize: 12 + 24 * danmakuFontSize.clamp(0.0, 1.0),
+                    area: danmakuDisplayArea.clamp(0.0, 1.0),
+                    opacity: danmakuOpacity.clamp(0.0, 1.0),
+                    duration: 10,
+                    strokeWidth: danmakuStroke ? 1.5 : 0,
+                    lineHeight: 1.6,
+                    fontFamily: danmakuFontFamily,
+                    safeArea: false,
+                  ),
                 ),
               ),
           ],

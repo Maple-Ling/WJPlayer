@@ -22,6 +22,8 @@ dependencies:
   flutter_reorderable_grid_view: ^5.7.0
   # 播放器陀螺仪画面翻转（手机上下颠倒检测）
   sensors_plus: ^7.1.0
+  # 弹幕渲染引擎（Kazumi 生产验证：固定动画时长 + 逐条防重叠）
+  canvas_danmaku: ^0.3.1
   # 网络
   dio: ^5.4.0
   url_launcher: ^6.3.1
