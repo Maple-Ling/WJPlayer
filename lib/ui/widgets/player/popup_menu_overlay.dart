@@ -359,14 +359,23 @@ class PopupMenuSliderRow extends StatelessWidget {
     required this.label,
     required this.value,
     required this.onChanged,
+    this.min = 0,
+    this.max = 1,
+    this.valueLabel,
   });
 
   final String label;
   final double value;
   final ValueChanged<double> onChanged;
+  final double min;
+  final double max;
+  final String? valueLabel;
 
   @override
   Widget build(BuildContext context) {
+    final effectiveMax = math.max(min, max);
+    final clamped = value.clamp(min, effectiveMax).toDouble();
+    final labelText = valueLabel ?? '${(value * 100).round()}%';
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
       child: Row(
@@ -397,9 +406,9 @@ class PopupMenuSliderRow extends StatelessWidget {
                 ),
               ),
               child: Slider(
-                value: value.clamp(0.0, 1.0).toDouble(),
-                min: 0,
-                max: 1,
+                value: clamped,
+                min: min,
+                max: effectiveMax,
                 onChanged: onChanged,
               ),
             ),
@@ -407,7 +416,7 @@ class PopupMenuSliderRow extends StatelessWidget {
           SizedBox(
             width: 34,
             child: Text(
-              '${(value * 100).round()}%',
+              labelText,
               textAlign: TextAlign.right,
               style: const TextStyle(
                 color: Colors.white,
@@ -588,6 +597,10 @@ class PopupDanmakuSettingsMenu extends StatelessWidget {
     required this.area,
     required this.delay,
     required this.deduplication,
+    required this.dedupWindow,
+    required this.floating,
+    required this.colorful,
+    required this.stroke,
     required this.onOpacityChanged,
     required this.onFontSizeChanged,
     required this.onSpeedChanged,
@@ -595,6 +608,10 @@ class PopupDanmakuSettingsMenu extends StatelessWidget {
     required this.onAreaChanged,
     required this.onDelayChanged,
     required this.onDeduplicationChanged,
+    required this.onDedupWindowChanged,
+    required this.onFloatingChanged,
+    required this.onColorfulChanged,
+    required this.onStrokeChanged,
   });
 
   final double opacity;
@@ -604,6 +621,10 @@ class PopupDanmakuSettingsMenu extends StatelessWidget {
   final double area;
   final double delay;
   final bool deduplication;
+  final double dedupWindow;
+  final bool floating;
+  final bool colorful;
+  final bool stroke;
   final ValueChanged<double> onOpacityChanged;
   final ValueChanged<double> onFontSizeChanged;
   final ValueChanged<double> onSpeedChanged;
@@ -611,6 +632,10 @@ class PopupDanmakuSettingsMenu extends StatelessWidget {
   final ValueChanged<double> onAreaChanged;
   final ValueChanged<double> onDelayChanged;
   final ValueChanged<bool> onDeduplicationChanged;
+  final ValueChanged<double> onDedupWindowChanged;
+  final ValueChanged<bool> onFloatingChanged;
+  final ValueChanged<bool> onColorfulChanged;
+  final ValueChanged<bool> onStrokeChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -653,6 +678,30 @@ class PopupDanmakuSettingsMenu extends StatelessWidget {
           label: '弹幕去重',
           value: deduplication,
           onChanged: onDeduplicationChanged,
+        ),
+        if (deduplication)
+          PopupMenuSliderRow(
+            label: '去重窗口',
+            value: dedupWindow,
+            min: 1,
+            max: 30,
+            valueLabel: '${dedupWindow.round()}秒',
+            onChanged: onDedupWindowChanged,
+          ),
+        PopupMenuSwitchPill(
+          label: '悬浮弹幕',
+          value: floating,
+          onChanged: onFloatingChanged,
+        ),
+        PopupMenuSwitchPill(
+          label: '彩色弹幕',
+          value: colorful,
+          onChanged: onColorfulChanged,
+        ),
+        PopupMenuSwitchPill(
+          label: '描边文字',
+          value: stroke,
+          onChanged: onStrokeChanged,
         ),
       ],
     );
@@ -1687,6 +1736,10 @@ class PopupMenuOverlay extends ConsumerWidget {
     required this.onOpenMenu,
     required this.danmakuEnabled,
     required this.danmakuDeduplication,
+    required this.danmakuDedupWindow,
+    required this.danmakuFloating,
+    required this.danmakuColorful,
+    required this.danmakuStroke,
     required this.autoSkip,
     required this.danmakuOpacity,
     required this.danmakuFontSize,
@@ -1716,6 +1769,10 @@ class PopupMenuOverlay extends ConsumerWidget {
     required this.lines,
     required this.onDanmakuChanged,
     required this.onDanmakuDeduplicationChanged,
+    required this.onDanmakuDedupWindowChanged,
+    required this.onDanmakuFloatingChanged,
+    required this.onDanmakuColorfulChanged,
+    required this.onDanmakuStrokeChanged,
     required this.onAutoSkipChanged,
     required this.onDanmakuOpacityChanged,
     required this.onDanmakuFontSizeChanged,
@@ -1748,6 +1805,10 @@ class PopupMenuOverlay extends ConsumerWidget {
 
   final bool danmakuEnabled;
   final bool danmakuDeduplication;
+  final double danmakuDedupWindow;
+  final bool danmakuFloating;
+  final bool danmakuColorful;
+  final bool danmakuStroke;
   final bool autoSkip;
   final double danmakuOpacity;
   final double danmakuFontSize;
@@ -1780,6 +1841,10 @@ class PopupMenuOverlay extends ConsumerWidget {
 
   final ValueChanged<bool> onDanmakuChanged;
   final ValueChanged<bool> onDanmakuDeduplicationChanged;
+  final ValueChanged<double> onDanmakuDedupWindowChanged;
+  final ValueChanged<bool> onDanmakuFloatingChanged;
+  final ValueChanged<bool> onDanmakuColorfulChanged;
+  final ValueChanged<bool> onDanmakuStrokeChanged;
   final ValueChanged<bool> onAutoSkipChanged;
   final ValueChanged<double> onDanmakuOpacityChanged;
   final ValueChanged<double> onDanmakuFontSizeChanged;
@@ -1822,6 +1887,10 @@ class PopupMenuOverlay extends ConsumerWidget {
           area: danmakuArea,
           delay: danmakuDelay,
           deduplication: danmakuDeduplication,
+          dedupWindow: danmakuDedupWindow,
+          floating: danmakuFloating,
+          colorful: danmakuColorful,
+          stroke: danmakuStroke,
           onOpacityChanged: onDanmakuOpacityChanged,
           onFontSizeChanged: onDanmakuFontSizeChanged,
           onSpeedChanged: onDanmakuSpeedChanged,
@@ -1829,6 +1898,10 @@ class PopupMenuOverlay extends ConsumerWidget {
           onAreaChanged: onDanmakuAreaChanged,
           onDelayChanged: onDanmakuDelayChanged,
           onDeduplicationChanged: onDanmakuDeduplicationChanged,
+          onDedupWindowChanged: onDanmakuDedupWindowChanged,
+          onFloatingChanged: onDanmakuFloatingChanged,
+          onColorfulChanged: onDanmakuColorfulChanged,
+          onStrokeChanged: onDanmakuStrokeChanged,
         );
       case PopupMenuId.danmakuSearch:
         // 播放器胶囊版弹幕搜索：与选集框同尺寸锚定在弹幕按钮下方，

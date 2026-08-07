@@ -1827,6 +1827,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     final keepPercent = 0.3 + ref.read(danmakuDensityProvider).clamp(0.0, 1.0) * 0.7;
     for (final item in batch) {
       if (item.text.isEmpty) continue;
+      // 悬浮弹幕开关：关闭时跳过顶部/底部固定弹幕（type 4=底部/5=顶部），只留滚动。
+      if (!ref.read(danmakuFloatingProvider) &&
+          (item.type == 4 || item.type == 5)) {
+        continue;
+      }
+      // 彩色弹幕开关：关闭时跳过非白色弹幕（16777215=白），只留白色。
+      if (!ref.read(danmakuColorfulProvider) && item.color != 16777215) {
+        continue;
+      }
       if (((item.time * 7919) % 1000) / 1000 > keepPercent) continue;
       controller.addDanmaku(DanmakuContentItem<dynamic>(
         item.text,
@@ -2161,6 +2170,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   mediaSize: _mediaSize(mediaSource),
                   initialDanmakuEnabled: ref.watch(danmakuEnabledProvider),
                   initialDanmakuDeduplication: ref.watch(danmakuDedupProvider),
+                  initialDanmakuDedupWindow:
+                      ref.watch(danmakuDedupWindowProvider),
+                  initialDanmakuFloating: ref.watch(danmakuFloatingProvider),
+                  initialDanmakuColorful: ref.watch(danmakuColorfulProvider),
+                  initialDanmakuStroke: ref.watch(danmakuStrokeProvider),
                   initialAutoSkip: ref.watch(autoSkipSegmentsProvider),
                   initialDanmakuOpacity: ref.watch(danmakuOpacityProvider),
                   initialDanmakuFontSize: ref.watch(danmakuFontSizeProvider),
@@ -2233,6 +2247,22 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                     // 去重开关立即生效：用缓存重载已加载弹幕并重新过滤。
                     unawaited(_reapplyDanmakuFilter());
                   },
+                  onDanmakuDedupWindowChanged: (value) {
+                    ref.read(danmakuDedupWindowProvider.notifier).state =
+                        value;
+                    unawaited(_reapplyDanmakuFilter());
+                  },
+                  onDanmakuFloatingChanged: (value) {
+                    ref.read(danmakuFloatingProvider.notifier).state = value;
+                    // 立即生效：清屏按新开关重新喂弹幕。
+                    unawaited(_reapplyDanmakuFilter());
+                  },
+                  onDanmakuColorfulChanged: (value) {
+                    ref.read(danmakuColorfulProvider.notifier).state = value;
+                    unawaited(_reapplyDanmakuFilter());
+                  },
+                  onDanmakuStrokeChanged: (value) =>
+                      ref.read(danmakuStrokeProvider.notifier).state = value,
                   onDanmakuOpacityChanged: (value) =>
                       ref.read(danmakuOpacityProvider.notifier).state = value,
                   onDanmakuFontSizeChanged: (value) =>
@@ -4152,7 +4182,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
               trailingLabel: '›',
               onTap: () {
                 Navigator.of(context).maybePop();
-                _showDanmakuSettings();
+                showDanmakuBlockwordManager(context);
               },
             ),
             capsuleInfo(

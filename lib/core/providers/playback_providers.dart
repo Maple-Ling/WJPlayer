@@ -394,22 +394,61 @@ final danmakuContextProvider =
     StateProvider<({String episodeId, String? sourceId})?>((ref) => null);
 final loadedDanmakuProvider = StateProvider<List<DanmakuItem>>((ref) => []);
 
+/// 悬浮弹幕开关：控制顶部/底部固定弹幕（type 4/5，canvas_danmaku top/bottom）是否显示，
+/// 关闭后仅显示滚动弹幕。持久化，重启保留。
+final danmakuFloatingProvider =
+    StateNotifierProvider<PreferenceNotifier<bool>, bool>((ref) {
+  return PreferenceNotifier<bool>(
+    defaultValue: true,
+    readValue: (prefs) => prefs.getBool('wjplayer_danmaku_floating'),
+    writeValue: (prefs, value) async {
+      await prefs.setBool('wjplayer_danmaku_floating', value);
+    },
+  );
+});
+
+/// 彩色弹幕开关：控制非白色弹幕是否显示，关闭后仅显示白色弹幕。持久化，重启保留。
+final danmakuColorfulProvider =
+    StateNotifierProvider<PreferenceNotifier<bool>, bool>((ref) {
+  return PreferenceNotifier<bool>(
+    defaultValue: true,
+    readValue: (prefs) => prefs.getBool('wjplayer_danmaku_colorful'),
+    writeValue: (prefs, value) async {
+      await prefs.setBool('wjplayer_danmaku_colorful', value);
+    },
+  );
+});
+
 final danmakuBlockwordsProvider =
     StateNotifierProvider<DanmakuBlockwordsNotifier, List<String>>((ref) {
   return DanmakuBlockwordsNotifier();
 });
 
 class DanmakuBlockwordsNotifier extends StateNotifier<List<String>> {
-  DanmakuBlockwordsNotifier() : super([]);
+  DanmakuBlockwordsNotifier()
+      : super(AppPreferencesStore.instance
+                .getStringList('wjplayer_danmaku_blockwords') ??
+            const []);
+
+  Future<void> _save() async {
+    try {
+      await AppPreferencesStore.instance
+          .setStringList('wjplayer_danmaku_blockwords', state);
+    } catch (_) {
+      // 持久化失败保留内存态，不影响本次会话。
+    }
+  }
 
   void addWord(String word) {
     if (word.isNotEmpty && !state.contains(word)) {
       state = [...state, word];
+      _save();
     }
   }
 
   void removeWord(String word) {
     state = state.where((entry) => entry != word).toList();
+    _save();
   }
 
   void importWords(List<String> words) {
@@ -418,6 +457,7 @@ class DanmakuBlockwordsNotifier extends StateNotifier<List<String>> {
         .toList();
     if (newWords.isNotEmpty) {
       state = [...state, ...newWords];
+      _save();
     }
   }
 
@@ -428,6 +468,7 @@ class DanmakuBlockwordsNotifier extends StateNotifier<List<String>> {
 
   void clear() {
     state = [];
+    _save();
   }
 }
 

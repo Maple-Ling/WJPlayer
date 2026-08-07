@@ -46,6 +46,10 @@ class PlayerOverlay extends StatefulWidget {
     this.mediaSize = '',
     required this.initialDanmakuEnabled,
     required this.initialDanmakuDeduplication,
+    required this.initialDanmakuDedupWindow,
+    required this.initialDanmakuFloating,
+    required this.initialDanmakuColorful,
+    required this.initialDanmakuStroke,
     required this.initialAutoSkip,
     required this.initialDanmakuOpacity,
     required this.initialDanmakuFontSize,
@@ -92,6 +96,10 @@ class PlayerOverlay extends StatefulWidget {
     this.onHardwareDecoding,
     this.onDanmakuChanged,
     this.onDanmakuDeduplicationChanged,
+    this.onDanmakuDedupWindowChanged,
+    this.onDanmakuFloatingChanged,
+    this.onDanmakuColorfulChanged,
+    this.onDanmakuStrokeChanged,
     this.onAutoSkipChanged,
     this.onDanmakuOpacityChanged,
     this.onDanmakuFontSizeChanged,
@@ -139,6 +147,10 @@ class PlayerOverlay extends StatefulWidget {
 
   final bool initialDanmakuEnabled;
   final bool initialDanmakuDeduplication;
+  final double initialDanmakuDedupWindow;
+  final bool initialDanmakuFloating;
+  final bool initialDanmakuColorful;
+  final bool initialDanmakuStroke;
   final bool initialAutoSkip;
   final double initialDanmakuOpacity;
   final double initialDanmakuFontSize;
@@ -188,6 +200,10 @@ class PlayerOverlay extends StatefulWidget {
 
   final ValueChanged<bool>? onDanmakuChanged;
   final ValueChanged<bool>? onDanmakuDeduplicationChanged;
+  final ValueChanged<double>? onDanmakuDedupWindowChanged;
+  final ValueChanged<bool>? onDanmakuFloatingChanged;
+  final ValueChanged<bool>? onDanmakuColorfulChanged;
+  final ValueChanged<bool>? onDanmakuStrokeChanged;
   final ValueChanged<bool>? onAutoSkipChanged;
   final ValueChanged<double>? onDanmakuOpacityChanged;
   final ValueChanged<double>? onDanmakuFontSizeChanged;
@@ -214,6 +230,10 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
 
   late bool _danmakuEnabled;
   late bool _danmakuDeduplication;
+  late double _danmakuDedupWindow;
+  late bool _danmakuFloating;
+  late bool _danmakuColorful;
+  late bool _danmakuStroke;
   late bool _autoSkip;
   late double _danmakuOpacity;
   late double _danmakuFontSize;
@@ -248,6 +268,10 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
     isUiVisible = widget.visible;
     _danmakuEnabled = widget.initialDanmakuEnabled;
     _danmakuDeduplication = widget.initialDanmakuDeduplication;
+    _danmakuDedupWindow = widget.initialDanmakuDedupWindow;
+    _danmakuFloating = widget.initialDanmakuFloating;
+    _danmakuColorful = widget.initialDanmakuColorful;
+    _danmakuStroke = widget.initialDanmakuStroke;
     _autoSkip = widget.initialAutoSkip;
     _danmakuOpacity = widget.initialDanmakuOpacity;
     _danmakuFontSize = widget.initialDanmakuFontSize;
@@ -420,6 +444,26 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
   void _setDanmakuDeduplication(bool value) {
     setState(() => _danmakuDeduplication = value);
     widget.onDanmakuDeduplicationChanged?.call(value);
+  }
+
+  void _setDanmakuDedupWindow(double value) {
+    setState(() => _danmakuDedupWindow = value);
+    widget.onDanmakuDedupWindowChanged?.call(value);
+  }
+
+  void _setDanmakuFloating(bool value) {
+    setState(() => _danmakuFloating = value);
+    widget.onDanmakuFloatingChanged?.call(value);
+  }
+
+  void _setDanmakuColorful(bool value) {
+    setState(() => _danmakuColorful = value);
+    widget.onDanmakuColorfulChanged?.call(value);
+  }
+
+  void _setDanmakuStroke(bool value) {
+    setState(() => _danmakuStroke = value);
+    widget.onDanmakuStrokeChanged?.call(value);
   }
 
   void _setAutoSkip(bool value) {
@@ -997,6 +1041,10 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                     },
                     danmakuEnabled: _danmakuEnabled,
                     danmakuDeduplication: _danmakuDeduplication,
+                    danmakuDedupWindow: _danmakuDedupWindow,
+                    danmakuFloating: _danmakuFloating,
+                    danmakuColorful: _danmakuColorful,
+                    danmakuStroke: _danmakuStroke,
                     autoSkip: _autoSkip,
                     danmakuOpacity: _danmakuOpacity,
                     danmakuFontSize: _danmakuFontSize,
@@ -1027,6 +1075,10 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                     onDanmakuChanged: _setDanmaku,
                     onDanmakuDeduplicationChanged:
                         _setDanmakuDeduplication,
+                    onDanmakuDedupWindowChanged: _setDanmakuDedupWindow,
+                    onDanmakuFloatingChanged: _setDanmakuFloating,
+                    onDanmakuColorfulChanged: _setDanmakuColorful,
+                    onDanmakuStrokeChanged: _setDanmakuStroke,
                     onAutoSkipChanged: _setAutoSkip,
                     onDanmakuOpacityChanged: _setDanmakuOpacity,
                     onDanmakuFontSizeChanged: _setDanmakuFontSize,

@@ -26,6 +26,7 @@ import '../../../core/providers/sync_providers.dart';
 import '../../../core/providers/download_providers.dart';
 import '../../../core/services/download/download_helper.dart';
 import '../../widgets/common/danmaku_search_widget.dart';
+import '../../widgets/common/danmaku_blockword_manager.dart';
 import '../../widgets/common/media_widgets.dart';
 import '../../utils/media_helpers.dart';
 import '../source/unified_media_screens.dart';
