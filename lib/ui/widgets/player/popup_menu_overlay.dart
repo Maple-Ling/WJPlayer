@@ -611,6 +611,8 @@ class PopupDanmakuSettingsMenu extends StatefulWidget {
     required this.floatingWhite,
     required this.scrollColorful,
     required this.scrollWhite,
+    required this.bottomColorful,
+    required this.bottomWhite,
     required this.stroke,
     required this.onOpacityChanged,
     required this.onFontSizeChanged,
@@ -624,6 +626,8 @@ class PopupDanmakuSettingsMenu extends StatefulWidget {
     required this.onFloatingWhiteChanged,
     required this.onScrollColorfulChanged,
     required this.onScrollWhiteChanged,
+    required this.onBottomColorfulChanged,
+    required this.onBottomWhiteChanged,
     required this.onStrokeChanged,
   });
 
@@ -639,6 +643,8 @@ class PopupDanmakuSettingsMenu extends StatefulWidget {
   final bool floatingWhite;
   final bool scrollColorful;
   final bool scrollWhite;
+  final bool bottomColorful;
+  final bool bottomWhite;
   final bool stroke;
   final ValueChanged<double> onOpacityChanged;
   final ValueChanged<double> onFontSizeChanged;
@@ -652,6 +658,8 @@ class PopupDanmakuSettingsMenu extends StatefulWidget {
   final ValueChanged<bool> onFloatingWhiteChanged;
   final ValueChanged<bool> onScrollColorfulChanged;
   final ValueChanged<bool> onScrollWhiteChanged;
+  final ValueChanged<bool> onBottomColorfulChanged;
+  final ValueChanged<bool> onBottomWhiteChanged;
   final ValueChanged<bool> onStrokeChanged;
 
   @override
@@ -660,7 +668,8 @@ class PopupDanmakuSettingsMenu extends StatefulWidget {
 }
 
 class _PopupDanmakuSettingsMenuState extends State<PopupDanmakuSettingsMenu> {
-  bool _floatingExpanded = false;
+  bool _topExpanded = false;
+  bool _bottomExpanded = false;
   bool _scrollExpanded = false;
 
   @override
@@ -715,13 +724,13 @@ class _PopupDanmakuSettingsMenuState extends State<PopupDanmakuSettingsMenu> {
             valueLabel: '${w.dedupWindow.round()}秒',
             onChanged: w.onDedupWindowChanged,
           ),
-        // 悬浮弹幕：> 展开彩色/白色两个开关；两个都关则悬浮弹幕不显示。
+        // 顶部弹幕（type 5）：> 展开彩色/白色两个开关；两个都关则顶部弹幕不显示。
         PopupMenuPill(
-          label: '悬浮弹幕',
-          sub: _floatingExpanded ? '˅' : '›',
-          onTap: () => setState(() => _floatingExpanded = !_floatingExpanded),
+          label: '顶部弹幕',
+          sub: _topExpanded ? '˅' : '›',
+          onTap: () => setState(() => _topExpanded = !_topExpanded),
         ),
-        if (_floatingExpanded) ...[
+        if (_topExpanded) ...[
           PopupMenuSwitchPill(
             label: '彩色弹幕',
             value: w.floatingColorful,
@@ -731,6 +740,24 @@ class _PopupDanmakuSettingsMenuState extends State<PopupDanmakuSettingsMenu> {
             label: '白色弹幕',
             value: w.floatingWhite,
             onChanged: w.onFloatingWhiteChanged,
+          ),
+        ],
+        // 底部弹幕（type 4）：> 展开彩色/白色两个开关；两个都关则底部弹幕不显示。
+        PopupMenuPill(
+          label: '底部弹幕',
+          sub: _bottomExpanded ? '˅' : '›',
+          onTap: () => setState(() => _bottomExpanded = !_bottomExpanded),
+        ),
+        if (_bottomExpanded) ...[
+          PopupMenuSwitchPill(
+            label: '彩色弹幕',
+            value: w.bottomColorful,
+            onChanged: w.onBottomColorfulChanged,
+          ),
+          PopupMenuSwitchPill(
+            label: '白色弹幕',
+            value: w.bottomWhite,
+            onChanged: w.onBottomWhiteChanged,
           ),
         ],
         // 滚动弹幕：> 展开彩色/白色两个开关；两个都关则滚动弹幕不显示。
@@ -1794,6 +1821,8 @@ class PopupMenuOverlay extends ConsumerWidget {
     required this.danmakuFloatingWhite,
     required this.danmakuScrollColorful,
     required this.danmakuScrollWhite,
+    required this.danmakuBottomColorful,
+    required this.danmakuBottomWhite,
     required this.danmakuStroke,
     required this.autoSkip,
     required this.danmakuOpacity,
@@ -1867,6 +1896,8 @@ class PopupMenuOverlay extends ConsumerWidget {
   final bool danmakuFloatingWhite;
   final bool danmakuScrollColorful;
   final bool danmakuScrollWhite;
+  final bool danmakuBottomColorful;
+  final bool danmakuBottomWhite;
   final bool danmakuStroke;
   final bool autoSkip;
   final double danmakuOpacity;
@@ -1953,6 +1984,8 @@ class PopupMenuOverlay extends ConsumerWidget {
           floatingWhite: danmakuFloatingWhite,
           scrollColorful: danmakuScrollColorful,
           scrollWhite: danmakuScrollWhite,
+          bottomColorful: danmakuBottomColorful,
+          bottomWhite: danmakuBottomWhite,
           stroke: danmakuStroke,
           onOpacityChanged: onDanmakuOpacityChanged,
           onFontSizeChanged: onDanmakuFontSizeChanged,
@@ -1966,6 +1999,8 @@ class PopupMenuOverlay extends ConsumerWidget {
           onFloatingWhiteChanged: onDanmakuFloatingWhiteChanged,
           onScrollColorfulChanged: onDanmakuScrollColorfulChanged,
           onScrollWhiteChanged: onDanmakuScrollWhiteChanged,
+          onBottomColorfulChanged: onDanmakuBottomColorfulChanged,
+          onBottomWhiteChanged: onDanmakuBottomWhiteChanged,
           onStrokeChanged: onDanmakuStrokeChanged,
         );
       case PopupMenuId.danmakuSearch:

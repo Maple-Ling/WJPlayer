@@ -1871,17 +1871,27 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   /// 弹幕喂入过滤：彩色/白 × 悬浮/滚动四开关 + 密度保持。返回 false 表示丢弃。
   bool _danmakuFeedFilter(DanmakuItem item) {
     if (item.text.isEmpty) return false;
-    // 悬浮/滚动 × 彩色/白色 四开关：白色 = color == 16777215；
+    // 顶部/底部/滚动 × 彩色/白色 开关：白色 = color == 16777215；
     // 同一类两个开关都关则该类弹幕不显示。
-    if (item.type == 4 || item.type == 5) {
-      if (item.color == 16777215
+    final white = item.color == 16777215;
+    if (item.type == 5) {
+      // 顶部弹幕
+      if (white
           ? !ref.read(danmakuFloatingWhiteProvider)
           : !ref.read(danmakuFloatingColorfulProvider)) {
         return false;
       }
-    } else if (item.color == 16777215
+    } else if (item.type == 4) {
+      // 底部弹幕
+      if (white
+          ? !ref.read(danmakuBottomWhiteProvider)
+          : !ref.read(danmakuBottomColorfulProvider)) {
+        return false;
+      }
+    } else if (white
         ? !ref.read(danmakuScrollWhiteProvider)
         : !ref.read(danmakuScrollColorfulProvider)) {
+      // 滚动弹幕
       return false;
     }
     // 密度过滤：保留比例 = 0.3 + density×0.7，按 time 散列均匀丢弃。
@@ -2178,6 +2188,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                       ref.watch(danmakuScrollColorfulProvider),
                   initialDanmakuScrollWhite:
                       ref.watch(danmakuScrollWhiteProvider),
+                  initialDanmakuBottomColorful:
+                      ref.watch(danmakuBottomColorfulProvider),
+                  initialDanmakuBottomWhite:
+                      ref.watch(danmakuBottomWhiteProvider),
                   initialDanmakuStroke: ref.watch(danmakuStrokeProvider),
                   initialAutoSkip: ref.watch(autoSkipSegmentsProvider),
                   initialDanmakuOpacity: ref.watch(danmakuOpacityProvider),
@@ -2267,6 +2281,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                           .state = value,
                   onDanmakuScrollWhiteChanged: (value) =>
                       ref.read(danmakuScrollWhiteProvider.notifier)
+                          .state = value,
+                  onDanmakuBottomColorfulChanged: (value) =>
+                      ref.read(danmakuBottomColorfulProvider.notifier)
+                          .state = value,
+                  onDanmakuBottomWhiteChanged: (value) =>
+                      ref.read(danmakuBottomWhiteProvider.notifier)
                           .state = value,
                   onDanmakuStrokeChanged: (value) =>
                       ref.read(danmakuStrokeProvider.notifier).state = value,

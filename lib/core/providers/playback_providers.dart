@@ -396,6 +396,7 @@ final loadedDanmakuProvider = StateProvider<List<DanmakuItem>>((ref) => []);
 
 /// 悬浮弹幕（顶部/底部固定，type 4/5）彩色弹幕开关：控制悬浮弹幕中的彩色弹幕是否显示。
 /// 与 [danmakuFloatingWhiteProvider] 组合决定悬浮弹幕显示内容，持久化，重启保留。
+/// 语义：现用于「顶部弹幕」（type 5）的彩色开关。
 final danmakuFloatingColorfulProvider =
     StateNotifierProvider<PreferenceNotifier<bool>, bool>((ref) {
   return PreferenceNotifier<bool>(
@@ -408,6 +409,7 @@ final danmakuFloatingColorfulProvider =
 });
 
 /// 悬浮弹幕白色弹幕开关：控制悬浮弹幕中的白色弹幕是否显示。
+/// 语义：现用于「顶部弹幕」（type 5）的白色开关。
 final danmakuFloatingWhiteProvider =
     StateNotifierProvider<PreferenceNotifier<bool>, bool>((ref) {
   return PreferenceNotifier<bool>(
@@ -415,6 +417,30 @@ final danmakuFloatingWhiteProvider =
     readValue: (prefs) => prefs.getBool('wjplayer_danmaku_floating_white'),
     writeValue: (prefs, value) async {
       await prefs.setBool('wjplayer_danmaku_floating_white', value);
+    },
+  );
+});
+
+/// 底部弹幕（type 4）彩色开关：控制底部固定弹幕中的彩色弹幕是否显示。
+final danmakuBottomColorfulProvider =
+    StateNotifierProvider<PreferenceNotifier<bool>, bool>((ref) {
+  return PreferenceNotifier<bool>(
+    defaultValue: true,
+    readValue: (prefs) => prefs.getBool('wjplayer_danmaku_bottom_colorful'),
+    writeValue: (prefs, value) async {
+      await prefs.setBool('wjplayer_danmaku_bottom_colorful', value);
+    },
+  );
+});
+
+/// 底部弹幕（type 4）白色开关：控制底部固定弹幕中的白色弹幕是否显示。
+final danmakuBottomWhiteProvider =
+    StateNotifierProvider<PreferenceNotifier<bool>, bool>((ref) {
+  return PreferenceNotifier<bool>(
+    defaultValue: true,
+    readValue: (prefs) => prefs.getBool('wjplayer_danmaku_bottom_white'),
+    writeValue: (prefs, value) async {
+      await prefs.setBool('wjplayer_danmaku_bottom_white', value);
     },
   );
 });
