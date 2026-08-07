@@ -6,6 +6,9 @@
 
 **WJPlayer** 是“无界影视”的代码品牌，一个仅面向 **64 位 ARM Android 手机**的 Flutter 媒体客户端/播放器，兼容 **Emby** 与 **飞牛 fnOS** 双协议，支持跨服务器聚合检索与无缝切换。
 
+##页面截图
+[url=https://pixhost.to/show/9907/756430014_1000285431.jpg][img]https://t2.pixhost.to/thumbs/9907/756430014_1000285431.jpg[/img][/url] [url=https://pixhost.to/show/9907/756430016_1000285430.jpg][img]https://t2.pixhost.to/thumbs/9907/756430016_1000285430.jpg[/img][/url] [url=https://pixhost.to/show/9907/756430017_1000285439.jpg][img]https://t2.pixhost.to/thumbs/9907/756430017_1000285439.jpg[/img][/url] [url=https://pixhost.to/show/9907/756430022_1000285438.jpg][img]https://t2.pixhost.to/thumbs/9907/756430022_1000285438.jpg[/img][/url] [url=https://pixhost.to/show/9907/756430024_1000285416.jpg][img]https://t2.pixhost.to/thumbs/9907/756430024_1000285416.jpg[/img][/url] [url=https://pixhost.to/show/9907/756430028_1000285432.jpg][img]https://t2.pixhost.to/thumbs/9907/756430028_1000285432.jpg[/img][/url] [url=https://pixhost.to/show/9907/756430031_1000285435.jpg][img]https://t2.pixhost.to/thumbs/9907/756430031_1000285435.jpg[/img][/url] [url=https://pixhost.to/show/9907/756430034_1000285434.jpg][img]https://t2.pixhost.to/thumbs/9907/756430034_1000285434.jpg[/img][/url]
+
 ## 功能特性
 
 - **双协议支持**：Emby（含隐藏库过滤、媒体源/版本选择）与飞牛 fnOS（顶层剧集/分集、多线路）
