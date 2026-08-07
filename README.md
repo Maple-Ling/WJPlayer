@@ -7,13 +7,22 @@
 **WJPlayer** 是“无界影视”的代码品牌，一个仅面向 **64 位 ARM Android 手机**的 Flutter 媒体客户端/播放器，兼容 **Emby** 与 **飞牛 fnOS** 双协议，支持跨服务器聚合检索与无缝切换。
 
 ##页面截图
+
+
 [![]![1000285431](https://t2.pixhost.to/thumbs/9907/756430014_1000285431.jpg)
+
 ![1000285430](https://t2.pixhost.to/thumbs/9907/756430016_1000285430.jpg)
+
 ![1000285439](https://t2.pixhost.to/thumbs/9907/756430017_1000285439.jpg)
+
 ![1000285438](https://t2.pixhost.to/thumbs/9907/756430022_1000285438.jpg)
+
 ![1000285416](https://t2.pixhost.to/thumbs/9907/756430024_1000285416.jpg)
+
 ![1000285432](https://t2.pixhost.to/thumbs/9907/756430028_1000285432.jpg)
+
 ![1000285435](https://t2.pixhost.to/thumbs/9907/756430031_1000285435.jpg)
+
 ![1000285434](https://t2.pixhost.to/thumbs/9907/756430034_1000285434.jpg)
 
 ## 功能特性
