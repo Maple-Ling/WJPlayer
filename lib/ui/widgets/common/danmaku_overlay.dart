@@ -171,7 +171,11 @@ class DanmakuLayoutCache {
     _fill = List<ui.Paragraph?>.filled(items.length, null);
     _strokeParas = List<ui.Paragraph?>.filled(items.length, null);
     _widths = List<double>.filled(items.length, 0);
-    laneOf.clear(); // 换集/换字号 → 索引与宽度全变，轨道分配重来
+    // 换集/换字号 → 索引与宽度全变，轨道分配与发射记录一起重来；
+    // 漏清 lastLaunchTime 会让新弹幕按过期发射记录选轨（幽灵占用）→ 重叠。
+    laneOf.clear();
+    lastLaunchTime.clear();
+    lastLaunchWidth.clear();
   }
 
   /// 轨道数或速度变了（旋转/改显示区域/改速度）→ 已冻结的轨道号失效，清空重排。
@@ -261,6 +265,10 @@ class DanmakuPainter extends CustomPainter {
   double get _currentSeconds => videoPosition.inMilliseconds / 1000.0;
   int get _maxVisible =>
       (items.length * (0.3 + densityFactor * 0.7)).round().clamp(0, items.length);
+
+  /// 每帧最多新入轨的弹幕条数：高密度源（同一秒几十条）时按 time 升序
+  /// 优先早的，超出的本帧跳过、下帧再试——宁可少显示也不重叠。
+  static const int _maxAssignPerFrame = 12;
 
   _DanmakuTrackItem _getTrackItem(int index, Size size) {
     var fill = cache.fillOf(index);
@@ -369,6 +377,18 @@ class DanmakuPainter extends CustomPainter {
         .toList()
       ..sort((a, b) => a.item.time.compareTo(b.item.time));
 
+    // 幽灵占用清理：可见窗口（±_visibleWindow）之外的弹幕不再绘制，若不移除
+    // 会残留 laneOf/lastLaunchTime——拖动进度条（seek）后时间跳变，旧弹幕的
+    // 轨道被幽灵占用，新弹幕选轨判定失真 → 重叠/错乱/不显示。
+    final visibleIndexSet = {for (final ti in visibleItems) ti.index};
+    for (final entry in cache.laneOf.entries.toList()) {
+      if (!visibleIndexSet.contains(entry.key)) {
+        cache.laneOf.remove(entry.key);
+        cache.lastLaunchTime.remove(entry.value);
+        cache.lastLaunchWidth.remove(entry.value);
+      }
+    }
+
     // 1) 出屏弹幕释放轨道 + 按冻结轨道登记尾条（按 time 升序覆盖为最新）。
     for (final ti in born) {
       final lane = cache.laneOf[ti.index];
@@ -387,11 +407,15 @@ class DanmakuPainter extends CustomPainter {
 
     // 2) 分配：滚动弹幕冻结后永不改道（同速不相交），只有出屏才释放；
     //    新弹幕（含首次入轨）用手动时间间距选轨，杜绝重叠。
+    // 高密度源限流：每帧最多入轨 _maxAssignPerFrame 条（按 time 升序优先
+    // 早的），超出的本帧跳过、下帧再试——轨道不足时宁可少显示也不硬挤重叠。
+    var assignedThisFrame = 0;
     for (final ti in born) {
       final x = _computeX(ti, size);
       if (x + ti.width < 0) continue; // 已出屏
       final existing = cache.laneOf[ti.index];
       if (existing != null) continue; // 冻结中，不改道（它已正确入轨）
+      if (assignedThisFrame >= _maxAssignPerFrame) continue;
       if (_isFixed(ti.item.type)) {
         // 已冻结的固定弹幕仍在占轨（_assignLane 的 occ 表不含已冻结条目，
         // 若不加冻结判断，新固定弹幕会拿到还在显示的旧弹幕轨道 → 精确重叠）。
@@ -413,6 +437,7 @@ class DanmakuPainter extends CustomPainter {
         cache.laneOf[ti.index] = lane;
         ti.startY = lane * _trackHeight + _padding;
         laneTail[lane] = ti;
+        assignedThisFrame++;
         continue;
       }
       var selectedLane = -1;
@@ -441,6 +466,7 @@ class DanmakuPainter extends CustomPainter {
       cache.lastLaunchWidth[selectedLane] = ti.width;
       ti.startY = selectedLane * _trackHeight + _padding;
       laneTail[selectedLane] = ti;
+      assignedThisFrame++;
     }
 
     for (final trackItem in visibleItems) {

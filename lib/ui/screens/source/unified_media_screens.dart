@@ -157,7 +157,7 @@ class _UnifiedMediaHomeScreenState
     });
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool forceRefresh = false}) async {
     final server = ref.read(currentServerProvider);
     if (server == null ||
         (server.sourceKind != SourceKind.emby &&
@@ -173,6 +173,8 @@ class _UnifiedMediaHomeScreenState
     try {
       // 首页数据走本地缓存（24h）：首次/过期才请求网络，之后打开秒开，
       // 避免每次启动都重新拉库列表/继续观看/预览（图标与媒体信息）。
+      // 下拉刷新/错误重试 forceRefresh=true 强制请求网络，不读缓存——
+      // 否则缓存了空/错误结果会一直显示空、点重试无反应。
       final libraries = await HomeCacheLoader.load<List<UnifiedMediaLibrary>>(
         serverId: server.id,
         dataType: 'libraries',
@@ -183,6 +185,7 @@ class _UnifiedMediaHomeScreenState
         load: () => adapter.libraries(),
         encode: (v) =>
             v.map((e) => {'id': e.id, 'name': e.name}).toList(),
+        forceRefresh: forceRefresh,
       );
       final continueItems = await HomeCacheLoader
           .load<List<UnifiedContinueItem>>(
@@ -202,6 +205,7 @@ class _UnifiedMediaHomeScreenState
                   'progress': e.progress,
                 })
             .toList(),
+        forceRefresh: forceRefresh,
       );
       if (!mounted || server.id != _serverId) return;
       final hiddenLibraries = ref.read(hiddenLibrariesProvider);
@@ -309,9 +313,9 @@ class _UnifiedMediaHomeScreenState
         ],
       ),
       body: _error != null
-          ? _ErrorRetry(message: _error!, onRetry: _load)
+          ? _ErrorRetry(message: _error!, onRetry: () => _load(forceRefresh: true))
           : RefreshIndicator(
-              onRefresh: _load,
+              onRefresh: () => _load(forceRefresh: true),
               child: _libraries.isEmpty && _continueItems.isEmpty
                   ? ListView(
                       physics: const AlwaysScrollableScrollPhysics(),

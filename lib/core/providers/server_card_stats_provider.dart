@@ -23,12 +23,35 @@ class ServerCardStats {
   bool get loading => movieCount == null && seriesCount == null && episodeCount == null && error == null;
 }
 
-final _serverStatsCache = <String, ServerCardStats>{};
+/// 成功结果缓存时长：10 分钟内复用（避免每次进列表都并发请求所有服务器），
+/// 超过即重新拉取（打开软件/下拉刷新能看到最新影视数量）。
+const _statsTtl = Duration(minutes: 10);
+
+class _CachedStats {
+  final ServerCardStats stats;
+  final DateTime savedAt;
+  const _CachedStats(this.stats, this.savedAt);
+}
+
+final _serverStatsCache = <String, _CachedStats>{};
 final _serverStatsPending = <String, Future<ServerCardStats>>{};
+
+/// 每次应用启动时调用：清空服务器卡片统计缓存，下次进入服务器列表
+/// 重新拉取影视数量（打开软件即刷新；会话内由 [_statsTtl] 防抖复用）。
+void resetServerStatsCache() {
+  _serverStatsCache.clear();
+}
 
 final serverCardStatsProvider = FutureProvider.family<ServerCardStats, String>((ref, serverId) async {
   final cached = _serverStatsCache[serverId];
-  if (cached != null) return cached;
+  if (cached != null) {
+    // 成功结果 TTL 内复用；失败结果不缓存（下方 remove），
+    // 下次进入/下拉刷新立即重新拉取，杜绝「永远显示旧数量/空数量」。
+    if (DateTime.now().difference(cached.savedAt) < _statsTtl) {
+      return cached.stats;
+    }
+    _serverStatsCache.remove(serverId);
+  }
   final pending = _serverStatsPending[serverId];
   if (pending != null) return pending;
 
@@ -36,7 +59,10 @@ final serverCardStatsProvider = FutureProvider.family<ServerCardStats, String>((
   _serverStatsPending[serverId] = future;
   try {
     final result = await future;
-    _serverStatsCache[serverId] = result;
+    // 失败不缓存：网络/CDN 链路恢复后自动刷新出数量。
+    if (result.error == null) {
+      _serverStatsCache[serverId] = _CachedStats(result, DateTime.now());
+    }
     return result;
   } finally {
     _serverStatsPending.remove(serverId);

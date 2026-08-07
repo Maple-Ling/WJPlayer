@@ -34,6 +34,17 @@ void setInsecureTlsHosts(Iterable<String> hosts) {
     );
 }
 
+/// 临时放行一个主机（大小写不敏感）。
+///
+/// 添加/编辑服务器页「连接并保存」时服务器尚未入库（或开关改动未保存），
+/// 全局白名单（由 serverListProvider 驱动）不含该主机，TLS 校验会失败；
+/// 开启「允许不安全 TLS」时先临时加入，保存成功后由 [setInsecureTlsHosts]
+/// 整体重建接管，无需手动移除。
+void addInsecureTlsHost(String host) {
+  final h = host.trim().toLowerCase();
+  if (h.isNotEmpty) _insecureTlsHosts.add(h);
+}
+
 /// 坏证书回调：默认拒绝（返回 false），仅放行白名单内主机。
 bool _allowBadCertificate(X509Certificate cert, String host, int port) {
   return _insecureTlsHosts.contains(host.toLowerCase());

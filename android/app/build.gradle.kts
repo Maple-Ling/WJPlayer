@@ -126,6 +126,12 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
     implementation("androidx.media3:media3-exoplayer-dash:$media3Version")
 
+    // FFmpeg 软件解码扩展：EAC3/AC3/DTS/TrueHD 等设备硬件不支持的音频格式
+    // 由 FFmpeg 兜底解码（ExoPlayerPlugin 已设 EXTENSION_RENDERER_MODE_PREFER
+    // + enableDecoderFallback，缺此依赖时扩展渲染器不可用、静默回退硬件解码，
+    // 设备无对应 MediaCodec 解码器即播放失败/无声）。
+    implementation("androidx.media3:media3-decoder-ffmpeg:$media3Version")
+
     // Mature ASS integration for Media3/ExoPlayer.
     implementation("io.github.peerless2012:ass-media:0.4.0")
 

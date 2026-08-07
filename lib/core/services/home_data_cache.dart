@@ -94,24 +94,35 @@ class HomeCacheLoader {
     required Future<T> Function() load,
     Object Function(T value)? encode,
     Duration? maxAge,
+    bool forceRefresh = false,
   }) async {
-    // 1. 尝试读取缓存
-    final cached = await HomeDataCache.get<T>(
-      serverId: serverId,
-      dataType: dataType,
-      decode: decode,
-    );
-    if (cached != null) return cached;
+    // 1. 尝试读取缓存（手动刷新/错误重试时 forceRefresh 跳过缓存直接请求，
+    //    否则网络故障期间缓存了空结果会一直显示空、点重试无反应）。
+    if (!forceRefresh) {
+      final cached = await HomeDataCache.get<T>(
+        serverId: serverId,
+        dataType: dataType,
+        decode: decode,
+      );
+      if (cached != null) return cached;
+    }
 
     // 2. 缓存未命中：网络请求
     final value = await load();
 
-    // 3. 写入缓存
-    await HomeDataCache.set(
-      serverId: serverId,
-      dataType: dataType,
-      value: encode == null ? _encode(value) : encode(value),
-    );
+    // 3. 写入缓存（空结果不缓存：避免 24h 内一直显示空列表）。
+    final isEmpty = value is List
+        ? value.isEmpty
+        : value is Map
+            ? value.isEmpty
+            : value == null;
+    if (!isEmpty) {
+      await HomeDataCache.set(
+        serverId: serverId,
+        dataType: dataType,
+        value: encode == null ? _encode(value) : encode(value),
+      );
+    }
 
     return value;
   }

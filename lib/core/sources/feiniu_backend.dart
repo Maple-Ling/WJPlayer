@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../providers/server_providers.dart';
+import '../services/app_logger.dart';
 import 'media_source_backend.dart';
 import 'source_http.dart';
 
@@ -234,6 +235,11 @@ class FeiniuBackend implements MediaSourceBackend {
       'Authorization': token,
       'Cookie': 'mode=relay',
       'authx': _authx(path, body),
+      // 飞牛 API 响应禁止被边缘缓存：CDN（如 Cloudflare）会缓存 GET 请求，
+      // 缓存到首次错误/过期响应后一直返回错误内容（登录是 POST 不缓存所以
+      // 正常），表现为「飞牛响应异常」。no-cache 让边缘每次回源。
+      'Cache-Control': 'no-cache',
+      'Pragma': 'no-cache',
     };
     if (isPost) headers['Content-Type'] = 'application/json';
 
@@ -247,8 +253,18 @@ class FeiniuBackend implements MediaSourceBackend {
       throw SourceException('飞牛请求失败: $e', cause: e);
     }
     final map = resp.data;
+    // 飞牛请求结果日志：CDN/穿透链路排查用（状态码 + 响应摘要）。
+    final summary = map is Map
+        ? 'code=${map['code']} msg=${map['msg']}'
+        : map is List
+            ? 'List(${map.length})'
+            : '${map.runtimeType}';
+    AppLogger().i('Feiniu', '$method $suffix -> HTTP ${resp.statusCode} $summary');
     final code = map is Map ? (map['code'] as num?)?.toInt() : null;
-    if (code != 0 && !retried) {
+    // 非零业务码或响应非 {code,msg,data} 信封都先重登重试一次：
+    // CDN/穿透链路可能间歇返回错误内容，重试兜底（幂等 GET 无副作用，
+    // POST 重放由飞牛侧以幂等设计容忍，与既有 retried 语义一致）。
+    if ((code != 0 || map is! Map) && !retried) {
       _tokenCache.remove(server.id);
       return _authed(server, suffix, data: data, retried: true);
     }
@@ -257,7 +273,20 @@ class FeiniuBackend implements MediaSourceBackend {
 
   /// 拆 `{code,msg,data}` 信封，非零抛异常。
   static dynamic _unwrap(dynamic body, {bool auth = false}) {
-    if (body is! Map) throw SourceException('飞牛响应异常');
+    if (body is! Map) {
+      // 带响应内容摘要：CDN/穿透链路下收到非信封内容（HTML/数组/缓存页）时
+      // 直接可见，便于定位是缓存命中还是路径改写。
+      String preview;
+      if (body is String) {
+        preview = body;
+      } else if (body is List) {
+        preview = 'List(${body.length})';
+      } else {
+        preview = body.runtimeType.toString();
+      }
+      if (preview.length > 200) preview = preview.substring(0, 200);
+      throw SourceException('飞牛响应异常（收到: $preview）');
+    }
     final code = (body['code'] as num?)?.toInt();
     if (code != 0) {
       final msg = body['msg']?.toString() ?? '飞牛请求失败（$code）';

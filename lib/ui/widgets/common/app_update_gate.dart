@@ -11,8 +11,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/providers/update_providers.dart';
 import '../../../core/services/update/app_update_service.dart';
 import '../../../core/services/update/update_installer.dart';
-import '../../../core/theme/app_colors.dart';
 import '../../../plugins/runtime/plugin_host_bindings.dart';
+import '../player/popup_menu_overlay.dart';
 import 'app_toast.dart';
 
 /// 挂在根 `MaterialApp.router` 的 builder 下，负责：启动时 + 每 24h 检查更新，
@@ -127,90 +127,163 @@ Future<void> showUpdateDialog(BuildContext context, UpdateInfo info) async {
   await showDialog<void>(
     context: context,
     builder: (ctx) {
-      final theme = Theme.of(ctx);
-      return AlertDialog(
-        title: Row(
-          children: [
-            const Icon(Icons.system_update_rounded,
-                color: AppColors.brand, size: 26),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text('发现新版本 ${info.tag}'
-                  '${info.isPrerelease ? '（预览版）' : '（稳定版）'}'),
-            ),
-          ],
-        ),
-        content: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 380, maxWidth: 500),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('当前版本：$kCurrentAppVersion',
+      // 播放器胶囊风格：PopupMenuShell 毛玻璃深色圆角，与播放器菜单统一。
+      return Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+        child: PopupMenuShell(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 380, maxHeight: 480),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.system_update_rounded,
+                        color: popupMenuBlue, size: 24),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        '发现新版本 ${info.tag}'
+                        '${info.isPrerelease ? '（预览版）' : '（稳定版）'}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  '当前版本：$kCurrentAppVersion',
                   style: TextStyle(
-                      color: theme.hintColor, fontSize: 13)),
-              const SizedBox(height: 6),
-              Text('更新内容',
-                  style: theme.textTheme.titleSmall
-                      ?.copyWith(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 6),
-              Flexible(
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest
-                        .withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(10),
+                      color: Colors.white.withOpacity(0.55), fontSize: 12.5),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  '更新内容',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.85),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
                   ),
-                  child: SingleChildScrollView(
-                    child: SelectableText(
-                      info.notes.trim().isEmpty
-                          ? '（无更新说明）'
-                          : _prettifyNotes(info.notes),
-                      style: const TextStyle(fontSize: 13, height: 1.45),
+                ),
+                const SizedBox(height: 6),
+                Flexible(
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.06),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                          color: Colors.white.withOpacity(0.08)),
+                    ),
+                    child: SingleChildScrollView(
+                      child: SelectableText(
+                        info.notes.trim().isEmpty
+                            ? '（无更新说明）'
+                            : _prettifyNotes(info.notes),
+                        style: const TextStyle(
+                            fontSize: 12.5,
+                            height: 1.45,
+                            color: Colors.white),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    _UpdateGhostButton(
+                      label: '前往发布页',
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        await _openDownload(context, info);
+                      },
+                    ),
+                    const Spacer(),
+                    _UpdateGhostButton(
+                      label: '暂不更新',
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                    const SizedBox(width: 10),
+                    _UpdatePrimaryButton(
+                      label: '立即更新',
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        if (canApply) {
+                          await _startInAppUpdate(context, info);
+                        } else {
+                          await _openDownload(context, info);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
-        actionsPadding:
-            const EdgeInsets.only(left: 12, right: 16, bottom: 12, top: 4),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await _openDownload(context, info);
-            },
-            child: const Text('前往发布页'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('暂不更新'),
-          ),
-          if (canApply)
-            FilledButton.icon(
-              onPressed: () async {
-                Navigator.pop(ctx);
-                await _startInAppUpdate(context, info);
-              },
-              icon: const Icon(Icons.download_rounded, size: 18),
-              label: const Text('立即更新'),
-            )
-          else
-            FilledButton(
-              onPressed: () async {
-                Navigator.pop(ctx);
-                await _openDownload(context, info);
-              },
-              child: const Text('立即更新'),
-            ),
-        ],
       );
     },
   );
+}
+
+/// 播放器胶囊风格次要按钮（描边透明底）。
+class _UpdateGhostButton extends StatelessWidget {
+  const _UpdateGhostButton({required this.label, required this.onPressed});
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton(
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        foregroundColor: Colors.white70,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(999),
+          side: BorderSide(color: Colors.white.withOpacity(0.18)),
+        ),
+        textStyle: const TextStyle(fontSize: 13),
+      ),
+      child: Text(label),
+    );
+  }
+}
+
+/// 播放器胶囊风格主按钮（蓝色填充）。
+class _UpdatePrimaryButton extends StatelessWidget {
+  const _UpdatePrimaryButton({required this.label, required this.onPressed});
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton(
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        backgroundColor: popupMenuBlue,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(999),
+        ),
+        textStyle: const TextStyle(
+            fontSize: 13, fontWeight: FontWeight.w600),
+      ),
+      child: Text(label),
+    );
+  }
 }
 
 /// 把 GitHub 自动生成的 Markdown 发布说明清成干净纯文本——弹窗用 Text 展示，

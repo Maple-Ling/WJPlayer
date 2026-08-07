@@ -98,6 +98,9 @@ class DanmakuAutoLoader {
     String episodeId,
     String sourceId,
   ) async {
+    // 记录弹幕来源上下文：去重开关/时间窗口变化后据此用缓存重载重过滤。
+    ref.read(danmakuContextProvider.notifier).state =
+        (episodeId: episodeId, sourceId: sourceId);
     try {
       final raw = await service.getComments(episodeId, sourceId: sourceId);
       return applyDanmakuFilterAndDedup(

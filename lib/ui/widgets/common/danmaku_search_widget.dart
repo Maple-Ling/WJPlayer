@@ -22,7 +22,20 @@ import 'app_toast.dart';
 /// 另提供「本地导入」直接加载用户的 .xml/.json/.ass 弹幕文件。
 class DanmakuSearchContent extends ConsumerStatefulWidget {
   final MediaItem? item;
-  const DanmakuSearchContent({super.key, this.item});
+
+  /// 播放器胶囊模式：隐藏「本地导入」入口，结果列表限高（默认 3 条可见）
+  /// 可上下滚动，用于锚定弹幕按钮的胶囊菜单；完整版（右侧面板）保持原样。
+  final bool compact;
+
+  /// 弹幕加载成功后的回调（胶囊模式下用于关闭弹幕菜单）。
+  final VoidCallback? onLoaded;
+
+  const DanmakuSearchContent({
+    super.key,
+    this.item,
+    this.compact = false,
+    this.onLoaded,
+  });
 
   @override
   ConsumerState<DanmakuSearchContent> createState() =>
@@ -268,6 +281,9 @@ class _DanmakuSearchContentState extends ConsumerState<DanmakuSearchContent> {
   }) async {
     setState(() => _loadingEpisodeId = episodeId);
     try {
+      // 记录弹幕来源上下文：去重开关变化后据此用缓存重载重过滤。
+      ref.read(danmakuContextProvider.notifier).state =
+          (episodeId: episodeId, sourceId: sourceId);
       final service = ref.read(danmakuServiceProvider);
       var items = await service.getComments(episodeId, sourceId: sourceId);
       items = _applyFilterAndDedup(items);
@@ -278,6 +294,8 @@ class _DanmakuSearchContentState extends ConsumerState<DanmakuSearchContent> {
       } else {
         ref.read(loadedDanmakuProvider.notifier).state = items;
         _toast('已加载 ${items.length} 条弹幕 · $animeTitle');
+        // 胶囊模式下加载成功即关闭弹幕菜单（完整面板无回调）。
+        widget.onLoaded?.call();
       }
     } catch (e) {
       if (mounted) {
@@ -305,6 +323,61 @@ class _DanmakuSearchContentState extends ConsumerState<DanmakuSearchContent> {
 
   @override
   Widget build(BuildContext context) {
+    // 播放器胶囊模式：搜索框固定，结果区限高（约 3 条候选/结果可见）
+    // 可上下滚动；隐藏本地导入入口。
+    if (widget.compact) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildSearchBox(),
+          const SizedBox(height: 8),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 232),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildBgmtvBox(),
+                  if (_isAutoMatching) _buildAutoMatchingRow(),
+                  if (_autoCandidates.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    const Text('推荐匹配（按可信度）', style: _white54),
+                    const SizedBox(height: 2),
+                    ..._autoCandidates.take(8).map(_buildCandidateTile),
+                    const Divider(color: Colors.white12),
+                  ],
+                  if (_autoMatchStatus != null &&
+                      !_isAutoMatching &&
+                      _shows.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Text(_autoMatchStatus!, style: _white54),
+                    ),
+                  if (_isSearching)
+                    const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2)),
+                          SizedBox(width: 10),
+                          Text('搜索中，结果陆续显示…', style: _white54),
+                        ],
+                      ),
+                    ),
+                  ..._shows.map(_buildShowTile),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,

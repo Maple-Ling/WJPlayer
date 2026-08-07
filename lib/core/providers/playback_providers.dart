@@ -355,9 +355,43 @@ final danmakuStrokeProvider =
   );
 });
 
-final danmakuDelayProvider = StateProvider<double>((ref) => 0.0);
-final danmakuDedupProvider = StateProvider<bool>((ref) => false);
-final danmakuDedupWindowProvider = StateProvider<double>((ref) => 10.0);
+final danmakuDelayProvider =
+    StateNotifierProvider<PreferenceNotifier<double>, double>((ref) {
+  return PreferenceNotifier<double>(
+    defaultValue: 0.0,
+    readValue: (prefs) => prefs.getDouble('wjplayer_danmaku_delay'),
+    writeValue: (prefs, value) async {
+      await prefs.setDouble('wjplayer_danmaku_delay', value);
+    },
+  );
+});
+
+final danmakuDedupProvider =
+    StateNotifierProvider<PreferenceNotifier<bool>, bool>((ref) {
+  return PreferenceNotifier<bool>(
+    defaultValue: false,
+    readValue: (prefs) => prefs.getBool('wjplayer_danmaku_dedup'),
+    writeValue: (prefs, value) async {
+      await prefs.setBool('wjplayer_danmaku_dedup', value);
+    },
+  );
+});
+
+final danmakuDedupWindowProvider =
+    StateNotifierProvider<PreferenceNotifier<double>, double>((ref) {
+  return PreferenceNotifier<double>(
+    defaultValue: 10.0,
+    readValue: (prefs) => prefs.getDouble('wjplayer_danmaku_dedup_window'),
+    writeValue: (prefs, value) async {
+      await prefs.setDouble('wjplayer_danmaku_dedup_window', value);
+    },
+  );
+});
+
+/// 当前已加载弹幕的来源上下文（弹幕源 episodeId + sourceId）。
+/// 去重开关/时间窗口变化后，用缓存重载原始弹幕并重新过滤，让开关立即生效。
+final danmakuContextProvider =
+    StateProvider<({String episodeId, String? sourceId})?>((ref) => null);
 final loadedDanmakuProvider = StateProvider<List<DanmakuItem>>((ref) => []);
 
 final danmakuBlockwordsProvider =

@@ -610,6 +610,8 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
     final topActions = _topActions;
     final topIndex = switch (menu) {
       PopupMenuId.danmaku => topActions.indexOf(PlayerTopAction.danmaku),
+      PopupMenuId.danmakuSearch =>
+        topActions.indexOf(PlayerTopAction.danmaku),
       PopupMenuId.speed => topActions.indexOf(PlayerTopAction.speed),
       PopupMenuId.skip => topActions.indexOf(PlayerTopAction.skipOpeningEnding),
       PopupMenuId.aspect => topActions.indexOf(PlayerTopAction.aspectRatio),

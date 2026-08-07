@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/emby_api.dart';
+import '../../../core/network/proxy_http_client.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/providers/server_providers.dart';
 import '../../../core/sources/feiniu_backend.dart';
@@ -425,6 +426,19 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
       final fullUrl = lines.isEmpty
           ? (_isEdit ? widget.existing!.baseUrl : '')
           : lines.first.url;
+
+      // 开启「允许不安全 TLS」时，把本次要连接的地址主机临时加入放行
+      // 白名单：服务器尚未入库（添加）/未保存（编辑改开关后）时全局白名单
+      // 由 serverListProvider 驱动、不含该主机，TLS 校验会失败；保存成功后
+      // 由 _syncInsecureTlsHosts 整体重建接管。
+      if (_allowInsecureTls) {
+        for (final url in [fullUrl, ...lines.map((l) => l.url)]) {
+          final host = Uri.tryParse(url.trim())?.host;
+          if (host != null && host.isNotEmpty) {
+            addInsecureTlsHost(host);
+          }
+        }
+      }
 
       // 编辑时沿用原 sourceKind；新增时用表单传入的 sourceKind。
       final sourceKind = _isEdit ? widget.existing!.sourceKind : widget.sourceKind;

@@ -5,22 +5,20 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   late VideoPlayerService _playerService;
   bool _showRemaining = false;
   bool _isLongPressing = false;
-  // 轻点判定（全屏点击切换控制栏）：记录按下位置/时间。抬起后**立即**
-  // toggle（灵敏跟手），并开启 250ms 回滚窗口——窗口内再次按下（双击/
-  // 连点）由 _onTapDown 回滚 UI 状态，动画未完成即反向、视觉无感。
+  // 轻点判定（全屏点击切换控制栏）：记录按下位置/时间。抬起后延迟 250ms
+  // 执行 toggle（双击窗口内第二击取消，UI 零闪现；单击延迟可感但无手势
+  // 竞技场等待，事件不丢失）。
   Offset _tapDownPosition = Offset.zero;
   DateTime _tapDownTime = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _pendingTapTimer;
+  // 延迟中的单击 toggle：双击/连点窗口内由 _onTapDown 取消，UI 完全不变化。
+  Timer? _pendingTapToggle;
   // 陀螺仪画面翻转：手机上下颠倒（加速度计 y 轴符号翻转）→ 画面 180° 翻转。
   bool _videoFlipped = false;
   StreamSubscription<AccelerometerEvent>? _accelSub;
   /// 横屏翻转基准：首次检测到横屏时的 x 轴符号（1 = landscapeRight, -1 = landscapeLeft）。
   /// 后续 x 符号与此不同时判定为 180° 翻转。竖屏时重置为 0。
   int _landscapeFlipBaseline = 0;
-  // 立即 toggle + 回滚：单击立即切换 UI；250ms 内再次按下则回滚
-  // （双击/连点不弹 UI，动画未完成即反向，视觉无感）。
-  bool _togglePendingRollback = false;
-  Timer? _rollbackTimer;
   bool _isSliderDragging = false;
   double? _sliderDragValue;
   bool _decoderSwitchInFlight = false;
@@ -1890,7 +1888,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     WakelockPlus.disable();
     _accelSub?.cancel();
     _accelSub = null;
-    _rollbackTimer?.cancel();
+    _pendingTapToggle?.cancel();
     _statusTimer?.cancel();
     SystemInfoService.instance.stop();
     _streamTranslator?.stop();
@@ -2107,8 +2105,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   onEpisodeChanged: _switchEpisode,
                   onDanmakuChanged: (value) =>
                       ref.read(danmakuEnabledProvider.notifier).state = value,
-                  onDanmakuDeduplicationChanged: (value) =>
-                      ref.read(danmakuDedupProvider.notifier).state = value,
+                  onDanmakuDeduplicationChanged: (value) {
+                    ref.read(danmakuDedupProvider.notifier).state = value;
+                    // 去重开关立即生效：用缓存重载已加载弹幕并重新过滤。
+                    unawaited(_reapplyDanmakuFilter());
+                  },
                   onDanmakuOpacityChanged: (value) =>
                       ref.read(danmakuOpacityProvider.notifier).state = value,
                   onDanmakuFontSizeChanged: (value) =>
@@ -2557,31 +2558,33 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   void _onTapDown(PointerDownEvent event) {
     if (_playerService.isLocked) return;
-    // 双击/连点的后续一击（250ms 回滚窗口内）：把上一次点击的 toggle 回滚
-    // 回原状态。用 instant=true 立即切换，**不触发 180ms 动画**，避免淡入未完成即淡出导致闪烁。
-    if (_togglePendingRollback) {
-      _playerService.toggleControls(instant: true);
+    // 双击/连点的后续一击（250ms 窗口内）：取消延迟中的单击 toggle，
+    // UI 完全不闪现（双击的播放/暂停/快进由 onDoubleTapDown 承担）。
+    if (_pendingTapToggle != null) {
+      _pendingTapToggle!.cancel();
+      _pendingTapToggle = null;
+      _tapDownPosition = event.position;
+      _tapDownTime = DateTime.now();
       return;
     }
     _tapDownPosition = event.position;
     _tapDownTime = DateTime.now();
   }
 
-  /// 全屏轻点抬起：位移 <20px 且时长 <150ms（非拖动/长按）→ **立即**
-  /// toggle 控制栏（无延迟，跟手），并开启 250ms 回滚窗口——
-  /// 窗口内再有按下（双击/连点）由 [_onTapDown] 回滚 UI 状态。
-  /// 双击的播放/暂停/快进功能仍由 onDoubleTapDown 承担。
+  /// 全屏轻点抬起：位移 <20px 且时长 <150ms（非拖动/长按）→ 延迟 250ms
+  /// 执行 toggle（双击窗口内第二击由 [_onTapDown] 取消，UI 零闪现）。
+  /// 单击 250ms 后切换控制栏；延迟由 Listener 原始指针承担，无手势竞技场
+  /// 等待，事件不丢失。
   void _onTapUp(PointerUpEvent event) {
     if (_playerService.isLocked || _isLongPressing) return;
     final now = DateTime.now();
     final dt = now.difference(_tapDownTime);
     final dist = (event.position - _tapDownPosition).distance;
     if (dt > const Duration(milliseconds: 150) || dist > 20) return;
-    _playerService.toggleControls();
-    _togglePendingRollback = true;
-    _rollbackTimer?.cancel();
-    _rollbackTimer = Timer(const Duration(milliseconds: 250), () {
-      _togglePendingRollback = false;
+    _pendingTapToggle?.cancel();
+    _pendingTapToggle = Timer(const Duration(milliseconds: 250), () {
+      _pendingTapToggle = null;
+      if (mounted) _playerService.toggleControls();
     });
   }
 
@@ -5607,6 +5610,29 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         const _DanmakuSettingsContent(),
       ],
     );
+  }
+
+  /// 去重开关/时间窗口变化：用缓存重载原始弹幕并重新过滤，让开关立即生效
+  /// （不重载的话去重只对下次加载的弹幕生效，看起来"改了没用"）。
+  Future<void> _reapplyDanmakuFilter() async {
+    final ctx = ref.read(danmakuContextProvider);
+    if (ctx == null) return;
+    final service = ref.read(danmakuServiceProvider);
+    try {
+      final raw =
+          await service.getComments(ctx.episodeId, sourceId: ctx.sourceId);
+      final items = applyDanmakuFilterAndDedup(
+        raw,
+        blockwords: ref.read(danmakuBlockwordsProvider),
+        dedup: ref.read(danmakuDedupProvider),
+        dedupWindow: ref.read(danmakuDedupWindowProvider),
+      );
+      if (mounted) {
+        ref.read(loadedDanmakuProvider.notifier).state = items;
+      }
+    } catch (_) {
+      // 重载失败保留现有弹幕，不打断播放。
+    }
   }
 
   void _showDanmakuSearch() {

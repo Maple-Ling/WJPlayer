@@ -15,6 +15,7 @@ import 'core/services/font_service.dart';
 import 'core/services/secure_credential_store.dart';
 import 'core/services/telemetry.dart';
 import 'core/theme/app_motion.dart';
+import 'core/providers/server_card_stats_provider.dart';
 import 'plugins/plugin_system.dart';
 
 Future<void> main() async {
@@ -58,6 +59,10 @@ Future<void> main() async {
   CacheService.configureMemoryCache();
   // 启动清理放后台，不阻塞启动。
   unawaited(CacheService.runStartupCleanup());
+
+  // 服务器卡片影视数量：每次冷启动清空内存缓存，进入服务器列表时重新
+  // 拉取，保证打开软件即看到最新统计（会话内由 TTL 防抖，不频繁请求）。
+  resetServerStatsCache();
 
   // 插件系统：共享同一个 ProviderContainer，便于插件 ctx 读取应用状态。
   final container = ProviderContainer();

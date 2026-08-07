@@ -9,6 +9,7 @@ import '../../../core/providers/playback_providers.dart';
 import '../../../core/providers/unified_resource_provider.dart';
 import '../../../core/sources/unified_media_adapter.dart';
 import '../../../core/utils/track_preference.dart';
+import '../common/danmaku_search_widget.dart';
 import '../common/playback_resource_card.dart';
 
 const Color popupMenuBlue = Color(0xFF4A7BD0);
@@ -19,6 +20,7 @@ const Color popupMenuSurface = Color(0xEB0C1016);
 enum PopupMenuId {
   danmaku,
   danmakuSettings,
+  danmakuSearch,
   speed,
   skip,
   aspect,
@@ -1807,7 +1809,8 @@ class PopupMenuOverlay extends ConsumerWidget {
         return PopupDanmakuMenu(
           enabled: danmakuEnabled,
           onEnabledChanged: onDanmakuChanged,
-          onSearch: onSearchDanmaku,
+          // 搜索弹幕改为胶囊菜单（锚定弹幕按钮下方，与选集框同风格）。
+          onSearch: () => onOpenMenu(PopupMenuId.danmakuSearch),
           onOpenSettings: () => onOpenMenu(PopupMenuId.danmakuSettings),
         );
       case PopupMenuId.danmakuSettings:
@@ -1826,6 +1829,15 @@ class PopupMenuOverlay extends ConsumerWidget {
           onAreaChanged: onDanmakuAreaChanged,
           onDelayChanged: onDanmakuDelayChanged,
           onDeduplicationChanged: onDanmakuDeduplicationChanged,
+        );
+      case PopupMenuId.danmakuSearch:
+        // 播放器胶囊版弹幕搜索：与选集框同尺寸锚定在弹幕按钮下方，
+        // 结果默认 3 条可见、可上下滚动；不含本地导入（右侧面板保留完整版）。
+        // 加载成功即关闭菜单（onLoaded），让弹幕立即上屏。
+        return DanmakuSearchContent(
+          item: ref.read(currentPlayingItemProvider),
+          compact: true,
+          onLoaded: onClose,
         );
       case PopupMenuId.speed:
         return PopupSpeedMenu(
