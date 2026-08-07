@@ -125,7 +125,16 @@ class PopupMenuShell extends StatelessWidget {
             ),
             child: Padding(
               padding: const EdgeInsets.all(10),
-              child: child,
+              // 菜单内容超高（弹幕设置等长菜单）时可在屏内下滑查看，
+              // 高度上限与 _PopupMenuPositionDelegate 的可用高度对齐。
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: math.max(120.0, MediaQuery.sizeOf(context).height - 24),
+                ),
+                child: SingleChildScrollView(
+                  child: child,
+                ),
+              ),
             ),
           ),
         ),
@@ -587,7 +596,7 @@ class PopupDanmakuMenu extends StatelessWidget {
   }
 }
 
-class PopupDanmakuSettingsMenu extends StatelessWidget {
+class PopupDanmakuSettingsMenu extends StatefulWidget {
   const PopupDanmakuSettingsMenu({
     super.key,
     required this.opacity,
@@ -598,8 +607,10 @@ class PopupDanmakuSettingsMenu extends StatelessWidget {
     required this.delay,
     required this.deduplication,
     required this.dedupWindow,
-    required this.floating,
-    required this.colorful,
+    required this.floatingColorful,
+    required this.floatingWhite,
+    required this.scrollColorful,
+    required this.scrollWhite,
     required this.stroke,
     required this.onOpacityChanged,
     required this.onFontSizeChanged,
@@ -609,8 +620,10 @@ class PopupDanmakuSettingsMenu extends StatelessWidget {
     required this.onDelayChanged,
     required this.onDeduplicationChanged,
     required this.onDedupWindowChanged,
-    required this.onFloatingChanged,
-    required this.onColorfulChanged,
+    required this.onFloatingColorfulChanged,
+    required this.onFloatingWhiteChanged,
+    required this.onScrollColorfulChanged,
+    required this.onScrollWhiteChanged,
     required this.onStrokeChanged,
   });
 
@@ -622,8 +635,10 @@ class PopupDanmakuSettingsMenu extends StatelessWidget {
   final double delay;
   final bool deduplication;
   final double dedupWindow;
-  final bool floating;
-  final bool colorful;
+  final bool floatingColorful;
+  final bool floatingWhite;
+  final bool scrollColorful;
+  final bool scrollWhite;
   final bool stroke;
   final ValueChanged<double> onOpacityChanged;
   final ValueChanged<double> onFontSizeChanged;
@@ -633,12 +648,24 @@ class PopupDanmakuSettingsMenu extends StatelessWidget {
   final ValueChanged<double> onDelayChanged;
   final ValueChanged<bool> onDeduplicationChanged;
   final ValueChanged<double> onDedupWindowChanged;
-  final ValueChanged<bool> onFloatingChanged;
-  final ValueChanged<bool> onColorfulChanged;
+  final ValueChanged<bool> onFloatingColorfulChanged;
+  final ValueChanged<bool> onFloatingWhiteChanged;
+  final ValueChanged<bool> onScrollColorfulChanged;
+  final ValueChanged<bool> onScrollWhiteChanged;
   final ValueChanged<bool> onStrokeChanged;
 
   @override
+  State<PopupDanmakuSettingsMenu> createState() =>
+      _PopupDanmakuSettingsMenuState();
+}
+
+class _PopupDanmakuSettingsMenuState extends State<PopupDanmakuSettingsMenu> {
+  bool _floatingExpanded = false;
+  bool _scrollExpanded = false;
+
+  @override
   Widget build(BuildContext context) {
+    final w = widget;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -646,62 +673,88 @@ class PopupDanmakuSettingsMenu extends StatelessWidget {
         const PopupMenuTitle(title: '弹幕设置'),
         PopupMenuSliderRow(
           label: '不透明度',
-          value: opacity,
-          onChanged: onOpacityChanged,
+          value: w.opacity,
+          onChanged: w.onOpacityChanged,
         ),
         PopupMenuSliderRow(
           label: '弹幕字体',
-          value: fontSize,
-          onChanged: onFontSizeChanged,
+          value: w.fontSize,
+          onChanged: w.onFontSizeChanged,
         ),
         PopupMenuSliderRow(
           label: '弹幕速度',
-          value: speed,
-          onChanged: onSpeedChanged,
+          value: w.speed,
+          onChanged: w.onSpeedChanged,
         ),
         PopupMenuSliderRow(
           label: '弹幕密度',
-          value: density,
-          onChanged: onDensityChanged,
+          value: w.density,
+          onChanged: w.onDensityChanged,
         ),
         PopupMenuSliderRow(
           label: '弹幕区域',
-          value: area,
-          onChanged: onAreaChanged,
+          value: w.area,
+          onChanged: w.onAreaChanged,
         ),
         PopupMenuSliderRow(
           label: '弹幕延迟',
-          value: delay,
-          onChanged: onDelayChanged,
+          value: w.delay,
+          onChanged: w.onDelayChanged,
         ),
         PopupMenuSwitchPill(
           label: '弹幕去重',
-          value: deduplication,
-          onChanged: onDeduplicationChanged,
+          value: w.deduplication,
+          onChanged: w.onDeduplicationChanged,
         ),
-        if (deduplication)
+        if (w.deduplication)
           PopupMenuSliderRow(
             label: '去重窗口',
-            value: dedupWindow,
+            value: w.dedupWindow,
             min: 1,
             max: 30,
-            valueLabel: '${dedupWindow.round()}秒',
-            onChanged: onDedupWindowChanged,
+            valueLabel: '${w.dedupWindow.round()}秒',
+            onChanged: w.onDedupWindowChanged,
           ),
-        PopupMenuSwitchPill(
+        // 悬浮弹幕：> 展开彩色/白色两个开关；两个都关则悬浮弹幕不显示。
+        PopupMenuPill(
           label: '悬浮弹幕',
-          value: floating,
-          onChanged: onFloatingChanged,
+          sub: _floatingExpanded ? '˅' : '›',
+          onTap: () => setState(() => _floatingExpanded = !_floatingExpanded),
         ),
-        PopupMenuSwitchPill(
-          label: '彩色弹幕',
-          value: colorful,
-          onChanged: onColorfulChanged,
+        if (_floatingExpanded) ...[
+          PopupMenuSwitchPill(
+            label: '彩色弹幕',
+            value: w.floatingColorful,
+            onChanged: w.onFloatingColorfulChanged,
+          ),
+          PopupMenuSwitchPill(
+            label: '白色弹幕',
+            value: w.floatingWhite,
+            onChanged: w.onFloatingWhiteChanged,
+          ),
+        ],
+        // 滚动弹幕：> 展开彩色/白色两个开关；两个都关则滚动弹幕不显示。
+        PopupMenuPill(
+          label: '滚动弹幕',
+          sub: _scrollExpanded ? '˅' : '›',
+          onTap: () => setState(() => _scrollExpanded = !_scrollExpanded),
         ),
+        if (_scrollExpanded) ...[
+          PopupMenuSwitchPill(
+            label: '彩色弹幕',
+            value: w.scrollColorful,
+            onChanged: w.onScrollColorfulChanged,
+          ),
+          PopupMenuSwitchPill(
+            label: '白色弹幕',
+            value: w.scrollWhite,
+            onChanged: w.onScrollWhiteChanged,
+          ),
+        ],
         PopupMenuSwitchPill(
           label: '描边文字',
-          value: stroke,
-          onChanged: onStrokeChanged,
+          value: w.stroke,
+          onChanged: w.onStrokeChanged,
         ),
       ],
     );
@@ -1737,8 +1790,10 @@ class PopupMenuOverlay extends ConsumerWidget {
     required this.danmakuEnabled,
     required this.danmakuDeduplication,
     required this.danmakuDedupWindow,
-    required this.danmakuFloating,
-    required this.danmakuColorful,
+    required this.danmakuFloatingColorful,
+    required this.danmakuFloatingWhite,
+    required this.danmakuScrollColorful,
+    required this.danmakuScrollWhite,
     required this.danmakuStroke,
     required this.autoSkip,
     required this.danmakuOpacity,
@@ -1770,8 +1825,10 @@ class PopupMenuOverlay extends ConsumerWidget {
     required this.onDanmakuChanged,
     required this.onDanmakuDeduplicationChanged,
     required this.onDanmakuDedupWindowChanged,
-    required this.onDanmakuFloatingChanged,
-    required this.onDanmakuColorfulChanged,
+    required this.onDanmakuFloatingColorfulChanged,
+    required this.onDanmakuFloatingWhiteChanged,
+    required this.onDanmakuScrollColorfulChanged,
+    required this.onDanmakuScrollWhiteChanged,
     required this.onDanmakuStrokeChanged,
     required this.onAutoSkipChanged,
     required this.onDanmakuOpacityChanged,
@@ -1806,8 +1863,10 @@ class PopupMenuOverlay extends ConsumerWidget {
   final bool danmakuEnabled;
   final bool danmakuDeduplication;
   final double danmakuDedupWindow;
-  final bool danmakuFloating;
-  final bool danmakuColorful;
+  final bool danmakuFloatingColorful;
+  final bool danmakuFloatingWhite;
+  final bool danmakuScrollColorful;
+  final bool danmakuScrollWhite;
   final bool danmakuStroke;
   final bool autoSkip;
   final double danmakuOpacity;
@@ -1842,8 +1901,10 @@ class PopupMenuOverlay extends ConsumerWidget {
   final ValueChanged<bool> onDanmakuChanged;
   final ValueChanged<bool> onDanmakuDeduplicationChanged;
   final ValueChanged<double> onDanmakuDedupWindowChanged;
-  final ValueChanged<bool> onDanmakuFloatingChanged;
-  final ValueChanged<bool> onDanmakuColorfulChanged;
+  final ValueChanged<bool> onDanmakuFloatingColorfulChanged;
+  final ValueChanged<bool> onDanmakuFloatingWhiteChanged;
+  final ValueChanged<bool> onDanmakuScrollColorfulChanged;
+  final ValueChanged<bool> onDanmakuScrollWhiteChanged;
   final ValueChanged<bool> onDanmakuStrokeChanged;
   final ValueChanged<bool> onAutoSkipChanged;
   final ValueChanged<double> onDanmakuOpacityChanged;
@@ -1888,8 +1949,10 @@ class PopupMenuOverlay extends ConsumerWidget {
           delay: danmakuDelay,
           deduplication: danmakuDeduplication,
           dedupWindow: danmakuDedupWindow,
-          floating: danmakuFloating,
-          colorful: danmakuColorful,
+          floatingColorful: danmakuFloatingColorful,
+          floatingWhite: danmakuFloatingWhite,
+          scrollColorful: danmakuScrollColorful,
+          scrollWhite: danmakuScrollWhite,
           stroke: danmakuStroke,
           onOpacityChanged: onDanmakuOpacityChanged,
           onFontSizeChanged: onDanmakuFontSizeChanged,
@@ -1899,8 +1962,10 @@ class PopupMenuOverlay extends ConsumerWidget {
           onDelayChanged: onDanmakuDelayChanged,
           onDeduplicationChanged: onDanmakuDeduplicationChanged,
           onDedupWindowChanged: onDanmakuDedupWindowChanged,
-          onFloatingChanged: onDanmakuFloatingChanged,
-          onColorfulChanged: onDanmakuColorfulChanged,
+          onFloatingColorfulChanged: onDanmakuFloatingColorfulChanged,
+          onFloatingWhiteChanged: onDanmakuFloatingWhiteChanged,
+          onScrollColorfulChanged: onDanmakuScrollColorfulChanged,
+          onScrollWhiteChanged: onDanmakuScrollWhiteChanged,
           onStrokeChanged: onDanmakuStrokeChanged,
         );
       case PopupMenuId.danmakuSearch:

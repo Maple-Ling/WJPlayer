@@ -1827,13 +1827,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     final keepPercent = 0.3 + ref.read(danmakuDensityProvider).clamp(0.0, 1.0) * 0.7;
     for (final item in batch) {
       if (item.text.isEmpty) continue;
-      // 悬浮弹幕开关：关闭时跳过顶部/底部固定弹幕（type 4=底部/5=顶部），只留滚动。
-      if (!ref.read(danmakuFloatingProvider) &&
-          (item.type == 4 || item.type == 5)) {
-        continue;
-      }
-      // 彩色弹幕开关：关闭时跳过非白色弹幕（16777215=白），只留白色。
-      if (!ref.read(danmakuColorfulProvider) && item.color != 16777215) {
+      // 悬浮/滚动 × 彩色/白色 四开关：feed 时实时读取，切换后新弹幕自然生效（无感）。
+      // 白色 = color == 16777215；同一类两个开关都关则该类弹幕不显示。
+      if (item.type == 4 || item.type == 5) {
+        if (item.color == 16777215
+            ? !ref.read(danmakuFloatingWhiteProvider)
+            : !ref.read(danmakuFloatingColorfulProvider)) {
+          continue;
+        }
+      } else if (item.color == 16777215
+          ? !ref.read(danmakuScrollWhiteProvider)
+          : !ref.read(danmakuScrollColorfulProvider)) {
         continue;
       }
       if (((item.time * 7919) % 1000) / 1000 > keepPercent) continue;
@@ -2172,8 +2176,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   initialDanmakuDeduplication: ref.watch(danmakuDedupProvider),
                   initialDanmakuDedupWindow:
                       ref.watch(danmakuDedupWindowProvider),
-                  initialDanmakuFloating: ref.watch(danmakuFloatingProvider),
-                  initialDanmakuColorful: ref.watch(danmakuColorfulProvider),
+                  initialDanmakuFloatingColorful:
+                      ref.watch(danmakuFloatingColorfulProvider),
+                  initialDanmakuFloatingWhite:
+                      ref.watch(danmakuFloatingWhiteProvider),
+                  initialDanmakuScrollColorful:
+                      ref.watch(danmakuScrollColorfulProvider),
+                  initialDanmakuScrollWhite:
+                      ref.watch(danmakuScrollWhiteProvider),
                   initialDanmakuStroke: ref.watch(danmakuStrokeProvider),
                   initialAutoSkip: ref.watch(autoSkipSegmentsProvider),
                   initialDanmakuOpacity: ref.watch(danmakuOpacityProvider),
@@ -2252,15 +2262,18 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                         value;
                     unawaited(_reapplyDanmakuFilter());
                   },
-                  onDanmakuFloatingChanged: (value) {
-                    ref.read(danmakuFloatingProvider.notifier).state = value;
-                    // 立即生效：清屏按新开关重新喂弹幕。
-                    unawaited(_reapplyDanmakuFilter());
-                  },
-                  onDanmakuColorfulChanged: (value) {
-                    ref.read(danmakuColorfulProvider.notifier).state = value;
-                    unawaited(_reapplyDanmakuFilter());
-                  },
+                  onDanmakuFloatingColorfulChanged: (value) =>
+                      ref.read(danmakuFloatingColorfulProvider.notifier)
+                          .state = value,
+                  onDanmakuFloatingWhiteChanged: (value) =>
+                      ref.read(danmakuFloatingWhiteProvider.notifier)
+                          .state = value,
+                  onDanmakuScrollColorfulChanged: (value) =>
+                      ref.read(danmakuScrollColorfulProvider.notifier)
+                          .state = value,
+                  onDanmakuScrollWhiteChanged: (value) =>
+                      ref.read(danmakuScrollWhiteProvider.notifier)
+                          .state = value,
                   onDanmakuStrokeChanged: (value) =>
                       ref.read(danmakuStrokeProvider.notifier).state = value,
                   onDanmakuOpacityChanged: (value) =>

@@ -394,27 +394,51 @@ final danmakuContextProvider =
     StateProvider<({String episodeId, String? sourceId})?>((ref) => null);
 final loadedDanmakuProvider = StateProvider<List<DanmakuItem>>((ref) => []);
 
-/// 悬浮弹幕开关：控制顶部/底部固定弹幕（type 4/5，canvas_danmaku top/bottom）是否显示，
-/// 关闭后仅显示滚动弹幕。持久化，重启保留。
-final danmakuFloatingProvider =
+/// 悬浮弹幕（顶部/底部固定，type 4/5）彩色弹幕开关：控制悬浮弹幕中的彩色弹幕是否显示。
+/// 与 [danmakuFloatingWhiteProvider] 组合决定悬浮弹幕显示内容，持久化，重启保留。
+final danmakuFloatingColorfulProvider =
     StateNotifierProvider<PreferenceNotifier<bool>, bool>((ref) {
   return PreferenceNotifier<bool>(
     defaultValue: true,
-    readValue: (prefs) => prefs.getBool('wjplayer_danmaku_floating'),
+    readValue: (prefs) => prefs.getBool('wjplayer_danmaku_floating_colorful'),
     writeValue: (prefs, value) async {
-      await prefs.setBool('wjplayer_danmaku_floating', value);
+      await prefs.setBool('wjplayer_danmaku_floating_colorful', value);
     },
   );
 });
 
-/// 彩色弹幕开关：控制非白色弹幕是否显示，关闭后仅显示白色弹幕。持久化，重启保留。
-final danmakuColorfulProvider =
+/// 悬浮弹幕白色弹幕开关：控制悬浮弹幕中的白色弹幕是否显示。
+final danmakuFloatingWhiteProvider =
     StateNotifierProvider<PreferenceNotifier<bool>, bool>((ref) {
   return PreferenceNotifier<bool>(
     defaultValue: true,
-    readValue: (prefs) => prefs.getBool('wjplayer_danmaku_colorful'),
+    readValue: (prefs) => prefs.getBool('wjplayer_danmaku_floating_white'),
     writeValue: (prefs, value) async {
-      await prefs.setBool('wjplayer_danmaku_colorful', value);
+      await prefs.setBool('wjplayer_danmaku_floating_white', value);
+    },
+  );
+});
+
+/// 滚动弹幕彩色弹幕开关：控制滚动弹幕中的彩色弹幕是否显示。
+final danmakuScrollColorfulProvider =
+    StateNotifierProvider<PreferenceNotifier<bool>, bool>((ref) {
+  return PreferenceNotifier<bool>(
+    defaultValue: true,
+    readValue: (prefs) => prefs.getBool('wjplayer_danmaku_scroll_colorful'),
+    writeValue: (prefs, value) async {
+      await prefs.setBool('wjplayer_danmaku_scroll_colorful', value);
+    },
+  );
+});
+
+/// 滚动弹幕白色弹幕开关：控制滚动弹幕中的白色弹幕是否显示。
+final danmakuScrollWhiteProvider =
+    StateNotifierProvider<PreferenceNotifier<bool>, bool>((ref) {
+  return PreferenceNotifier<bool>(
+    defaultValue: true,
+    readValue: (prefs) => prefs.getBool('wjplayer_danmaku_scroll_white'),
+    writeValue: (prefs, value) async {
+      await prefs.setBool('wjplayer_danmaku_scroll_white', value);
     },
   );
 });

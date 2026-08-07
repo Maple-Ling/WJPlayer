@@ -47,8 +47,10 @@ class PlayerOverlay extends StatefulWidget {
     required this.initialDanmakuEnabled,
     required this.initialDanmakuDeduplication,
     required this.initialDanmakuDedupWindow,
-    required this.initialDanmakuFloating,
-    required this.initialDanmakuColorful,
+    required this.initialDanmakuFloatingColorful,
+    required this.initialDanmakuFloatingWhite,
+    required this.initialDanmakuScrollColorful,
+    required this.initialDanmakuScrollWhite,
     required this.initialDanmakuStroke,
     required this.initialAutoSkip,
     required this.initialDanmakuOpacity,
@@ -97,8 +99,10 @@ class PlayerOverlay extends StatefulWidget {
     this.onDanmakuChanged,
     this.onDanmakuDeduplicationChanged,
     this.onDanmakuDedupWindowChanged,
-    this.onDanmakuFloatingChanged,
-    this.onDanmakuColorfulChanged,
+    this.onDanmakuFloatingColorfulChanged,
+    this.onDanmakuFloatingWhiteChanged,
+    this.onDanmakuScrollColorfulChanged,
+    this.onDanmakuScrollWhiteChanged,
     this.onDanmakuStrokeChanged,
     this.onAutoSkipChanged,
     this.onDanmakuOpacityChanged,
@@ -148,8 +152,10 @@ class PlayerOverlay extends StatefulWidget {
   final bool initialDanmakuEnabled;
   final bool initialDanmakuDeduplication;
   final double initialDanmakuDedupWindow;
-  final bool initialDanmakuFloating;
-  final bool initialDanmakuColorful;
+  final bool initialDanmakuFloatingColorful;
+  final bool initialDanmakuFloatingWhite;
+  final bool initialDanmakuScrollColorful;
+  final bool initialDanmakuScrollWhite;
   final bool initialDanmakuStroke;
   final bool initialAutoSkip;
   final double initialDanmakuOpacity;
@@ -201,8 +207,10 @@ class PlayerOverlay extends StatefulWidget {
   final ValueChanged<bool>? onDanmakuChanged;
   final ValueChanged<bool>? onDanmakuDeduplicationChanged;
   final ValueChanged<double>? onDanmakuDedupWindowChanged;
-  final ValueChanged<bool>? onDanmakuFloatingChanged;
-  final ValueChanged<bool>? onDanmakuColorfulChanged;
+  final ValueChanged<bool>? onDanmakuFloatingColorfulChanged;
+  final ValueChanged<bool>? onDanmakuFloatingWhiteChanged;
+  final ValueChanged<bool>? onDanmakuScrollColorfulChanged;
+  final ValueChanged<bool>? onDanmakuScrollWhiteChanged;
   final ValueChanged<bool>? onDanmakuStrokeChanged;
   final ValueChanged<bool>? onAutoSkipChanged;
   final ValueChanged<double>? onDanmakuOpacityChanged;
@@ -231,8 +239,10 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
   late bool _danmakuEnabled;
   late bool _danmakuDeduplication;
   late double _danmakuDedupWindow;
-  late bool _danmakuFloating;
-  late bool _danmakuColorful;
+  late bool _danmakuFloatingColorful;
+  late bool _danmakuFloatingWhite;
+  late bool _danmakuScrollColorful;
+  late bool _danmakuScrollWhite;
   late bool _danmakuStroke;
   late bool _autoSkip;
   late double _danmakuOpacity;
@@ -269,8 +279,10 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
     _danmakuEnabled = widget.initialDanmakuEnabled;
     _danmakuDeduplication = widget.initialDanmakuDeduplication;
     _danmakuDedupWindow = widget.initialDanmakuDedupWindow;
-    _danmakuFloating = widget.initialDanmakuFloating;
-    _danmakuColorful = widget.initialDanmakuColorful;
+    _danmakuFloatingColorful = widget.initialDanmakuFloatingColorful;
+    _danmakuFloatingWhite = widget.initialDanmakuFloatingWhite;
+    _danmakuScrollColorful = widget.initialDanmakuScrollColorful;
+    _danmakuScrollWhite = widget.initialDanmakuScrollWhite;
     _danmakuStroke = widget.initialDanmakuStroke;
     _autoSkip = widget.initialAutoSkip;
     _danmakuOpacity = widget.initialDanmakuOpacity;
@@ -451,14 +463,24 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
     widget.onDanmakuDedupWindowChanged?.call(value);
   }
 
-  void _setDanmakuFloating(bool value) {
-    setState(() => _danmakuFloating = value);
-    widget.onDanmakuFloatingChanged?.call(value);
+  void _setDanmakuFloatingColorful(bool value) {
+    setState(() => _danmakuFloatingColorful = value);
+    widget.onDanmakuFloatingColorfulChanged?.call(value);
   }
 
-  void _setDanmakuColorful(bool value) {
-    setState(() => _danmakuColorful = value);
-    widget.onDanmakuColorfulChanged?.call(value);
+  void _setDanmakuFloatingWhite(bool value) {
+    setState(() => _danmakuFloatingWhite = value);
+    widget.onDanmakuFloatingWhiteChanged?.call(value);
+  }
+
+  void _setDanmakuScrollColorful(bool value) {
+    setState(() => _danmakuScrollColorful = value);
+    widget.onDanmakuScrollColorfulChanged?.call(value);
+  }
+
+  void _setDanmakuScrollWhite(bool value) {
+    setState(() => _danmakuScrollWhite = value);
+    widget.onDanmakuScrollWhiteChanged?.call(value);
   }
 
   void _setDanmakuStroke(bool value) {
@@ -1042,8 +1064,10 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                     danmakuEnabled: _danmakuEnabled,
                     danmakuDeduplication: _danmakuDeduplication,
                     danmakuDedupWindow: _danmakuDedupWindow,
-                    danmakuFloating: _danmakuFloating,
-                    danmakuColorful: _danmakuColorful,
+                    danmakuFloatingColorful: _danmakuFloatingColorful,
+                    danmakuFloatingWhite: _danmakuFloatingWhite,
+                    danmakuScrollColorful: _danmakuScrollColorful,
+                    danmakuScrollWhite: _danmakuScrollWhite,
                     danmakuStroke: _danmakuStroke,
                     autoSkip: _autoSkip,
                     danmakuOpacity: _danmakuOpacity,
@@ -1076,8 +1100,11 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                     onDanmakuDeduplicationChanged:
                         _setDanmakuDeduplication,
                     onDanmakuDedupWindowChanged: _setDanmakuDedupWindow,
-                    onDanmakuFloatingChanged: _setDanmakuFloating,
-                    onDanmakuColorfulChanged: _setDanmakuColorful,
+                    onDanmakuFloatingColorfulChanged:
+                        _setDanmakuFloatingColorful,
+                    onDanmakuFloatingWhiteChanged: _setDanmakuFloatingWhite,
+                    onDanmakuScrollColorfulChanged: _setDanmakuScrollColorful,
+                    onDanmakuScrollWhiteChanged: _setDanmakuScrollWhite,
                     onDanmakuStrokeChanged: _setDanmakuStroke,
                     onAutoSkipChanged: _setAutoSkip,
                     onDanmakuOpacityChanged: _setDanmakuOpacity,
