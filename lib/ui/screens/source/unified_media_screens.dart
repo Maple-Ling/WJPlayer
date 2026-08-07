@@ -2084,6 +2084,10 @@ class _UnifiedMediaDetailScreenState
   /// A 风格呈现：横向滚动浅色描边胶囊（不复用旧的四等分布局），
   /// 点击弹出对应选择器；无资源/线路时对应项禁用。放置于播放键下方。
   Widget _buildPlaybackOptionCapsules() {
+    // 实时线路：build 已 watch currentServerProvider 驱动 rebuild，此处
+    // read 即拿到最新 activeLineIndex，切线路后胶囊/选择器立即更新。
+    final liveServer =
+        ref.read(currentServerProvider) ?? widget.server;
     final resource = _resource;
     final audios = resource?.audios ?? const [];
     final subtitles = resource?.subtitles ?? const [];
