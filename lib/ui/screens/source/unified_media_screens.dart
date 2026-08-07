@@ -1144,6 +1144,10 @@ class _UnifiedMediaDetailScreenState
 
   @override
   Widget build(BuildContext context) {
+    // 实时服务器（线路切换等更新后重建）：详情页用 widget.server 快照承载
+    // 数据链路，但线路胶囊/选择器必须显示最新 activeLineIndex，否则切线路
+    // 后 UI 不刷新（播放链路 _play 已从 serverListProvider 实时取，故播放正常）。
+    final liveServer = ref.watch(currentServerProvider) ?? widget.server;
     if (_loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
@@ -2106,8 +2110,8 @@ class _UnifiedMediaDetailScreenState
       (
         icon: Icons.route_rounded,
         label: '线路',
-        value: _lineLabel(widget.server),
-        onTap: widget.server.lines.isEmpty ? null : _showLinePicker,
+        value: _lineLabel(liveServer),
+        onTap: liveServer.lines.isEmpty ? null : _showLinePicker,
       ),
       (
         icon: Icons.audiotrack_rounded,
@@ -2419,12 +2423,14 @@ class _UnifiedMediaDetailScreenState
   }
 
   void _showLinePicker() {
-    final lines = widget.server.lines;
+    final server =
+        ref.read(currentServerProvider) ?? widget.server;
+    final lines = server.lines;
     _showPicker(children: [
       for (var index = 0; index < lines.length; index++)
         RadioListTile<int>(
           value: index,
-          groupValue: widget.server.activeLineIndex,
+          groupValue: server.activeLineIndex,
           title: Text(lines[index].name),
           subtitle: Text(lines[index].url,
               maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -2432,7 +2438,13 @@ class _UnifiedMediaDetailScreenState
             if (value == null) return;
             ref
                 .read(serverListProvider.notifier)
-                .setActiveLine(widget.server.id, value);
+                .setActiveLine(server.id, value);
+            final updated = ref
+                .read(serverListProvider)
+                .firstWhere((item) => item.id == server.id);
+            // 同步 currentServerProvider：详情页 build watch 到变化立即刷新
+            // 线路胶囊；播放器/跨服检索等公共链路同源读取，切换即时生效。
+            ref.read(currentServerProvider.notifier).state = updated;
             Navigator.pop(context);
           },
         ),

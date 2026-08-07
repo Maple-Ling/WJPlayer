@@ -14,6 +14,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   // 陀螺仪画面翻转：手机上下颠倒（加速度计 y 轴符号翻转）→ 画面 180° 翻转。
   bool _videoFlipped = false;
   StreamSubscription<AccelerometerEvent>? _accelSub;
+  /// 横屏翻转基准：首次检测到横屏时的 x 轴符号（1 = landscapeRight, -1 = landscapeLeft）。
+  /// 后续 x 符号与此不同时判定为 180° 翻转。竖屏时重置为 0。
+  int _landscapeFlipBaseline = 0;
   // 立即 toggle + 回滚：单击立即切换 UI；250ms 内再次按下则回滚
   // （双击/连点不弹 UI，动画未完成即反向，视觉无感）。
   bool _togglePendingRollback = false;
@@ -814,7 +817,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   Future<void> _writeSourceWatchHistory(SourcePlayback sp,
       {bool force = false}) async {
-    if (sp.server.hidden) return; // 隐藏服务器不记播放记录
+    // 隐藏服务器不记播放记录（历史/续播/状态栏不出现），但卡片「最近观影」
+    // 时间戳独立更新——隐藏删除历史后卡片仍与其他服务器一致显示。
+    if (sp.server.hidden) {
+      ref
+          .read(serverListProvider.notifier)
+          .updateLastWatchedAt(sp.server.id, DateTime.now());
+      return;
+    }
     final scopeKey = buildWatchHistoryScopeKey(sp.server);
     final duration = _playerService.duration;
     if (scopeKey == null || duration <= Duration.zero || !mounted) return;
@@ -836,11 +846,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           );
       // 播放成功写历史 → 更新服务器配置上的「最近观影」时间戳
       // （独立于历史存储，隐藏服务器删除历史后卡片仍显示）。
-      if (!sp.server.hidden) {
-        ref
-            .read(serverListProvider.notifier)
-            .updateLastWatchedAt(sp.server.id, DateTime.now());
-      }
+      ref
+          .read(serverListProvider.notifier)
+          .updateLastWatchedAt(sp.server.id, DateTime.now());
     } catch (_) {
       // 本地记录失败不能中断来源播放和服务端进度回传。
     }
@@ -2509,18 +2517,34 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   /// 全屏轻点按下：记录位置与时间（供抬起时判定轻点）。
-  /// 陀螺仪画面翻转：监听加速度计，手机上下颠倒（竖屏/横屏时 y 轴
-  /// 都是屏幕的"上下"方向，倒置时 y 符号翻转）→ 画面 180° 翻转。
-  /// 带死区（>4 m/s²）防抖动；传感器不可用/无权限时静默（画面不变）。
+  /// 陀螺仪画面翻转：仅在**横屏**下生效。监听加速度计 X 轴，
+  /// 手机左右旋转 180°（landscapeLeft ↔ landscapeRight，x 符号翻转）→ 画面 180° 翻转。
+  /// 竖屏不自动翻转（用户可手动点击旋转按钮）。带死区（>4 m/s²）防抖动；
+  /// 传感器不可用/无权限时静默（画面不变）。
   void _startAccelerometerFlipDetection() {
     try {
       _accelSub = accelerometerEventStream(
         samplingPeriod: SensorInterval.normalInterval,
       ).listen((event) {
         if (!mounted) return;
-        final upsideDown = event.y > 4.0;
-        if (upsideDown != _videoFlipped) {
-          setState(() => _videoFlipped = upsideDown);
+        // 仅横屏生效：重力在 X 轴为主（|x| > |y|）才判定为横屏
+        final ax = event.x.abs();
+        final ay = event.y.abs();
+        final isLandscapeNow = ax > ay;
+        if (!isLandscapeNow) {
+          // 竖屏：重置基准，不翻转画面
+          if (_landscapeFlipBaseline != 0) {
+            _landscapeFlipBaseline = 0;
+          }
+          return;
+        }
+        // 横屏：以首次检测到的 x 符号为基准，符号翻转即视为 180° 旋转
+        if (_landscapeFlipBaseline == 0) {
+          _landscapeFlipBaseline = event.x > 0 ? 1 : -1;
+        }
+        final flipped = (event.x > 0 ? 1 : -1) != _landscapeFlipBaseline;
+        if (flipped != _videoFlipped) {
+          setState(() => _videoFlipped = flipped);
         }
       }, onError: (_) {
         _accelSub?.cancel();
@@ -2534,10 +2558,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   void _onTapDown(PointerDownEvent event) {
     if (_playerService.isLocked) return;
     // 双击/连点的后续一击（250ms 回滚窗口内）：把上一次点击的 toggle 回滚
-    // 回原状态。UI 有 180ms 淡入动画，回滚时动画仅进行到一半即反向，
-    // 视觉上几乎无感——单击立即响应（灵敏），双击/连点不弹 UI。
+    // 回原状态。用 instant=true 立即切换，**不触发 180ms 动画**，避免淡入未完成即淡出导致闪烁。
     if (_togglePendingRollback) {
-      _playerService.toggleControls();
+      _playerService.toggleControls(instant: true);
       return;
     }
     _tapDownPosition = event.position;
@@ -3616,7 +3639,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     // 播放器进度/停止回调可能在播放页销毁后仍触发，此时严禁再用 ref。
     if (!mounted) return;
     final current = ref.read(currentServerProvider);
-    if (current?.hidden == true) return; // 隐藏服务器不记播放记录
+    // 隐藏服务器不记播放记录（历史/续播/状态栏不出现），但卡片「最近观影」
+    // 时间戳独立更新——隐藏删除历史后卡片仍与其他服务器一致显示。
+    if (current?.hidden == true) {
+      if (current != null) {
+        ref
+            .read(serverListProvider.notifier)
+            .updateLastWatchedAt(current.id, DateTime.now());
+      }
+      return;
+    }
     final scopeKey = buildWatchHistoryScopeKey(current);
     if (scopeKey == null) {
       return;
@@ -4772,6 +4804,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         .read(serverListProvider)
         .firstWhere((s) => s.id == server.id);
     ref.read(currentServerProvider.notifier).state = updatedServer;
+    // 源直链（飞牛等）播放：重初始化时 resolvePlay 依赖 SourcePlayback.server
+    // 的 activeLineUrl；不重建会继续用旧线路解析直链，导致切线路无效。
+    final sp = _activeSourcePlay;
+    if (sp != null) {
+      _activeSourcePlay = sp.withServer(updatedServer);
+    }
     await _reinitPlayerForLine(line.name);
   }
 
@@ -4926,6 +4964,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   .read(serverListProvider)
                   .firstWhere((s) => s.id == server.id);
               ref.read(currentServerProvider.notifier).state = updatedServer;
+              // 同 _switchLine：源直链播放需同步重建 SourcePlayback.server，
+              // 否则重初始化 resolvePlay 仍用旧线路直链。
+              final sp = _activeSourcePlay;
+              if (sp != null) {
+                _activeSourcePlay = sp.withServer(updatedServer);
+              }
               unawaited(_reinitPlayerForLine(line.name));
             },
           ),

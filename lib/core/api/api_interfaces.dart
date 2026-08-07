@@ -1146,6 +1146,7 @@ class DanmakuItem {
         if (source != null) 'src': source,
         if (cid != null) 'id': cid,
         if (userId != null) 'u': userId,
+        if (count > 1) 'n': count,
       };
 
   factory DanmakuItem.fromJson(Map<String, dynamic> j) => DanmakuItem(
@@ -1157,6 +1158,7 @@ class DanmakuItem {
         source: j['src'] as String?,
         cid: j['id'] as String?,
         userId: j['u'] as String?,
+        count: (j['n'] as int?) ?? 1,
       );
 }
 

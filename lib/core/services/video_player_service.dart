@@ -1598,12 +1598,15 @@ class VideoPlayerService extends ChangeNotifier {
   }
 
   /// 显示/隐藏控制栏。锁定态下仍可切换：只影响那颗解锁按钮的显隐（完整控制栏另有 !isLocked 门控）。
-  void toggleControls() {
+  /// [instant] = true 时立即切换、不启动/取消自动隐藏计时器（用于双击回滚，避免 180ms 淡入未完成即淡出导致闪烁）。
+  void toggleControls({bool instant = false}) {
     _showControls = !_showControls;
-    if (_showControls) {
-      _startHideControlsTimer();
-    } else {
-      _cancelHideControlsTimer();
+    if (!instant) {
+      if (_showControls) {
+        _startHideControlsTimer();
+      } else {
+        _cancelHideControlsTimer();
+      }
     }
     notifyListeners();
   }

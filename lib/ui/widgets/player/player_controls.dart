@@ -141,31 +141,46 @@ class TopBar extends StatelessWidget {
     return SafeArea(
       top: true,
       bottom: false,
-      child: Container(
-        width: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xA6000000), Colors.transparent],
+      child: Stack(
+        children: [
+          // 顶部渐变背景：纯装饰层，IgnorePointer 不拦截触摸——点击媒体
+          // 信息栏（服务器名称/线路等）、两侧 8% 边距、渐变区域时事件
+          // 穿透到底层手势层（_buildPlayerBody 轻点判定切换控制栏显隐）。
+          const Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0xA6000000), Colors.transparent],
+                  ),
+                ),
+              ),
+            ),
           ),
-        ),
-        padding: EdgeInsets.fromLTRB(
-          MediaQuery.sizeOf(context).width * 0.08,
-          8,
-          MediaQuery.sizeOf(context).width * 0.08,
-          12,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _buildSystemStatusBar(),
-            const SizedBox(height: 8),
-            _buildTopRow(),
-            const SizedBox(height: 10),
-            _buildServerMeta(),
-          ],
-        ),
+          SizedBox(
+            width: double.infinity,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                MediaQuery.sizeOf(context).width * 0.08,
+                8,
+                MediaQuery.sizeOf(context).width * 0.08,
+                12,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildSystemStatusBar(),
+                  const SizedBox(height: 8),
+                  _buildTopRow(),
+                  const SizedBox(height: 10),
+                  _buildServerMeta(),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -210,12 +225,16 @@ class TopBar extends StatelessWidget {
                 ),
                 const SizedBox(width: 9),
               ],
-              Tooltip(
-                message: networkLabel,
-                child: Icon(
-                  networkIcon,
-                  size: 15,
-                  color: Colors.white70,
+              // 状态栏图标仅展示：Tooltip 自带 opaque 手势层会拦截点击，
+              // 包 IgnorePointer 让图标区域点击穿透到底层手势层。
+              IgnorePointer(
+                child: Tooltip(
+                  message: networkLabel,
+                  child: Icon(
+                    networkIcon,
+                    size: 15,
+                    color: Colors.white70,
+                  ),
                 ),
               ),
               const SizedBox(width: 9),
@@ -339,22 +358,26 @@ class TopBar extends StatelessWidget {
       padding: const EdgeInsets.only(left: 4),
       child: Row(
         children: [
+          // 服务器图标纯装饰展示：IgnorePointer 让图标区域点击也穿透到
+          // 底层手势层——点服务器名称/线路/图标均触发控制栏显隐切换。
           SizedBox(
             width: 22,
             height: 22,
-            child: serverIcon ??
-                Container(
-                  decoration: BoxDecoration(
-                    color: playerUiBlue,
-                    borderRadius: BorderRadius.circular(6),
+            child: IgnorePointer(
+              child: serverIcon ??
+                  Container(
+                    decoration: BoxDecoration(
+                      color: playerUiBlue,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    alignment: Alignment.center,
+                    child: const Icon(
+                      Icons.dns_outlined,
+                      color: Colors.white,
+                      size: 14,
+                    ),
                   ),
-                  alignment: Alignment.center,
-                  child: const Icon(
-                    Icons.dns_outlined,
-                    color: Colors.white,
-                    size: 14,
-                  ),
-                ),
+            ),
           ),
           const SizedBox(width: 8),
           Flexible(
@@ -374,12 +397,15 @@ class TopBar extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: const BoxDecoration(
-                    color: playerUiBlue,
-                    shape: BoxShape.circle,
+                // 线路状态小圆点纯装饰：IgnorePointer 让该区域点击同样穿透。
+                IgnorePointer(
+                  child: Container(
+                    width: 10,
+                    height: 10,
+                    decoration: const BoxDecoration(
+                      color: playerUiBlue,
+                      shape: BoxShape.circle,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 5),
@@ -584,76 +610,90 @@ class BottomBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return SafeArea(
       top: false,
-      child: Container(
-        width: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.bottomCenter,
-            end: Alignment.topCenter,
-            colors: [Color(0xBF000000), Colors.transparent],
+      child: Stack(
+        children: [
+          // 底部渐变背景：纯装饰层，IgnorePointer 不拦截触摸——标题/元信息
+          // 文字上方与渐变区域点击穿透到底层手势层（切换控制栏显隐）。
+          const Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [Color(0xBF000000), Colors.transparent],
+                  ),
+                ),
+              ),
+            ),
           ),
-        ),
-        padding: EdgeInsets.fromLTRB(
-          MediaQuery.sizeOf(context).width * 0.08,
-          8,
-          MediaQuery.sizeOf(context).width * 0.08,
-          14,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(left: 4),
+          SizedBox(
+            width: double.infinity,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                MediaQuery.sizeOf(context).width * 0.08,
+                8,
+                MediaQuery.sizeOf(context).width * 0.08,
+                14,
+              ),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                      shadows: [
-                        Shadow(
-                          color: Colors.black87,
-                          blurRadius: 4,
-                          offset: Offset(0, 1),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            shadows: [
+                              Shadow(
+                                color: Colors.black87,
+                                blurRadius: 4,
+                                offset: Offset(0, 1),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          episode,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.78),
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          meta,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.55),
+                            fontSize: 10.5,
+                            letterSpacing: 0.3,
+                          ),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    episode,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.78),
-                      fontSize: 12,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    meta,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.55),
-                      fontSize: 10.5,
-                      letterSpacing: 0.3,
-                    ),
-                  ),
+                  const SizedBox(height: 6),
+                  _buildProgress(context),
+                  const SizedBox(height: 6),
+                  _buildControls(),
                 ],
               ),
             ),
-            const SizedBox(height: 6),
-            _buildProgress(context),
-            const SizedBox(height: 6),
-            _buildControls(),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

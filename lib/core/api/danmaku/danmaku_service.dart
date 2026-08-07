@@ -78,8 +78,8 @@ class DanmakuService {
   // ============ 并行分源查询（用户自己挑）============
 
   /// 并行向所有启用源做集数搜索，分源返回。单源失败不影响其他源。
-  Future<List<DanmakuSourceGroup>> searchAllGrouped(String keyword) async {
-    final srcs = allSources;
+  Future<List<DanmakuSourceGroup>> searchAllGrouped(String keyword, {bool allowOfficial = true}) async {
+    final srcs = sourcesFor(allowOfficial: allowOfficial);
     final results = await Future.wait(srcs.map((source) async {
       try {
         final r = await source.searchEpisodes(anime: keyword);
@@ -232,7 +232,7 @@ class DanmakuService {
         } catch (_) {}
       }
     }
-    return getCommentsFromAll(episodeId, preferredSourceId: sourceId);
+    return [];
   }
 
   Future<List<DanmakuItem>> getCommentsFromAll(

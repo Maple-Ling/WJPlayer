@@ -148,6 +148,12 @@ class DanmakuLayoutCache {
   int? _laneTrackCount;
   double? _laneSpeed;
 
+  /// 每个滚动轨道的最后一次发射时刻（video seconds）与其宽度。
+  /// 用于同速滚动弹幕的时间间距判定（`间隙速度 ≥ 前条宽度` 才允许入轨），
+  /// 以杜绝「宽弹幕把后条顶到重叠」。换轨道/速度时清空重算。
+  final Map<int, double> lastLaunchTime = {};
+  final Map<int, double> lastLaunchWidth = {};
+
   void ensure(List<DanmakuItem> items, double fontSize, double width,
       bool stroke, String? fontFamily) {
     if (identical(_items, items) &&
@@ -174,6 +180,8 @@ class DanmakuLayoutCache {
       _laneTrackCount = trackCount;
       _laneSpeed = speed;
       laneOf.clear();
+      lastLaunchTime.clear();
+      lastLaunchWidth.clear();
     }
   }
 
@@ -183,6 +191,8 @@ class DanmakuLayoutCache {
     _strokeParas = const [];
     _widths = const [];
     laneOf.clear();
+    lastLaunchTime.clear();
+    lastLaunchWidth.clear();
   }
 
   double widthOf(int i) => _widths[i];
@@ -363,39 +373,39 @@ class DanmakuPainter extends CustomPainter {
     for (final ti in born) {
       final lane = cache.laneOf[ti.index];
       if (lane == null) continue;
-      // 防御：历史脏数据（-1）不参与尾条登记（否则 laneTail[-1] 越界）。
-      if (lane < 0) {
-        cache.laneOf.remove(ti.index);
-        continue;
-      }
       if (_computeX(ti, size) + ti.width < 0) {
         cache.laneOf.remove(ti.index);
+        if (cache.lastLaunchTime.containsKey(lane)) {
+          // 该条是这条轨道的最后发射者（时间最大），出屏后释放发射档位。
+          cache.lastLaunchTime.remove(lane);
+          cache.lastLaunchWidth.remove(lane);
+        }
         continue;
       }
       laneTail[lane] = ti; // 后入的 time 更大 → 天然成为尾条
     }
 
-    // 2) 分配：已有冻结轨道的做追尾检查；新弹幕（含追尾被解除的）选轨。
+    // 2) 分配：滚动弹幕冻结后永不改道（同速不相交），只有出屏才释放；
+    //    新弹幕（含首次入轨）用手动时间间距选轨，杜绝重叠。
     for (final ti in born) {
       final x = _computeX(ti, size);
       if (x + ti.width < 0) continue; // 已出屏
       final existing = cache.laneOf[ti.index];
-      if (existing != null) {
-        final tail = laneTail[existing];
-        // 安全 = 无尾条 / 自身就是尾条 / 与尾条左右不相交
-        // （早入轨弹幕在尾条左侧、后入轨弹幕在尾条右侧都正常；
-        //  只有真正的左右重叠才算追尾，解除冻结重分配）。
-        final safe = tail == null ||
-            identical(tail, ti) ||
-            x + ti.width + _padding <= _computeX(tail, size) ||
-            x >= _computeX(tail, size) + tail.width + _padding;
-        if (safe) {
-          laneTail[existing] = ti;
-          continue;
-        }
-        cache.laneOf.remove(ti.index); // 追尾 → 解除冻结重新分配
-      }
+      if (existing != null) continue; // 冻结中，不改道（它已正确入轨）
       if (_isFixed(ti.item.type)) {
+        // 已冻结的固定弹幕仍在占轨（_assignLane 的 occ 表不含已冻结条目，
+        // 若不加冻结判断，新固定弹幕会拿到还在显示的旧弹幕轨道 → 精确重叠）。
+        var skip = false;
+        for (final entry in cache.laneOf.entries) {
+          if (entry.value >= 0 &&
+              entry.value < fixedLaneCount &&
+              entry.key != ti.index &&
+              _currentSeconds - items[entry.key].time <= _topBottomDuration) {
+            skip = true;
+            break;
+          }
+        }
+        if (skip) continue;
         final lane = _assignLane(ti, size, scrollOccupant, topOccupant,
             bottomOccupant, trackCount,
             maxLane: fixedLaneCount);
@@ -406,48 +416,29 @@ class DanmakuPainter extends CustomPainter {
         continue;
       }
       var selectedLane = -1;
-      // 滚动弹幕只使用固定弹幕区之外的轨道（分区，避免同轨重叠）。
+      // 滚动弹幕只使用固定弹幕区之外的轨道。用上次发射时间 + 前条宽度
+      // 判定「入轨时是否会在前条出屏后与之重叠」：
+      //   同速下，若 距上次发射的时间×速度 ≥ 前条宽度（+padding），
+      //   则新条入轨后跟前条永不相交（前条已让出头部）。否则本帧等待。
       for (var lane = fixedLaneCount; lane < trackCount; lane++) {
-        final tail = laneTail[lane];
-        if (tail == null) {
+        final lastT = cache.lastLaunchTime[lane];
+        if (lastT == null) {
           selectedLane = lane;
           break;
         }
-        // 后入弹幕从屏右进入：右界完全排在该轨尾条右侧即安全（同速不追尾）。
-        if (x > _computeX(tail, size) + tail.width + _padding) {
+        final gap = _currentSeconds - lastT;
+        final headroom = cache.lastLaunchWidth[lane]! + _padding;
+        if (gap * _speed >= headroom) {
           selectedLane = lane;
           break;
         }
       }
-      // 轨道全部繁忙时选择当前最早离场的轨道（尾条右界最靠左）。
-      // 若新弹幕 x 仍不超过该轨右界 + padding，这一帧先跳过不画
-      // （laneOf 未登记），等下一帧轨道让出后再入轨——避免强制同轨追尾。
-      if (selectedLane < 0) {
-        var earliest = double.infinity;
-        for (var lane = fixedLaneCount; lane < trackCount; lane++) {
-          final tail = laneTail[lane];
-          if (tail == null) {
-            selectedLane = lane;
-            break;
-          }
-          final release = _computeX(tail, size) + tail.width;
-          if (release < earliest) {
-            earliest = release;
-            selectedLane = lane;
-          }
-        }
-        if (selectedLane >= 0) {
-          final tail = laneTail[selectedLane];
-          if (tail != null &&
-              x <= _computeX(tail, size) + tail.width + _padding) {
-            continue;
-          }
-        }
-      }
-      // 防御：无可用轨道时本帧不登记（laneOf 存 -1 会在下一帧
-      // laneTail[-1] 索引越界崩溃，即日志中的 RangeError）。
+      // 无可用轨道：本帧跳过，等下一帧（轨道出屏释放 / 时间间距足够）再入轨。
+      // 不强制同轨追尾，也不写 -1。
       if (selectedLane < 0) continue;
       cache.laneOf[ti.index] = selectedLane;
+      cache.lastLaunchTime[selectedLane] = _currentSeconds;
+      cache.lastLaunchWidth[selectedLane] = ti.width;
       ti.startY = selectedLane * _trackHeight + _padding;
       laneTail[selectedLane] = ti;
     }

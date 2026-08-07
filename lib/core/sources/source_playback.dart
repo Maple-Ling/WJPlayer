@@ -70,6 +70,22 @@ class SourcePlayback {
         startPosition: startPosition,
       );
 
+  /// 换服务器（线路切换后 activeLineUrl 变化）重建：播放器重初始化时
+  /// resolvePlay 必须用新线路解析直链，否则切线路无效。
+  SourcePlayback withServer(ServerConfig next) => SourcePlayback(
+        server: next,
+        entry: entry,
+        qualityId: qualityId,
+        playerCoreOverride: playerCoreOverride,
+        preferredAudioListIndex: preferredAudioListIndex,
+        preferredSubtitleListIndex: preferredSubtitleListIndex,
+        seriesEntryId: seriesEntryId,
+        httpHeaders: httpHeaders,
+        logoUrl: logoUrl,
+        playlist: playlist,
+        startPosition: startPosition,
+      );
+
   /// 供播放器内部记账/续播的稳定合成 itemId（不参与 Emby 上报）。
   String get syntheticItemId => 'src:${server.id}:${entry.id}';
 
