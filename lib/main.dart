@@ -14,12 +14,16 @@ import 'core/services/deep_link_service.dart';
 import 'core/services/font_service.dart';
 import 'core/services/secure_credential_store.dart';
 import 'core/services/telemetry.dart';
+import 'core/services/tv_key_channel.dart';
 import 'core/theme/app_motion.dart';
 import 'core/providers/server_card_stats_provider.dart';
 import 'plugins/plugin_system.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // TV 遥控器按键通道：尽早注册，避免应用首帧前按键事件丢失。
+  installNativeKeyBridge();
 
   // WJPlayer 仅支持 Android 手机端，数据由 Android 应用沙箱管理。
 

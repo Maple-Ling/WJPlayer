@@ -6,6 +6,7 @@ import 'core/services/font_service.dart';
 import 'core/theme/app_theme.dart';
 import 'routes/app_router.dart';
 import 'ui/widgets/common/app_update_gate.dart';
+import 'ui/widgets/common/tv_focus_widgets.dart';
 
 class WJPlayerApp extends ConsumerWidget {
   const WJPlayerApp({super.key});
@@ -49,8 +50,12 @@ class WJPlayerApp extends ConsumerWidget {
         ThemeModeOption.system => ThemeMode.system,
       },
       routerConfig: router,
-      builder: (context, child) =>
-          AppUpdateGate(child: child ?? const SizedBox.shrink()),
+      builder: (context, child) => Focus(
+        autofocus: true,
+        child: TvKeyboardListener(
+          child: AppUpdateGate(child: child ?? const SizedBox.shrink()),
+        ),
+      ),
     );
   }
 }

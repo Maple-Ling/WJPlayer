@@ -20,6 +20,7 @@ class TvFocusable extends StatefulWidget {
     this.focusScale = 1.04,
     this.enabled = true,
     this.onFocusChanged,
+    this.autofocus = false,
   });
 
   /// 聚焦后确认（遥控 OK/Enter/Select）触发。
@@ -35,6 +36,10 @@ class TvFocusable extends StatefulWidget {
 
   /// 是否参与焦点遍历（如已选中态可关闭）。
   final bool enabled;
+
+  /// 初始自动聚焦。默认 false，由 TvFocusManager 或父级 FocusScope 统一分配焦点，
+  /// 避免多张卡片同时 autofocus=true 抢占焦点、导致 TV 焦点漂移。
+  final bool autofocus;
 
   final ValueChanged<bool>? onFocusChanged;
 
@@ -85,6 +90,7 @@ class _TvFocusableState extends State<TvFocusable> {
     return FocusableActionDetector(
       focusNode: _focusNode,
       enabled: widget.enabled,
+      autofocus: widget.autofocus,
       actions: <Type, Action<Intent>>{
         ActivateIntent: CallbackAction<ActivateIntent>(
           onInvoke: (_) {

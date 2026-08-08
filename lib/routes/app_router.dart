@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../core/providers/app_providers.dart';
 import '../core/providers/media_providers.dart';
+import '../core/services/tv_focus_manager.dart';
 import '../core/theme/app_colors.dart';
 import '../core/theme/app_motion.dart';
 import '../core/utils/platform_utils.dart';
@@ -401,32 +401,6 @@ class _MainShellState extends ConsumerState<MainShell> {
   final ValueNotifier<bool> _tabCollapsed = ValueNotifier<bool>(false);
   DateTime? _lastBackPress;
 
-  // TV 遥控器：底部 tab 栏焦点入口。MENU 键由 _TvKeyboardWrapper/原生通道捕获后
-  // 通过静态回调转到这里，把焦点迁到 _FloatingTabBar 的搜索按钮上。
-  final _tabBarFocusNode = FocusNode();
-
-  /// 供 _TvKeyboardWrapper / 原生 tv_key 通道触发的静态回调。
-  /// 由 _FloatingTabBarState 在 initState 时注册（直接聚焦 tab）。
-  static VoidCallback? requestTabBarFocus;
-
-  @override
-  void initState() {
-    super.initState();
-    // 原生层 KEYCODE_MENU（TV 遥控器硬键）→ 通过静态回调聚焦底部 tab 栏。
-    // Android TV 遥控器 MENU 键不进入 Flutter KeyEvent 通道，Dart 侧
-    // KeyboardListener 收不到，必须在 MainActivity 原生拦截后走此通道。
-    // requestTabBarFocus 由 _FloatingTabBarState 在 initState 注册（直接聚焦 tab）。
-    if (isTvPlatform) {
-      MethodChannel('com.mapleling.wjplayer/tv_key')
-          .setMethodCallHandler((call) async {
-        if (call.method == 'menu') {
-          requestTabBarFocus?.call();
-        }
-        return null;
-      });
-    }
-  }
-
   // 分支内 push 的页面（如从服务器管理页进入的 /home、/edit、/add 等）先逐级返回；
   // 分支根返回统一回到默认“影视”；影视根两次返回退出。
   void _handleShellPop() {
@@ -500,13 +474,33 @@ class _MainShellState extends ConsumerState<MainShell> {
         widget.currentPath == '/history') {
       ref.read(watchHistoryRefreshProvider.notifier).state++;
     }
+    if (isTvPlatform && oldWidget.currentPath != widget.currentPath) {
+      final wasTabPage = switch (oldWidget.currentPath) {
+        '/discover' ||
+        '/history' ||
+        '/servers' ||
+        '/home' ||
+        '/search' ||
+        '/settings' =>
+          true,
+        _ => false,
+      };
+      final nowTabPage = _supportsFloatingTabBar;
+      if (wasTabPage || nowTabPage) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (nowTabPage) {
+            TvFocusManager.instance.switchArea('main_tabs');
+          } else {
+            TvFocusManager.instance.releaseArea('main_tabs');
+          }
+        });
+      }
+    }
   }
 
   @override
   void dispose() {
     _tabCollapsed.dispose();
-    _tabBarFocusNode.dispose();
-    if (requestTabBarFocus != null) requestTabBarFocus = null;
     super.dispose();
   }
 
@@ -527,34 +521,31 @@ class _MainShellState extends ConsumerState<MainShell> {
       },
       child: NotificationListener<ScrollNotification>(
         onNotification: _onScrollNotification,
-        child: _TvKeyboardWrapper(
-          child: Scaffold(
-            resizeToAvoidBottomInset: true, // 显式设置以确保键盘正确处理
-            body: isKeyboardVisible
-                ? widget.navigationShell // 键盘显示时不修改 MediaQuery，让系统自动处理
-                : MediaQuery(
-                    data: mediaQuery.copyWith(
-                      padding: mediaQuery.padding.copyWith(
-                        bottom: mediaQuery.padding.bottom + tabHeight,
-                      ),
+        child: Scaffold(
+          resizeToAvoidBottomInset: true, // 显式设置以确保键盘正确处理
+          body: isKeyboardVisible
+              ? widget.navigationShell // 键盘显示时不修改 MediaQuery，让系统自动处理
+              : MediaQuery(
+                  data: mediaQuery.copyWith(
+                    padding: mediaQuery.padding.copyWith(
+                      bottom: mediaQuery.padding.bottom + tabHeight,
                     ),
-                    child: widget.navigationShell,
                   ),
-            bottomNavigationBar: const SizedBox.shrink(),
-            floatingActionButtonLocation:
-                FloatingActionButtonLocation.centerDocked,
-            floatingActionButton: showFloatingTabBar
-                ? ValueListenableBuilder<bool>(
-                    valueListenable: _tabCollapsed,
-                    builder: (context, collapsed, _) => _FloatingTabBar(
-                      navigationShell: widget.navigationShell,
-                      collapsed: collapsed,
-                      onExpand: () => _tabCollapsed.value = false,
-                      tabBarFocusNode: _tabBarFocusNode,
-                    ),
-                  )
-                : null,
-          ),
+                  child: widget.navigationShell,
+                ),
+          bottomNavigationBar: const SizedBox.shrink(),
+          floatingActionButtonLocation:
+              FloatingActionButtonLocation.centerDocked,
+          floatingActionButton: showFloatingTabBar
+              ? ValueListenableBuilder<bool>(
+                  valueListenable: _tabCollapsed,
+                  builder: (context, collapsed, _) => _FloatingTabBar(
+                    navigationShell: widget.navigationShell,
+                    collapsed: collapsed,
+                    onExpand: () => _tabCollapsed.value = false,
+                  ),
+                )
+              : null,
         ),
       ),
     );
@@ -566,82 +557,63 @@ class _FloatingTabBar extends ConsumerStatefulWidget {
     required this.navigationShell,
     this.collapsed = false,
     this.onExpand,
-    this.tabBarFocusNode,
   });
   final StatefulNavigationShell navigationShell;
 
   final bool collapsed;
   final VoidCallback? onExpand;
-  final FocusNode? tabBarFocusNode;
 
   @override
   ConsumerState<_FloatingTabBar> createState() => _FloatingTabBarState();
 }
 
 class _FloatingTabBarState extends ConsumerState<_FloatingTabBar> {
-  // TV 遥控器导航：每个 tab 一个焦点节点，方向键切换。
-  final _focusNodes = <FocusNode>[];
-  // 当前焦点在哪个 tab 索引（0..4），-1 表示无焦点。
-  int _focusedIndex = -1;
-
-  // TV 遥控器导航使用的 tab 顺序。注意：索引 3（搜索）在 Row 中是最后一个，
-  // 但 currentIndex 里 3 是搜索分支，4 是设置分支。
+  // TV 遥控器导航由 TvFocusManager 统一管理，不再手动维护 FocusNode。
   static const _tabOrder = [0, 1, 2, 4, 3]; // 影视/记录/服务器/设置/搜索
-  // _tabOrder 位置 → navigationShell 分支索引
   int _tabAt(int orderPos) => _tabOrder[orderPos];
-  int _orderOf(int branchIndex) {
-    for (var i = 0; i < _tabOrder.length; i++) {
-      if (_tabOrder[i] == branchIndex) return i;
-    }
-    return -1;
-  }
 
   @override
   void initState() {
     super.initState();
-    for (var i = 0; i < _tabOrder.length; i++) {
-      _focusNodes.add(FocusNode());
-    }
-    _focusedIndex = 4; // 搜索
-    // MENU 键（原生通道/键盘）：父级 MainShell 持有静态回调，本 State 注册
-    // 自己的实现——直接聚焦当前 tab，替代依赖 _tabBarFocusNode 的间接传递。
-    if (isTvPlatform) {
-      _MainShellState.requestTabBarFocus = _focusTabBar;
-    }
+    if (!isTvPlatform) return;
+    TvFocusManager.instance.registerArea(
+      FocusAreaConfig(
+        id: 'main_tabs',
+        count: _tabOrder.length,
+        traversal: TraversalPolicies.linear(_tabOrder.length),
+      ),
+    );
+    TvFocusManager.instance.addListener(_onFocusChanged);
+    // 初始聚焦到搜索 tab
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      // 初始聚焦到搜索 tab（仅 TV）。
-      if (isTvPlatform && _focusedIndex >= 0 && _focusedIndex < _focusNodes.length) {
-        _focusNodes[_focusedIndex].requestFocus();
+      TvFocusManager.instance.focusAt('main_tabs', 4);
+    });
+  }
+
+  void _onFocusChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didUpdateWidget(covariant _FloatingTabBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!isTvPlatform || oldWidget.collapsed == widget.collapsed) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final area = TvFocusManager.instance.getArea('main_tabs');
+      if (area == null) return;
+      if (widget.collapsed && area.nodes.any((node) => node.hasFocus)) {
+        TvFocusManager.instance.focusAt('main_tabs', 4);
       }
     });
   }
 
-  /// 聚焦底部 tab 栏（MENU 键触发）：当前 tab 或默认搜索 tab。
-  void _focusTabBar() {
-    if (mounted && _focusedIndex >= 0 && _focusedIndex < _focusNodes.length) {
-      _focusNodes[_focusedIndex].requestFocus();
-    }
-  }
-
   @override
   void dispose() {
-    for (final fn in _focusNodes) fn.dispose();
+    TvFocusManager.instance.removeListener(_onFocusChanged);
+    TvFocusManager.instance.unregisterArea('main_tabs');
     super.dispose();
-  }
-
-  void _moveFocus(int delta) {
-    if (_focusedIndex < 0 || _focusedIndex >= _tabOrder.length) return;
-    setState(() {
-      _focusedIndex = (_focusedIndex + delta + _tabOrder.length) % _tabOrder.length;
-      _focusNodes[_focusedIndex].requestFocus();
-    });
-  }
-
-  void _activateFocused() {
-    if (_focusedIndex < 0 || _focusedIndex >= _tabOrder.length) return;
-    final branchIndex = _tabAt(_focusedIndex);
-    widget.navigationShell.goBranch(branchIndex);
   }
 
   @override
@@ -690,17 +662,17 @@ class _FloatingTabBarState extends ConsumerState<_FloatingTabBar> {
       ),
       child: SafeArea(
         top: false,
-        child: isTvPlatform
-            ? _TvTabRow(
-                moveLeft: () => _moveFocus(-1),
-                moveRight: () => _moveFocus(1),
-                activate: _activateFocused,
-                children: _buildTabRowChildren(context, isDark, navBg, selectedBg, textColor, mutedColor),
-              )
-            : Row(
-                mainAxisSize: MainAxisSize.min,
-                children: _buildTabRowChildren(context, isDark, navBg, selectedBg, textColor, mutedColor),
-              ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: _buildTabRowChildren(
+            context,
+            isDark,
+            navBg,
+            selectedBg,
+            textColor,
+            mutedColor,
+          ),
+        ),
       ),
     );
   }
@@ -727,30 +699,27 @@ class _FloatingTabBarState extends ConsumerState<_FloatingTabBar> {
   Widget _buildTabItem(BuildContext context, int branchIndex, int orderPos,
       bool isDark, Color navBg, Color selectedBg, Color textColor, Color mutedColor) {
     final selected = widget.navigationShell.currentIndex == branchIndex;
-    final focused = _focusedIndex == orderPos;
-    // 焦点时给描边，与 TV Leanback 一致。
+    final area = TvFocusManager.instance.getArea('main_tabs');
+    final focused = area != null &&
+        area.focusIndex == orderPos &&
+        area.nodes[orderPos].hasFocus;
     final borderWidth = focused ? 1.5 : 0.0;
     final borderColor = focused ? textColor.withValues(alpha: 0.5) : Colors.transparent;
-    final isTv = isTvPlatform;
 
     return FocusableActionDetector(
-      focusNode: _focusNodes[orderPos],
+      focusNode: area?.nodes[orderPos],
       enabled: !widget.collapsed,
-      autofocus: isTv && orderPos == _focusedIndex,
-      actions: isTv
-          ? <Type, Action<Intent>>{
-              ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) => _activateFocused()),
-              // 方向键由父级 KeyboardListener 统一处理，这里只处理激活。
-            }
-          : <Type, Action<Intent>>{},
-      onShowFocusHighlight: (v) {
-        if (isTv) setState(() {});
+      autofocus: false,
+      actions: {
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (_) {
+            widget.navigationShell.goBranch(_tabAt(orderPos));
+            return null;
+          },
+        ),
       },
       child: _TabItemBase(
-        onTap: () {
-          if (isTv) _activateFocused();
-          widget.navigationShell.goBranch(branchIndex);
-        },
+        onTap: () => widget.navigationShell.goBranch(branchIndex),
         selected: selected,
         focused: focused,
         borderWidth: borderWidth,
@@ -768,28 +737,28 @@ class _FloatingTabBarState extends ConsumerState<_FloatingTabBar> {
   Widget _buildSearchButton(BuildContext context, bool isDark, Color navBg,
       Color selectedBg, Color textColor) {
     final searchOrderPos = 4;
-    final focused = _focusedIndex == searchOrderPos;
+    final area = TvFocusManager.instance.getArea('main_tabs');
+    final focused = area != null &&
+        area.focusIndex == searchOrderPos &&
+        area.nodes[searchOrderPos].hasFocus;
     final borderWidth = focused ? 1.5 : 0.0;
     final borderColor = focused ? textColor.withValues(alpha: 0.5) : Colors.transparent;
-    final isTv = isTvPlatform;
 
     return FocusableActionDetector(
-      focusNode: _focusNodes[searchOrderPos],
+      focusNode: area?.nodes[searchOrderPos],
       enabled: !widget.collapsed,
-      autofocus: isTv && searchOrderPos == _focusedIndex,
-      actions: isTv
-          ? <Type, Action<Intent>>{
-              ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
-                if (widget.collapsed) {
-                  widget.onExpand?.call();
-                } else {
-                  widget.navigationShell.goBranch(3);
-                }
-              }),
+      autofocus: false,
+      actions: {
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (_) {
+            if (widget.collapsed) {
+              widget.onExpand?.call();
+            } else {
+              widget.navigationShell.goBranch(3);
             }
-          : <Type, Action<Intent>>{},
-      onShowFocusHighlight: (v) {
-        if (isTv) setState(() {});
+            return null;
+          },
+        ),
       },
       child: _SearchButtonBase(
         onTap: () {
@@ -920,107 +889,8 @@ class _SearchButtonBase extends StatelessWidget {
   }
 }
 
-/// TV 遥控器焦点控制器：MainShell 持有实例，通过 _FloatingTabBar 操作焦点。
-class _TabBarTvController {
-  // 当前聚焦的 tab 顺序位置（0..4）。
-  int focusedOrderIndex = 4; // 默认搜索
-  final List<FocusNode> focusNodes = [];
-  final int Function(int orderPos) tabAt;
-  final VoidCallback? onExpand;
-
-  _TabBarTvController({
-    required this.tabAt,
-    this.onExpand,
-  });
-
-  void moveFocus(int delta) {
-    final len = focusNodes.length;
-    if (focusedOrderIndex < 0 || focusedOrderIndex >= len) return;
-    focusedOrderIndex = (focusedOrderIndex + delta + len) % len;
-    focusNodes[focusedOrderIndex].requestFocus();
-  }
-
-  void activate() {
-    if (focusedOrderIndex < 0 || focusedOrderIndex >= focusNodes.length) return;
-    if (onExpand != null) {
-      // 如果 tab 栏处于收缩态，激活 = 展开。
-      // 收缩态由调用方处理，这里不做判断。
-    }
-  }
-}
-
-/// TV 遥控器键盘监听：包裹 tab 行，拦截方向键。
-class _TvTabRow extends StatelessWidget {
-  const _TvTabRow({
-    required this.moveLeft,
-    required this.moveRight,
-    required this.activate,
-    required this.children,
-  });
-
-  final VoidCallback moveLeft;
-  final VoidCallback moveRight;
-  final VoidCallback activate;
-  final List<Widget> children;
-
-  void _handleKeyEvent(KeyEvent event) {
-    if (event is! KeyDownEvent) return;
-    final logical = event.logicalKey;
-    if (logical == LogicalKeyboardKey.arrowLeft) {
-      moveLeft();
-    } else if (logical == LogicalKeyboardKey.arrowRight) {
-      moveRight();
-    } else if (logical == LogicalKeyboardKey.arrowUp ||
-        logical == LogicalKeyboardKey.enter ||
-        logical == LogicalKeyboardKey.numpadEnter ||
-        logical == LogicalKeyboardKey.select) {
-      activate();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // 用 Focus.onKeyEvent 而非 KeyboardListener：KeyboardListener 需要持有
-    // focus node 并 autofocus 才能收键，会抢走 tab 按钮的焦点。
-    // Focus 仅注册按键回调，不参与焦点抢占，方向键由子按钮的 FocusNode 持有。
-    return Focus(
-      onKeyEvent: (node, event) {
-        _handleKeyEvent(event);
-        return KeyEventResult.ignored;
-      },
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: children,
-      ),
-    );
-  }
-}
-
-/// TV 遥控器键盘监听：包裹整个 Scaffold，拦截 MENU 键将焦点转到底部 tab 栏。
-class _TvKeyboardWrapper extends StatelessWidget {
-  const _TvKeyboardWrapper({required this.child});
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!isTvPlatform) return child;
-    // 用 Focus.onKeyEvent 而非 KeyboardListener：避免 autofocus 抢页面焦点。
-    return Focus(
-      onKeyEvent: (node, event) {
-        if (event is! KeyDownEvent) return KeyEventResult.ignored;
-        final logical = event.logicalKey;
-        if (logical == LogicalKeyboardKey.contextMenu ||
-            logical == LogicalKeyboardKey.select ||
-            logical == LogicalKeyboardKey.tvContentsMenu ||
-            logical == LogicalKeyboardKey.mediaTopMenu) {
-          _MainShellState.requestTabBarFocus?.call();
-        }
-        return KeyEventResult.ignored;
-      },
-      child: child,
-    );
-  }
-}
+/// _TabBarTvController 已被 TvFocusManager 替代。
+/// _TvTabRow 和 _TvKeyboardWrapper 已被 TvKeyboardListener 替代。
 
 class _ResumeRouteScreen extends ConsumerWidget {
   const _ResumeRouteScreen();

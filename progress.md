@@ -83,3 +83,14 @@
 - 选集改为每页 5 集，支持左右滑动与翻页按钮，并定位当前集页。
 - 空白区域命中层改为 opaque；播放器源码 4 个核心 Dart 文件括号检查通过，git diff --check 通过。
 - 按用户要求不下载 SDK、不执行构建；GitHub 构建和 Flutter analyze 留给 CI。
+
+## 2026-08-08 TV 焦点重构
+- MainActivity.kt：仅拦截 MENU（keyCode==137）/TV_BACK，D-pad/确认/返回全部保留 Flutter 原生链路。
+- 抽离 `lib/core/services/tv_key_channel.dart`：MethodChannel 只接收 MENU，转发到 dispatchGlobalTvKey，未处理时恢复 main_tabs。
+- 新增 `lib/core/services/tv_focus_manager.dart`：集中式焦点管理器。支持 focusArea/registerArea/unregisterArea/switchArea/focusAt/moveDPad/releaseArea，带 lastFocusIndex 记忆与 canHandleDPad 条件接管。
+- `lib/ui/widgets/common/tv_focus_widgets.dart`：TvFocusArea/TvFocusCard 组件 + TvKeyboardListener（D-pad 接管；未接管时回退到 Flutter 默认 next/left/right/up/down）。
+- `lib/ui/widgets/common/tv_focusable.dart`：新增 `autofocus` 参数（默认 false），不再默认抢焦，由父级 FocusScope/管理器统一分配。
+- `lib/routes/app_router.dart`：_FloatingTabBar 注册 main_tabs 区域，didUpdateWidget 在路由进出主页时 switchArea/releaseArea。
+- `lib/app.dart`：根节点加 `Focus(autofocus:true, child: TvKeyboardListener(...))`。
+- 静态检查：dart_lex_check 7 文件全 OK；git diff --check 通过；git status 干净。
+- 不推不提交，等待用户确认。

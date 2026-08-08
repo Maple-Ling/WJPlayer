@@ -201,19 +201,27 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        // TV ���� �遥控器 MENU ���� �� �� 键（KEYCODE_MENU / 137（KEYCODE_BUTTON_MENU 的值），部分设备映射不同）：
-        // 通知 Flutter 聚焦底部 tab 栏（进服务器/设置页）。
-        if (keyCode == KeyEvent.KEYCODE_MENU ||
-            keyCode == 137
-        ) {
-            try {
-                tvKeyChannel?.invokeMethod("menu", null)
-            } catch (_: Exception) {
-                // channel 未就绪时忽略
+        // 只转发 Flutter KeyEvent 通道无法稳定收到的 TV 专用硬键。
+        // D-pad、确认键和返回键必须交给 Flutter Focus/PopScope，避免同一按键
+        // 同时经 MethodChannel 和 KeyEvent 到达，造成焦点移动或路由返回两次。
+        return when (keyCode) {
+            KeyEvent.KEYCODE_MENU,
+            137, // KEYCODE_BUTTON_MENU 的值（部分设备映射，CI 环境常量不可用）
+            KeyEvent.KEYCODE_BUTTON_START -> {
+                sendTvKey("menu", null)
+                true
             }
-            return true
+            else -> super.onKeyDown(keyCode, event)
         }
-        return super.onKeyDown(keyCode, event)
+    }
+
+    /// 通过 tv_key 通道异步转发按键事件，不阻塞 Android UI 线程。
+    private fun sendTvKey(group: String, action: String?) {
+        try {
+            tvKeyChannel?.invokeMethod(group, action)
+        } catch (_: Exception) {
+            // channel 未就绪时忽略
+        }
     }
 
     private fun currentNetworkType(): String {
