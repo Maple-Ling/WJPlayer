@@ -21,9 +21,10 @@ fun signingProp(envName: String, propName: String): String? =
 val releaseStorePath = signingProp("ANDROID_KEYSTORE_PATH", "storeFile")
 val hasReleaseSigning = releaseStorePath != null && file(releaseStorePath).exists()
 
-// WJPlayer 仅面向 64 位 ARM Android 手机。
-val targetAbi = "arm64-v8a"
-val excludedAbis = listOf("armeabi-v7a", "x86", "x86_64")
+// WJPlayer 面向 64 位 ARM Android 手机；TARGET_ABI 环境变量可切到
+// armeabi-v7a（TV/投影等 32 位设备，如哈趣 H2），CI 双 job 各自构建。
+val targetAbi = System.getenv("TARGET_ABI") ?: "arm64-v8a"
+val excludedAbis = listOf("armeabi-v7a", "x86", "x86_64").filter { it != targetAbi }
 
 android {
     namespace = "com.mapleling.wjplayer"
@@ -72,10 +73,10 @@ android {
 
     packagingOptions {
         excludes += excludedAbis.map { "lib/$it/**" }
-        // 优先使用项目内 arm64 原生库，覆盖依赖包可能附带的副本。
+        // 优先使用项目内原生库，覆盖依赖包可能附带的副本（按当前 targetAbi）。
         pickFirsts += listOf(
-            "lib/arm64-v8a/libc++_shared.so",
-            "lib/arm64-v8a/libmpv.so"
+            "lib/$targetAbi/libc++_shared.so",
+            "lib/$targetAbi/libmpv.so"
         )
     }
 

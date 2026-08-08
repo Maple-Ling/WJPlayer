@@ -1,4 +1,4 @@
-name: Android ARM64
+name: Android Build
 
 on:
   # 迭代包统一由 Tag 触发；main 推送不重复构建。
@@ -16,14 +16,18 @@ env:
   FLUTTER_CHANNEL: stable
 
 concurrency:
-  group: android-arm64-${{ github.ref }}
+  group: android-build-${{ github.ref }}
   cancel-in-progress: true  # 同 branch 新 push 取消排队中的旧 CI，避免一直排队超时
 
 jobs:
   build:
-    name: Build Android arm64-v8a APK
+    name: Build Android ${{ matrix.abi }} APK
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a]
 
     steps:
       - name: Checkout source
@@ -40,22 +44,33 @@ jobs:
               exit 1
             fi
           done
+          # 允许的 ABI 目录：arm64-v8a + armeabi-v7a（TV/投影 32 位设备）。
           mapfile -t abi_dirs < <(find android/app/src/main/jniLibs -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
-          [[ "${abi_dirs[*]}" == "arm64-v8a" ]] || {
-            echo "::error::Only arm64-v8a is allowed; found: ${abi_dirs[*]}"
-            exit 1
-          }
+          allowed=(arm64-v8a armeabi-v7a)
+          for d in "${abi_dirs[@]}"; do
+            found=0
+            for a in "${allowed[@]}"; do
+              [[ "$d" == "$a" ]] && found=1
+            done
+            [[ $found -eq 1 ]] || {
+              echo "::error::Disallowed ABI dir: $d (allowed: ${allowed[*]})"
+              exit 1
+            }
+          done
 
       - name: Verify bundled native libraries
         shell: bash
         run: |
           set -euo pipefail
-          for so in android/app/src/main/jniLibs/arm64-v8a/*.so; do
-            magic=$(head -c 4 "$so" | xxd -p)
-            [[ "$magic" == "7f454c46" ]] || {
-              echo "::error::$so is not an ELF binary (magic=$magic)"
-              exit 1
-            }
+          for dir in android/app/src/main/jniLibs/*/; do
+            for so in "$dir"*.so; do
+              [[ -f "$so" ]] || continue
+              magic=$(head -c 4 "$so" | xxd -p)
+              [[ "$magic" == "7f454c46" ]] || {
+                echo "::error::$so is not an ELF binary (magic=$magic)"
+                exit 1
+              }
+            done
           done
 
       - name: Set up Java 17
@@ -108,9 +123,10 @@ jobs:
           [[ -s "$RUNNER_TEMP/release.keystore" ]] || { echo '::error::Decoded keystore is empty'; exit 1; }
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
 
-      - name: Build Android arm64-v8a release APK
+      - name: Build Android ${{ matrix.abi }} release APK
         shell: bash
         env:
+          TARGET_ABI: ${{ matrix.abi }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           # PKCS#12 的 key 密码与 store 密码统一，避免维护重复 Secret。
@@ -132,7 +148,7 @@ jobs:
           fi
           flutter build apk \
             --release \
-            --target-platform android-arm64 \
+            --target-platform "${{ matrix.abi == 'armeabi-v7a' && 'android-arm' || 'android-arm64' }}" \
             --build-number "$GITHUB_RUN_NUMBER" \
             --dart-define "APP_VERSION=$version" \
             --dart-define "DANDANPLAY_APP_ID=${DANDANPLAY_APP_ID:-}" \
@@ -145,20 +161,20 @@ jobs:
             exit 1
           }
           mkdir -p dist
-          cp "$source_apk" "dist/WJPlayer-Android-arm64-v8a-$version.apk"
+          cp "$source_apk" "dist/WJPlayer-Android-${{ matrix.abi }}-$version.apk"
 
-      - name: Verify APK contains only arm64-v8a
+      - name: Verify APK ABI and signature
         shell: bash
         run: |
           set -euo pipefail
           apk=$(find dist -maxdepth 1 -type f -name '*.apk' -print -quit)
           [[ -n "$apk" ]] || { echo '::error::APK missing from dist'; exit 1; }
           mapfile -t abis < <(unzip -Z1 "$apk" | awk -F/ '/^lib\// {print $2}' | sort -u)
-          [[ "${abis[*]}" == "arm64-v8a" ]] || {
-            echo "::error::APK must contain only arm64-v8a; found: ${abis[*]}"
+          [[ "${abis[*]}" == "${{ matrix.abi }}" ]] || {
+            echo "::error::APK ABI mismatch; expected ${{ matrix.abi }}, found: ${abis[*]}"
             exit 1
           }
-          unzip -Z1 "$apk" | grep -q '^lib/arm64-v8a/libmpv.so$'
+          unzip -Z1 "$apk" | grep -q '^lib/${{ matrix.abi }}/libmpv.so$'
           apksigner=$(find "$ANDROID_SDK_ROOT/build-tools" -type f -name apksigner | sort -V | tail -1)
           [[ -x "$apksigner" ]] || { echo '::error::apksigner not found'; exit 1; }
           # 验证 v2/v3 签名结构与证书链有效。固定证书指纹已在 keystore 生成后及
@@ -171,7 +187,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WJPlayer-Android-arm64-v8a
+          name: WJPlayer-Android-${{ matrix.abi }}
           path: dist/*
           if-no-files-found: error
           retention-days: 30
