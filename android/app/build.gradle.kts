@@ -63,6 +63,19 @@ android {
     }
 
     // Android 手机端是唯一产品，不定义 TV 或桌面 Flavor。
+    flavorDimensions += "edition"
+    productFlavors {
+        // 手机版：无界影视（arm64）
+        create("phone") {
+            dimension = "edition"
+            applicationIdSuffix = ""
+        }
+        // TV/投影版：无界影视TV（armeabi-v7a 32 位），包名加 .tv 可与手机版共存
+        create("tv") {
+            dimension = "edition"
+            applicationIdSuffix = ".tv"
+        }
+    }
 
     externalNativeBuild {
         cmake {

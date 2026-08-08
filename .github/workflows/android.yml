@@ -129,6 +129,7 @@ jobs:
         shell: bash
         env:
           TARGET_ABI: ${{ matrix.abi }}
+          APP_FLAVOR: ${{ matrix.abi == 'armeabi-v7a' && 'tv' || 'phone' }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           # PKCS#12 的 key 密码与 store 密码统一，避免维护重复 Secret。
@@ -148,22 +149,30 @@ jobs:
           else
             version="ci-${GITHUB_RUN_NUMBER}"
           fi
+          # TV 版（v7a）走 tv flavor（包名 .tv、桌面名「无界影视TV」，可与手机版共存）；
+          # 手机版（arm64）走 phone flavor。
           flutter build apk \
             --release \
+            --flavor "$APP_FLAVOR" \
             --target-platform "${{ matrix.abi == 'armeabi-v7a' && 'android-arm' || 'android-arm64' }}" \
             --build-number "$GITHUB_RUN_NUMBER" \
             --dart-define "APP_VERSION=$version" \
             --dart-define "DANDANPLAY_APP_ID=${DANDANPLAY_APP_ID:-}" \
             --dart-define "DANDANPLAY_APP_SECRET=${DANDANPLAY_APP_SECRET:-}" \
             --dart-define "TMDB_API_KEY_ENC=$tmdb_encrypted"
-          source_apk='build/app/outputs/flutter-apk/app-release.apk'
+          # flavor 构建产物路径带 flavor 名
+          source_apk="build/app/outputs/flutter-apk/app-${APP_FLAVOR}-release.apk"
           [[ -f "$source_apk" ]] || {
             echo '::error::Expected release APK was not produced.'
             find build/app/outputs -maxdepth 4 -type f -print || true
             exit 1
           }
           mkdir -p dist
-          cp "$source_apk" "dist/WJPlayer-Android-${{ matrix.abi }}-$version.apk"
+          if [[ "$APP_FLAVOR" == "tv" ]]; then
+            cp "$source_apk" "dist/WJPlayerTV-Android-${{ matrix.abi }}-$version.apk"
+          else
+            cp "$source_apk" "dist/WJPlayer-Android-${{ matrix.abi }}-$version.apk"
+          fi
 
       - name: Verify APK ABI and signature
         shell: bash

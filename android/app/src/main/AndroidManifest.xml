@@ -17,7 +17,7 @@
         android:maxSdkVersion="28" />
     
     <application
-        android:label="无界影视"
+        android:label="@string/app_name"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"

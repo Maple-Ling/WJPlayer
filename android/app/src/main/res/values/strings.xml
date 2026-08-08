@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 默认（不指定 flavor 的构建，如 debug/profile/本地）回退名 -->
+    <string name="app_name">无界影视</string>
+</resources>
