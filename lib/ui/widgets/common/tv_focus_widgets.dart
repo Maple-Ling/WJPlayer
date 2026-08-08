@@ -30,7 +30,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show LogicalKeyboardKey, KeyDownEvent;
 import 'package:flutter/widgets.dart'
-    show FocusNode, FocusTraversalDirection, WidgetsBinding;
+    show FocusNode, TraversalDirection, WidgetsBinding;
 
 import '../../../core/services/tv_focus_manager.dart';
 import '../../../core/services/tv_key_channel.dart';
@@ -287,19 +287,19 @@ class TvKeyboardListener extends StatelessWidget {
           final scope = FocusScope.of(context);
           switch (dir) {
             case DPad.up:
-              if (scope.focusInDirection(FocusTraversalDirection.up))
+              if (scope.focusInDirection(TraversalDirection.up))
                 return KeyEventResult.handled;
               break;
             case DPad.down:
-              if (scope.focusInDirection(FocusTraversalDirection.down))
+              if (scope.focusInDirection(TraversalDirection.down))
                 return KeyEventResult.handled;
               break;
             case DPad.left:
-              if (scope.focusInDirection(FocusTraversalDirection.left))
+              if (scope.focusInDirection(TraversalDirection.left))
                 return KeyEventResult.handled;
               break;
             case DPad.right:
-              if (scope.focusInDirection(FocusTraversalDirection.right))
+              if (scope.focusInDirection(TraversalDirection.right))
                 return KeyEventResult.handled;
               break;
           }
