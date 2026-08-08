@@ -10,7 +10,10 @@
 // 手机版：installNativeKeyBridge 不安装，本类保持存在但 TvKeyboardListener
 // 在 isTvPlatform=false 时不注册，零焦点副作用。
 
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart' show FocusNode, WidgetsBinding;
 
 enum DPad { up, down, left, right }
 

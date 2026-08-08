@@ -25,7 +25,10 @@
 // )
 // ```
 
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart' show FocusNode, WidgetsBinding;
 
 import '../../../core/services/tv_focus_manager.dart';
 import '../../../core/services/tv_key_channel.dart';
