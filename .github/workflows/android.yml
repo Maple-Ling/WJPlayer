@@ -27,7 +27,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        abi: [arm64-v8a, armeabi-v7a]
+        # test-* 标签用于单架构验证（如 32 位 TV 调试），只构建指定的 ABI；
+        # 正式 tag（v*/rc-*）与手动触发跑双架构。
+        abi: ${{ fromJson(startsWith(github.ref_name, 'test-') && '["armeabi-v7a"]' || '["arm64-v8a", "armeabi-v7a"]') }}
 
     steps:
       - name: Checkout source
