@@ -12,6 +12,7 @@ import android.provider.Settings
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.view.KeyEvent
 import kotlin.math.roundToInt
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -25,6 +26,7 @@ class MainActivity : FlutterActivity() {
     private var diagnosticsChannel: MethodChannel? = null
     private var mediaChannel: MethodChannel? = null
     private var systemControlsChannel: MethodChannel? = null
+    private var tvKeyChannel: MethodChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -188,6 +190,30 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        // TV 遥控器按键通道：原生层拦截 KEYCODE_MENU（Android TV 遥控器硬键不会
+        // 进入 Flutter 的 KeyEvent 通道，Dart 侧 KeyboardListener 收不到），
+        // 通过此通道通知 Flutter 聚焦底部 tab 栏。
+        tvKeyChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.mapleling.wjplayer/tv_key"
+        )
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        // TV 遥控器 MENU 键（KEYCODE_MENU / KEYCODE_BUTTON_MENU，部分设备映射不同）：
+        // 通知 Flutter 聚焦底部 tab 栏（进服务器/设置页）。
+        if (keyCode == KeyEvent.KEYCODE_MENU ||
+            keyCode == KeyEvent.KEYCODE_BUTTON_MENU
+        ) {
+            try {
+                tvKeyChannel?.invokeMethod("menu", null)
+            } catch (_: Exception) {
+                // channel 未就绪时忽略
+            }
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
     }
 
     private fun currentNetworkType(): String {

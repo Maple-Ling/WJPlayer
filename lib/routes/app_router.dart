@@ -401,24 +401,30 @@ class _MainShellState extends ConsumerState<MainShell> {
   final ValueNotifier<bool> _tabCollapsed = ValueNotifier<bool>(false);
   DateTime? _lastBackPress;
 
-  // TV 遥控器：底部 tab 栏焦点入口。MENU 键由 _TvKeyboardWrapper 捕获后
+  // TV 遥控器：底部 tab 栏焦点入口。MENU 键由 _TvKeyboardWrapper/原生通道捕获后
   // 通过静态回调转到这里，把焦点迁到 _FloatingTabBar 的搜索按钮上。
   final _tabBarFocusNode = FocusNode();
-  bool _tabBarFocused = false;
 
-  /// 供 _TvKeyboardWrapper（无 context 到本 State 的访问路径）触发的静态回调。
-  /// 每次 MainShell build 时由 _MainShellState 注册。
+  /// 供 _TvKeyboardWrapper / 原生 tv_key 通道触发的静态回调。
+  /// 由 _FloatingTabBarState 在 initState 时注册（直接聚焦 tab）。
   static VoidCallback? requestTabBarFocus;
 
   @override
   void initState() {
     super.initState();
-    // MENU 键：把焦点从页面内容迁到底部 tab 栏（仅 TV）。
-    requestTabBarFocus = () {
-      if (!mounted || !isTvPlatform) return;
-      _tabBarFocused = true;
-      _tabBarFocusNode.requestFocus();
-    };
+    // 原生层 KEYCODE_MENU（TV 遥控器硬键）→ 通过静态回调聚焦底部 tab 栏。
+    // Android TV 遥控器 MENU 键不进入 Flutter KeyEvent 通道，Dart 侧
+    // KeyboardListener 收不到，必须在 MainActivity 原生拦截后走此通道。
+    // requestTabBarFocus 由 _FloatingTabBarState 在 initState 注册（直接聚焦 tab）。
+    if (isTvPlatform) {
+      MethodChannel('com.mapleling.wjplayer/tv_key')
+          .setMethodCallHandler((call) async {
+        if (call.method == 'menu') {
+          requestTabBarFocus?.call();
+        }
+        return null;
+      });
+    }
   }
 
   // 分支内 push 的页面（如从服务器管理页进入的 /home、/edit、/add 等）先逐级返回；
@@ -597,15 +603,10 @@ class _FloatingTabBarState extends ConsumerState<_FloatingTabBar> {
       _focusNodes.add(FocusNode());
     }
     _focusedIndex = 4; // 搜索
-    // TV 模式下，父级 MENU 键聚焦 _tabBarFocusNode 时，把焦点转移到搜索 tab。
-    if (isTvPlatform && widget.tabBarFocusNode != null) {
-      widget.tabBarFocusNode!.addListener(() {
-        if (widget.tabBarFocusNode!.hasFocus &&
-            _focusedIndex >= 0 &&
-            _focusedIndex < _focusNodes.length) {
-          _focusNodes[_focusedIndex].requestFocus();
-        }
-      });
+    // MENU 键（原生通道/键盘）：父级 MainShell 持有静态回调，本 State 注册
+    // 自己的实现——直接聚焦当前 tab，替代依赖 _tabBarFocusNode 的间接传递。
+    if (isTvPlatform) {
+      _MainShellState.requestTabBarFocus = _focusTabBar;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -614,6 +615,13 @@ class _FloatingTabBarState extends ConsumerState<_FloatingTabBar> {
         _focusNodes[_focusedIndex].requestFocus();
       }
     });
+  }
+
+  /// 聚焦底部 tab 栏（MENU 键触发）：当前 tab 或默认搜索 tab。
+  void _focusTabBar() {
+    if (mounted && _focusedIndex >= 0 && _focusedIndex < _focusNodes.length) {
+      _focusNodes[_focusedIndex].requestFocus();
+    }
   }
 
   @override
@@ -972,10 +980,14 @@ class _TvTabRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return KeyboardListener(
-      focusNode: FocusNode(),
-      autofocus: true,
-      onKeyEvent: (event) => _handleKeyEvent(event),
+    // 用 Focus.onKeyEvent 而非 KeyboardListener：KeyboardListener 需要持有
+    // focus node 并 autofocus 才能收键，会抢走 tab 按钮的焦点。
+    // Focus 仅注册按键回调，不参与焦点抢占，方向键由子按钮的 FocusNode 持有。
+    return Focus(
+      onKeyEvent: (node, event) {
+        _handleKeyEvent(event);
+        return KeyEventResult.ignored;
+      },
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: children,
@@ -992,18 +1004,10 @@ class _TvKeyboardWrapper extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!isTvPlatform) return child;
-    // 捕获 MENU 键。Flutter 中 TV 遥控的 MENU 键在 Android 上会映射为
-    // LogicalKeyboardKey.contextMenu（KEYCODE_MENU）。这里在 wrapper 层做
-    // 焦点转移：把焦点从页面内容迁到底部 tab 栏的搜索按钮上。
-    // 具体动作交给 _FloatingTabBarState 通过 FocusNode 监听实现。
-    return KeyboardListener(
-      focusNode: FocusNode(),
-      autofocus: true,
-      // 注意：KeyboardListener.onKeyEvent 是 ValueChanged<KeyEvent>（void 返回），
-      // 不能 return 值。它内部始终返回 KeyEventResult.ignored，只做观察。
-      // MENU 键动作通过 _MainShellState.requestTabBarFocus 静态回调完成。
-      onKeyEvent: (event) {
-        if (event is! KeyDownEvent) return;
+    // 用 Focus.onKeyEvent 而非 KeyboardListener：避免 autofocus 抢页面焦点。
+    return Focus(
+      onKeyEvent: (node, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
         final logical = event.logicalKey;
         if (logical == LogicalKeyboardKey.contextMenu ||
             logical == LogicalKeyboardKey.select ||
@@ -1011,6 +1015,7 @@ class _TvKeyboardWrapper extends StatelessWidget {
             logical == LogicalKeyboardKey.mediaTopMenu) {
           _MainShellState.requestTabBarFocus?.call();
         }
+        return KeyEventResult.ignored;
       },
       child: child,
     );
