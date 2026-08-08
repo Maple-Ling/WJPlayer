@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../../core/utils/platform_utils.dart';
 
@@ -90,7 +89,8 @@ class _TvFocusableState extends State<TvFocusable> {
         ActivateIntent: CallbackAction<ActivateIntent>(
           onInvoke: (_) {
             if (widget.enabled) widget.onActivate();
-            return ActionState.handled;
+            // Flutter 3.44：Action.invoke 返回 Object?，ActionState 已移除。
+            return null;
           },
         ),
       },

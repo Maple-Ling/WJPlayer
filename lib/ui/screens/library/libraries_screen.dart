@@ -8,6 +8,7 @@ import '../../../core/theme/app_motion.dart';
 import '../../../core/widgets/app_shimmer.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../widgets/common/media_widgets.dart';
+import '../../widgets/common/tv_focusable.dart';
 
 enum LibraryViewMode { grid, list }
 
