@@ -401,9 +401,25 @@ class _MainShellState extends ConsumerState<MainShell> {
   final ValueNotifier<bool> _tabCollapsed = ValueNotifier<bool>(false);
   DateTime? _lastBackPress;
 
-  // TV 遥控器：底部 tab 栏焦点入口。
+  // TV 遥控器：底部 tab 栏焦点入口。MENU 键由 _TvKeyboardWrapper 捕获后
+  // 通过静态回调转到这里，把焦点迁到 _FloatingTabBar 的搜索按钮上。
   final _tabBarFocusNode = FocusNode();
   bool _tabBarFocused = false;
+
+  /// 供 _TvKeyboardWrapper（无 context 到本 State 的访问路径）触发的静态回调。
+  /// 每次 MainShell build 时由 _MainShellState 注册。
+  static VoidCallback? requestTabBarFocus;
+
+  @override
+  void initState() {
+    super.initState();
+    // MENU 键：把焦点从页面内容迁到底部 tab 栏（仅 TV）。
+    requestTabBarFocus = () {
+      if (!mounted || !isTvPlatform) return;
+      _tabBarFocused = true;
+      _tabBarFocusNode.requestFocus();
+    };
+  }
 
   // 分支内 push 的页面（如从服务器管理页进入的 /home、/edit、/add 等）先逐级返回；
   // 分支根返回统一回到默认“影视”；影视根两次返回退出。
@@ -484,6 +500,7 @@ class _MainShellState extends ConsumerState<MainShell> {
   void dispose() {
     _tabCollapsed.dispose();
     _tabBarFocusNode.dispose();
+    if (requestTabBarFocus != null) requestTabBarFocus = null;
     super.dispose();
   }
 
@@ -580,21 +597,21 @@ class _FloatingTabBarState extends ConsumerState<_FloatingTabBar> {
       _focusNodes.add(FocusNode());
     }
     _focusedIndex = 4; // 搜索
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        // TV 模式下，将父级传入的焦点节点链接到搜索 tab，使 MENU 键能定位到底部栏。
-        if (isTvPlatform && widget.tabBarFocusNode != null) {
-          widget.tabBarFocusNode!
-              ..canRequestFocus = false
-              ..context?.focusNode?.addListener(() {
-            // 父级焦点激活时，把焦点转移到搜索 tab。
-            if (_focusedIndex >= 0 && _focusedIndex < _focusNodes.length) {
-              _focusNodes[_focusedIndex].requestFocus();
-            }
-          });
-          // 初始聚焦到搜索 tab。
+    // TV 模式下，父级 MENU 键聚焦 _tabBarFocusNode 时，把焦点转移到搜索 tab。
+    if (isTvPlatform && widget.tabBarFocusNode != null) {
+      widget.tabBarFocusNode!.addListener(() {
+        if (widget.tabBarFocusNode!.hasFocus &&
+            _focusedIndex >= 0 &&
+            _focusedIndex < _focusNodes.length) {
           _focusNodes[_focusedIndex].requestFocus();
         }
+      });
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // 初始聚焦到搜索 tab（仅 TV）。
+      if (isTvPlatform && _focusedIndex >= 0 && _focusedIndex < _focusNodes.length) {
+        _focusNodes[_focusedIndex].requestFocus();
       }
     });
   }
@@ -665,7 +682,7 @@ class _FloatingTabBarState extends ConsumerState<_FloatingTabBar> {
       ),
       child: SafeArea(
         top: false,
-        child: isTv
+        child: isTvPlatform
             ? _TvTabRow(
                 moveLeft: () => _moveFocus(-1),
                 moveRight: () => _moveFocus(1),
@@ -938,8 +955,8 @@ class _TvTabRow extends StatelessWidget {
   final VoidCallback activate;
   final List<Widget> children;
 
-  bool _handleKeyEvent(RawKeyEvent event) {
-    if (event is! RawKeyDownEvent) return false;
+  bool _handleKeyEvent(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
     final logical = event.logicalKey;
     if (logical == LogicalKeyboardKey.arrowLeft) {
       moveLeft();
@@ -952,8 +969,7 @@ class _TvTabRow extends StatelessWidget {
     if (logical == LogicalKeyboardKey.arrowUp ||
         logical == LogicalKeyboardKey.enter ||
         logical == LogicalKeyboardKey.numpadEnter ||
-        logical == LogicalKeyboardKey.gamepadA ||
-        logical == LogicalKeyboardKey.gamepadSouth) {
+        logical == LogicalKeyboardKey.select) {
       activate();
       return true;
     }
@@ -962,7 +978,7 @@ class _TvTabRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return RawKeyboardListener(
+    return KeyboardListener(
       focusNode: FocusNode(),
       autofocus: true,
       onKeyEvent: (event) => _handleKeyEvent(event),
@@ -982,16 +998,22 @@ class _TvKeyboardWrapper extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!isTvPlatform) return child;
-    return RawKeyboardListener(
+    // 捕获 MENU 键。Flutter 中 TV 遥控的 MENU 键在 Android 上会映射为
+    // LogicalKeyboardKey.contextMenu（KEYCODE_MENU）。这里在 wrapper 层做
+    // 焦点转移：把焦点从页面内容迁到底部 tab 栏的搜索按钮上。
+    // 具体动作交给 _FloatingTabBarState 通过 FocusNode 监听实现。
+    return KeyboardListener(
       focusNode: FocusNode(),
       autofocus: true,
       onKeyEvent: (event) {
-        if (event is! RawKeyDownEvent) return KeyEventResult.ignored;
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
         final logical = event.logicalKey;
-        // MENU 键 / GAMEPAD START：将焦点从主内容区转到 tab 栏。
         if (logical == LogicalKeyboardKey.contextMenu ||
-            logical == LogicalKeyboardKey.gamepadStart) {
-          // 触发 _tabBarFocusNode 接收焦点（由父级 _MainShellState 持有）。
+            logical == LogicalKeyboardKey.select ||
+            logical == LogicalKeyboardKey.tvContentsMenu ||
+            logical == LogicalKeyboardKey.mediaTopMenu) {
+          // 通知 _MainShellState 聚焦底部 tab 栏。
+          _MainShellState.requestTabBarFocus?.call();
           return KeyEventResult.handled;
         }
         return KeyEventResult.ignored;
