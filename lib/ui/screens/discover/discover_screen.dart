@@ -5,6 +5,7 @@ import '../../../core/api/discover/discover_models.dart';
 import '../../../core/providers/discover_providers.dart';
 import '../../../core/widgets/app_shimmer.dart';
 import '../../widgets/common/media_widgets.dart';
+import '../../widgets/common/tv_focusable.dart';
 import 'external_media_detail_screen.dart';
 
 class DiscoverScreen extends ConsumerWidget {
@@ -259,12 +260,17 @@ class _DiscoverCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+    return TvFocusable(
+      onActivate: () => Navigator.of(context).push(MaterialPageRoute<void>(
         builder: (_) => ExternalMediaDetailScreen(entry: entry),
       )),
-      child: Column(
+      borderRadius: 12,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => ExternalMediaDetailScreen(entry: entry),
+        )),
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
@@ -322,6 +328,7 @@ class _DiscoverCard extends StatelessWidget {
                     fontSize: 11,
                     color: Theme.of(context).colorScheme.onSurfaceVariant)),
         ],
+      ),
       ),
     );
   }

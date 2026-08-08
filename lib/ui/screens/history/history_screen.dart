@@ -13,6 +13,7 @@ import '../../../core/sources/unified_media_adapter.dart';
 import '../source/unified_media_screens.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../widgets/common/media_widgets.dart';
+import '../../widgets/common/tv_focusable.dart';
 
 final watchHistoryRefreshProvider = StateProvider<int>((ref) => 0);
 final allWatchHistoryProvider =
@@ -165,14 +166,18 @@ class _HistoryTile extends ConsumerWidget {
     final progress = runtime > 0
         ? (record.lastPositionTicks / runtime).clamp(0.0, 1.0)
         : 0.0;
-    return Card(
-      margin: EdgeInsets.zero,
-      color: selected ? Theme.of(context).colorScheme.primaryContainer : null,
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap ?? (server == null ? null : () => _openDetail(context, ref, server)),
-        onLongPress: onLongPress,
-        child: Padding(
+    return TvFocusable(
+      onActivate: onTap ??
+          (server == null ? () {} : () => _openDetail(context, ref, server)),
+      borderRadius: 14,
+      child: Card(
+        margin: EdgeInsets.zero,
+        color: selected ? Theme.of(context).colorScheme.primaryContainer : null,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap ?? (server == null ? null : () => _openDetail(context, ref, server)),
+          onLongPress: onLongPress,
+          child: Padding(
           padding: const EdgeInsets.all(14),
           child: Row(
             children: [
@@ -254,6 +259,7 @@ class _HistoryTile extends ConsumerWidget {
               ),
             ],
           ),
+        ),
         ),
       ),
     );

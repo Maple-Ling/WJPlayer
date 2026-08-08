@@ -9,6 +9,7 @@ import '../../../core/widgets/app_shimmer.dart';
 import '../../utils/media_helpers.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../widgets/common/media_widgets.dart';
+import '../../widgets/common/tv_focusable.dart';
 
 class FavoritesScreen extends ConsumerWidget {
   const FavoritesScreen({super.key});
@@ -110,11 +111,15 @@ class _FavoriteTile extends ConsumerWidget {
     return Stack(
       children: [
         Positioned.fill(
-          child: MediaPoster(
-            item: item,
-            width: double.infinity,
-            height: double.infinity,
-            onTap: () => context.push(mediaRouteForItem(item)),
+          child: TvFocusable(
+            onActivate: () => context.push(mediaRouteForItem(item)),
+            borderRadius: 12,
+            child: MediaPoster(
+              item: item,
+              width: double.infinity,
+              height: double.infinity,
+              onTap: () => context.push(mediaRouteForItem(item)),
+            ),
           ),
         ),
         Positioned(

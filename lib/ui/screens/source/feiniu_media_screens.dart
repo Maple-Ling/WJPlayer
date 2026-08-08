@@ -12,6 +12,7 @@ import '../../../core/sources/source_playback.dart';
 import 'unified_media_screens.dart';
 import '../../widgets/common/media_widgets.dart';
 import '../../widgets/common/media_metadata_badges.dart';
+import '../../widgets/common/tv_focusable.dart';
 
 class FeiniuHomeScreen extends ConsumerStatefulWidget {
   const FeiniuHomeScreen({super.key});
@@ -667,71 +668,76 @@ class _FeiniuMediaCard extends ConsumerWidget {
       providerIds: providerIds,
     );
     final format = _entryFormat(raw, entry.name);
-    return InkWell(
-      borderRadius: BorderRadius.circular(10),
-      onTap: onTap,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (entry.thumbUrl?.isNotEmpty == true)
-                    MediaImage(
-                      imageUrl: entry.thumbUrl,
-                      httpHeaders: entry.thumbHeaders,
-                      fit: BoxFit.cover,
-                    )
-                  else
-                    ColoredBox(
-                      color:
-                          Theme.of(context).colorScheme.surfaceContainerHighest,
-                      child: Icon(
-                        entry.isDir
-                            ? Icons.folder_rounded
-                            : Icons.movie_rounded,
-                        size: 42,
-                      ),
-                    ),
-                  if (!entry.isDir)
-                    Positioned(
-                      left: 7,
-                      top: 7,
-                      child: SelectedRatingBadge(item: ratingItem),
-                    ),
-                  if (format.isNotEmpty)
-                    Positioned(
-                      right: 7,
-                      bottom: 7,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.76),
-                          borderRadius: BorderRadius.circular(6),
+    return TvFocusable(
+      onActivate: onTap,
+      borderRadius: 10,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (entry.thumbUrl?.isNotEmpty == true)
+                      MediaImage(
+                        imageUrl: entry.thumbUrl,
+                        httpHeaders: entry.thumbHeaders,
+                        fit: BoxFit.cover,
+                      )
+                    else
+                      ColoredBox(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
+                        child: Icon(
+                          entry.isDir
+                              ? Icons.folder_rounded
+                              : Icons.movie_rounded,
+                          size: 42,
                         ),
-                        child: Text(format,
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 9,
-                                fontWeight: FontWeight.w700)),
                       ),
-                    ),
-                ],
+                    if (!entry.isDir)
+                      Positioned(
+                        left: 7,
+                        top: 7,
+                        child: SelectedRatingBadge(item: ratingItem),
+                      ),
+                    if (format.isNotEmpty)
+                      Positioned(
+                        right: 7,
+                        bottom: 7,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.76),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(format,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700)),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 7),
-          Text(
-            entry.name,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 13, height: 1.25),
-          ),
-        ],
+            const SizedBox(height: 7),
+            Text(
+              entry.name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13, height: 1.25),
+            ),
+          ],
+        ),
       ),
     );
   }

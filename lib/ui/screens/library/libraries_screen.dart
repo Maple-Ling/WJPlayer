@@ -148,10 +148,13 @@ class _GridView extends ConsumerWidget {
             : null;
         final borderRadius = BorderRadius.circular(16);
 
-        return GestureDetector(
-          onTap: () => onTap(library),
-          child: Column(
-            children: [
+        return TvFocusable(
+          onActivate: () => onTap(library),
+          borderRadius: 16,
+          child: GestureDetector(
+            onTap: () => onTap(library),
+            child: Column(
+              children: [
               Expanded(
                 child: Stack(
                   children: [
@@ -232,6 +235,7 @@ class _GridView extends ConsumerWidget {
               ),
             ],
           ),
+        ),
         ).appEntrance(index: index);
       },
     );

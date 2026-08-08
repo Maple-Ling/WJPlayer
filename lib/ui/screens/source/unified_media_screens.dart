@@ -28,6 +28,7 @@ import '../../widgets/common/media_metadata_badges.dart';
 import '../../widgets/common/media_widgets.dart';
 import '../../widgets/common/adaptive_poster_blend.dart';
 import '../../widgets/common/playback_resource_card.dart';
+import '../../widgets/common/tv_focusable.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../utils/media_helpers.dart';
 import '../../../core/utils/track_preference.dart';
@@ -2008,31 +2009,41 @@ class _UnifiedMediaDetailScreenState
                         itemCount: items.length,
                         itemBuilder: (_, index) {
                           final item = items[index];
-                          return InkWell(
-                            onTap: () => Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                builder: (_) =>
-                                    ExternalMediaDetailScreen(entry: item),
-                              ),
-                            ),
-                            child: Column(
-                              children: [
-                                Expanded(
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(10),
-                                    child: MediaImage(
-                                      imageUrl: item.posterUrl,
-                                      fit: BoxFit.cover,
-                                    ),
+                          return TvFocusable(
+                            onActivate: () =>
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) =>
+                                        ExternalMediaDetailScreen(entry: item),
                                   ),
                                 ),
-                                const SizedBox(height: 5),
-                                Text(
-                                  item.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                            borderRadius: 10,
+                            child: InkWell(
+                              onTap: () => Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) =>
+                                      ExternalMediaDetailScreen(entry: item),
                                 ),
-                              ],
+                              ),
+                              child: Column(
+                                children: [
+                                  Expanded(
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(10),
+                                      child: MediaImage(
+                                        imageUrl: item.posterUrl,
+                                        fit: BoxFit.cover,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 5),
+                                  Text(
+                                    item.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
                             ),
                           );
                         },
@@ -2970,51 +2981,55 @@ class _UnifiedMediaCard extends StatelessWidget {
     } else if (codec.contains('264') || codec.contains('avc')) {
       labels.add('264');
     }
-    return InkWell(
-      borderRadius: BorderRadius.circular(10),
-      onTap: onTap,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Expanded(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: Stack(fit: StackFit.expand, children: [
-              MediaImage(
-                imageUrl: entry.posterUrl,
-                httpHeaders: entry.imageHeaders,
-                fit: BoxFit.cover,
-              ),
-              Positioned(
-                left: 7,
-                top: 7,
-                child: SelectedRatingBadge(item: entry.ratingItem),
-              ),
-              if (labels.isNotEmpty)
-                Positioned(
-                  right: 7,
-                  bottom: 7,
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.76),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(labels.join(' · '),
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w700)),
-                  ),
+    return TvFocusable(
+      onActivate: onTap,
+      borderRadius: 10,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Stack(fit: StackFit.expand, children: [
+                MediaImage(
+                  imageUrl: entry.posterUrl,
+                  httpHeaders: entry.imageHeaders,
+                  fit: BoxFit.cover,
                 ),
-            ]),
+                Positioned(
+                  left: 7,
+                  top: 7,
+                  child: SelectedRatingBadge(item: entry.ratingItem),
+                ),
+                if (labels.isNotEmpty)
+                  Positioned(
+                    right: 7,
+                    bottom: 7,
+                    child: Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.76),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(labels.join(' · '),
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+              ]),
+            ),
           ),
-        ),
-        const SizedBox(height: 7),
-        Text(entry.name,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 13, height: 1.25)),
-      ]),
+          const SizedBox(height: 7),
+          Text(entry.name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13, height: 1.25)),
+        ]),
+      ),
     );
   }
 }
