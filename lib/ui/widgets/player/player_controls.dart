@@ -704,7 +704,9 @@ class BottomBar extends StatelessWidget {
     final progressRow = Row(
       children: [
         SizedBox(
-          width: 42,
+          // 时间文本自适应宽度：HH:MM:SS（8 字符）比 MM:SS（5 字符）宽，
+          // 固定 42 会把长时长挤到下一行。
+          width: _durationTextWidth(_formatDuration(position)),
           child: Text(
             _formatDuration(position),
             style: TextStyle(
@@ -736,7 +738,7 @@ class BottomBar extends StatelessWidget {
           ),
         ),
         SizedBox(
-          width: 42,
+          width: _durationTextWidth(_formatDuration(duration)),
           child: Text(
             _formatDuration(duration),
             textAlign: TextAlign.right,
@@ -838,6 +840,24 @@ class BottomBar extends StatelessWidget {
       return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${remain.toString().padLeft(2, '0')}';
     }
     return '${minutes.toString().padLeft(2, '0')}:${remain.toString().padLeft(2, '0')}';
+  }
+
+  /// 进度条时间文本的精确宽度（fontSize 11 测量 + 2px 余量）。
+  /// 时长带小时（HH:MM:SS）比纯 MM:SS 宽，固定宽度会把末位挤到下一行。
+  double _durationTextWidth(String text) {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          color: Colors.white.withOpacity(0.8),
+          fontSize: 11,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final w = tp.width;
+    tp.dispose();
+    return w + 2;
   }
 }
 
