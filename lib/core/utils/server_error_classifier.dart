@@ -85,7 +85,7 @@ ServerErrorInfo classifyServerError(Object? raw, {String context = ''}) {
       if (isTls) {
         return ServerErrorInfo(
           ServerErrorKind.tlsHandshakeFailed,
-          '$prefixTLS 握手失败（服务器证书过期/不受信任，或线路被中断）。'
+          '${prefix}TLS 握手失败（服务器证书过期/不受信任，或线路被中断）。'
               '可尝试：① 开启该服务器的「允许不安全 TLS」② 换线路/优选域名',
         );
       }
@@ -193,7 +193,7 @@ ServerErrorInfo classifyServerError(Object? raw, {String context = ''}) {
       s.contains('certificate')) {
     return ServerErrorInfo(
       ServerErrorKind.tlsHandshakeFailed,
-      '$prefixTLS 握手失败：服务器证书不受信任或线路被重置。可尝试开启'
+      '${prefix}TLS 握手失败：服务器证书不受信任或线路被重置。可尝试开启'
           '「允许不安全 TLS」或更换线路。',
     );
   }
