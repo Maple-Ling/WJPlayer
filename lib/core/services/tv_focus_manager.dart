@@ -134,8 +134,9 @@ class TvFocusManager extends ChangeNotifier {
   /// 释放当前焦点，但不注销区域。
   void releaseArea(String areaId) {
     if (_activeAreaId == areaId) _activeAreaId = null;
-    _lastFocusIndex[areaId] = _areas[areaId]?.focusIndex;
-    final node = _areas[areaId]?.nodes[_areas[areaId]?.focusIndex ?? 0];
+    final area = _areas[areaId];
+    if (area != null) _lastFocusIndex[areaId] = area.focusIndex;
+    final node = area?.nodes[area?.focusIndex ?? 0];
     node?.unfocus();
   }
 

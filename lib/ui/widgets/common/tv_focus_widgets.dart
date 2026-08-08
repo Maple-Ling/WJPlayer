@@ -28,6 +28,7 @@
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show LogicalKeyboardKey, KeyDownEvent;
 import 'package:flutter/widgets.dart' show FocusNode, WidgetsBinding;
 
 import '../../../core/services/tv_focus_manager.dart';
@@ -282,13 +283,26 @@ class TvKeyboardListener extends StatelessWidget {
             return KeyEventResult.handled;
           }
           // 自定义焦点树尚未就绪时，回退到 Flutter 默认焦点遍历。
-          final target = Focus.of(primaryFocus ?? node);
+          final scope = FocusScope.of(context);
           switch (dir) {
-            case DPad.up:    return target.previousFocus();
-            case DPad.down:  return target.nextFocus();
-            case DPad.left:  return target.leftFocus();
-            case DPad.right: return target.rightFocus();
+            case DPad.up:
+              if (scope.focusInDirection(FocusTraversalDirection.up))
+                return KeyEventResult.handled;
+              break;
+            case DPad.down:
+              if (scope.focusInDirection(FocusTraversalDirection.down))
+                return KeyEventResult.handled;
+              break;
+            case DPad.left:
+              if (scope.focusInDirection(FocusTraversalDirection.left))
+                return KeyEventResult.handled;
+              break;
+            case DPad.right:
+              if (scope.focusInDirection(FocusTraversalDirection.right))
+                return KeyEventResult.handled;
+              break;
           }
+          return KeyEventResult.ignored;
         }
 
         return KeyEventResult.ignored;
