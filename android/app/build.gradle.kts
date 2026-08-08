@@ -23,8 +23,11 @@ val hasReleaseSigning = releaseStorePath != null && file(releaseStorePath).exist
 
 // WJPlayer 面向 64 位 ARM Android 手机；TARGET_ABI 环境变量可切到
 // armeabi-v7a（TV/投影等 32 位设备，如哈趣 H2），CI 双 job 各自构建。
+// 手机版（arm64-v8a）与 TV 版（armeabi-v7a）是独立产物：targetAbi 之外的
+// ABI 全部排除，避免 v7a 包混入 arm64-v8a 的 so（CI 会校验 APK 仅含目标 ABI）。
 val targetAbi = System.getenv("TARGET_ABI") ?: "arm64-v8a"
-val excludedAbis = listOf("armeabi-v7a", "x86", "x86_64").filter { it != targetAbi }
+val allAbis = listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+val excludedAbis = allAbis.filter { it != targetAbi }
 
 android {
     namespace = "com.mapleling.wjplayer"
@@ -150,7 +153,13 @@ dependencies {
     implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.6.1+1")
 
     // Mature ASS integration for Media3/ExoPlayer.
-    implementation("io.github.peerless2012:ass-media:0.4.0")
+    // 注意：ass-media 0.4.0 的 pom 传递声明 androidx.media3:media3-decoder-ffmpeg:1.8.0
+    // （官方从未发布此 artifact，Gradle 解析失败 → mergeReleaseNativeLibs 报 Could not find）。
+    // 本项目的 FFmpeg 解码器走 org.jellyfin.media3:media3-ffmpeg-decoder（包名兼容反射），
+    // 这里显式排除传递依赖，避免依赖官方不存在的 artifact 导致构建失败。
+    implementation("io.github.peerless2012:ass-media:0.4.0") {
+        exclude(group = "androidx.media3", module = "media3-decoder-ffmpeg")
+    }
 
 
 }
