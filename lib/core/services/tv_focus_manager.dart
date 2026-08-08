@@ -17,12 +17,7 @@ import 'package:flutter/widgets.dart' show FocusNode, WidgetsBinding;
 
 enum DPad { up, down, left, right }
 
-enum KeyEventSource { flutter, nativeChannel }
-
 typedef TraversalFn = int Function(int current, DPad direction);
-
-typedef GlobalKeyHandler = KeyEventResult Function(
-    LogicalKeyboardKey key, KeyEventSource source);
 
 /// 单个可聚焦元素的焦点区域配置。
 /// [count] 必须在整个区域生命周期内稳定；如需动态变化，请用 [Key] 重建。
@@ -53,7 +48,7 @@ class FocusArea {
 
   int nextIndex(DPad direction) {
     final next = config.traversal(focusIndex, direction);
-    return next.clamp(0, config.count - 1);
+    return next.clamp(0, config.count - 1).toInt();
   }
 
   void dispose() {
@@ -151,7 +146,8 @@ class TvFocusManager extends ChangeNotifier {
     final area = _areas[areaId];
     if (area == null) return;
     final target = (initialIndex ?? _lastFocusIndex[areaId] ?? 0)
-        .clamp(0, area.config.count - 1);
+        .clamp(0, area.config.count - 1)
+        .toInt();
     area.focusIndex = target;
     _activeAreaId = areaId;
     _requestFocus(areaId, target);
@@ -162,7 +158,7 @@ class TvFocusManager extends ChangeNotifier {
   void focusAt(String areaId, int index) {
     final area = _areas[areaId];
     if (area == null) return;
-    final target = index.clamp(0, area.config.count - 1);
+    final target = index.clamp(0, area.config.count - 1).toInt();
     _lastFocusIndex[areaId] = target;
     area.focusIndex = target;
     _activeAreaId = areaId;

@@ -12,7 +12,7 @@
 // TvFocusArea(
 //   id: 'home_posters',
 //   count: 12,
-//   traversal: TraversalPolicies.grid(columns: 4, itemCount: 12),
+//   traversal: TraversalPolicies.grid(columns: 4, rowCount: 3),
 //   child: GridView.builder(
 //     itemCount: 12,
 //     itemBuilder: (ctx, i) => TvFocusCard(
