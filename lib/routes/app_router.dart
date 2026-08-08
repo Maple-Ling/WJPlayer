@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show SystemNavigator;
+import 'package:flutter/services.dart' show
+    KeyEventResult,
+    KeyEventSource,
+    LogicalKeyboardKey,
+    SystemNavigator;
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -402,6 +406,13 @@ class _MainShellState extends ConsumerState<MainShell> {
   final ValueNotifier<bool> _tabCollapsed = ValueNotifier<bool>(false);
   DateTime? _lastBackPress;
 
+  // 菜单键处理器
+  KeyEventResult _handleMenuKey(LogicalKeyboardKey key, KeyEventSource source) {
+    if (key != LogicalKeyboardKey.contextMenu) return KeyEventResult.ignored;
+    TvFocusManager.instance.toggleArea('main_tabs');
+    return KeyEventResult.handled;
+  }
+
   // 分支内 push 的页面（如从服务器管理页进入的 /home、/edit、/add 等）先逐级返回；
   // 分支根返回统一回到默认“影视”；影视根两次返回退出。
   void _handleShellPop() {
@@ -500,7 +511,14 @@ class _MainShellState extends ConsumerState<MainShell> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    if (isTvPlatform) registerGlobalKeyHandler(_handleMenuKey);
+  }
+
+  @override
   void dispose() {
+    if (isTvPlatform) unregisterGlobalKeyHandler(_handleMenuKey);
     _tabCollapsed.dispose();
     super.dispose();
   }

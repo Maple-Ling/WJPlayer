@@ -98,10 +98,15 @@ class TvFocusManager extends ChangeNotifier {
   String? _activeAreaId;
   final Map<String, int> _focusRetryCount = <String, int>{};
   final Map<String, int> _lastFocusIndex = <String, int>{};
+  String? _lastActiveAreaId;
 
   bool get hasManagedFocus => _activeAreaId != null && _areas.containsKey(_activeAreaId);
 
   FocusArea? get activeArea => _areas[_activeAreaId];
+
+  bool get hasFocusedArea => _lastActiveAreaId != null && _areas.containsKey(_lastActiveAreaId);
+
+  String? get lastActiveAreaId => _lastActiveAreaId;
 
   /// D-pad 接管条件：活动区域存在，且当前焦点节点真的持有 Flutter 系统焦点。
   bool get canHandleDPad =>
@@ -129,15 +134,51 @@ class TvFocusManager extends ChangeNotifier {
     if (_activeAreaId == areaId) {
       _activeAreaId = null;
     }
+    if (_lastActiveAreaId == areaId) {
+      _lastActiveAreaId = null;
+    }
   }
 
   /// 释放当前焦点，但不注销区域。
-  void releaseArea(String areaId) {
+  void releaseArea(String areaId, {bool remember = true}) {
     if (_activeAreaId == areaId) _activeAreaId = null;
     final area = _areas[areaId];
-    if (area != null) _lastFocusIndex[areaId] = area.focusIndex;
+    if (area != null && remember) {
+      _lastFocusIndex[areaId] = area.focusIndex;
+      _lastActiveAreaId = areaId;
+    }
     final node = area?.nodes[area?.focusIndex ?? 0];
     node?.unfocus();
+  }
+
+  /// 记录区域最近一次焦点，但不移除系统焦点。
+  void rememberArea(String areaId) {
+    final area = _areas[areaId];
+    if (area == null) return;
+    _lastFocusIndex[areaId] = area.focusIndex;
+    _lastActiveAreaId = areaId;
+  }
+
+  /// 切换到上一次离开的区域；成功返回 true。
+  bool restoreLastArea() {
+    final areaId = _lastActiveAreaId;
+    if (areaId == null || !_areas.containsKey(areaId)) return false;
+    switchArea(areaId);
+    return true;
+  }
+
+  /// 切换区域：若当前就在目标区域，直接释放焦点并返回 false；否则切换到目标区域并返回 true。
+  bool toggleArea(String areaId, {int? initialIndex}) {
+    final area = _areas[areaId];
+    if (area == null) return false;
+    if (_activeAreaId == areaId) {
+      // 已在该区域，直接释放焦点
+      _activeAreaId = null;
+      area.nodes[area.focusIndex].unfocus();
+      return false;
+    }
+    switchArea(areaId, initialIndex: initialIndex);
+    return true;
   }
 
   // ─── 集中管理 API ───
@@ -151,6 +192,7 @@ class TvFocusManager extends ChangeNotifier {
         .toInt();
     area.focusIndex = target;
     _activeAreaId = areaId;
+    _lastActiveAreaId = areaId;
     _requestFocus(areaId, target);
     _notifyFocusChanged(area);
   }
@@ -163,6 +205,7 @@ class TvFocusManager extends ChangeNotifier {
     _lastFocusIndex[areaId] = target;
     area.focusIndex = target;
     _activeAreaId = areaId;
+    _lastActiveAreaId = areaId;
     _requestFocus(areaId, target);
     _notifyFocusChanged(area);
   }
@@ -171,10 +214,21 @@ class TvFocusManager extends ChangeNotifier {
   void moveDPad(DPad direction) {
     final area = activeArea;
     if (area == null || !hasManagedFocus) return;
+
+    if (direction == DPad.up) {
+      // 上键：释放焦点，返回 Flutter 默认焦点树
+      _activeAreaId = null;
+      area.nodes[area.focusIndex].unfocus();
+      return;
+    }
+
+    if (direction == DPad.down) return; // 下键舍弃
+
     final next = area.nextIndex(direction);
     if (next == area.focusIndex) return;
     _lastFocusIndex[area.config.id] = next;
     area.focusIndex = next;
+    _lastActiveAreaId = area.config.id;
     _requestFocus(area.config.id, next);
     _notifyFocusChanged(area);
   }

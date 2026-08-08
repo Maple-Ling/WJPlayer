@@ -1,7 +1,7 @@
 // lib/core/services/tv_key_channel.dart
 //
 // TV 按键通道服务：统一接收 MainActivity.kt 转发的 MENU/专用硬键，
-// 再分发到全局按键处理器或 TvFocusManager。
+// 再分发到全局按键处理器。
 //
 // 替代现状：app_router.dart 中 _MainShellState.initState 内联的 MethodChannel handler。
 
@@ -58,7 +58,7 @@ void installNativeKeyBridge() {
     }
 
     // 没有页面级覆盖时，MENU 恢复到底部栏上次焦点。
-    TvFocusManager.instance.switchArea('main_tabs');
+    TvFocusManager.instance.toggleArea('main_tabs');
   });
 }
 
