@@ -955,25 +955,19 @@ class _TvTabRow extends StatelessWidget {
   final VoidCallback activate;
   final List<Widget> children;
 
-  bool _handleKeyEvent(KeyEvent event) {
-    if (event is! KeyDownEvent) return false;
+  void _handleKeyEvent(KeyEvent event) {
+    if (event is! KeyDownEvent) return;
     final logical = event.logicalKey;
     if (logical == LogicalKeyboardKey.arrowLeft) {
       moveLeft();
-      return true;
-    }
-    if (logical == LogicalKeyboardKey.arrowRight) {
+    } else if (logical == LogicalKeyboardKey.arrowRight) {
       moveRight();
-      return true;
-    }
-    if (logical == LogicalKeyboardKey.arrowUp ||
+    } else if (logical == LogicalKeyboardKey.arrowUp ||
         logical == LogicalKeyboardKey.enter ||
         logical == LogicalKeyboardKey.numpadEnter ||
         logical == LogicalKeyboardKey.select) {
       activate();
-      return true;
     }
-    return false;
   }
 
   @override
@@ -1005,18 +999,18 @@ class _TvKeyboardWrapper extends StatelessWidget {
     return KeyboardListener(
       focusNode: FocusNode(),
       autofocus: true,
+      // 注意：KeyboardListener.onKeyEvent 是 ValueChanged<KeyEvent>（void 返回），
+      // 不能 return 值。它内部始终返回 KeyEventResult.ignored，只做观察。
+      // MENU 键动作通过 _MainShellState.requestTabBarFocus 静态回调完成。
       onKeyEvent: (event) {
-        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        if (event is! KeyDownEvent) return;
         final logical = event.logicalKey;
         if (logical == LogicalKeyboardKey.contextMenu ||
             logical == LogicalKeyboardKey.select ||
             logical == LogicalKeyboardKey.tvContentsMenu ||
             logical == LogicalKeyboardKey.mediaTopMenu) {
-          // 通知 _MainShellState 聚焦底部 tab 栏。
           _MainShellState.requestTabBarFocus?.call();
-          return KeyEventResult.handled;
         }
-        return KeyEventResult.ignored;
       },
       child: child,
     );
