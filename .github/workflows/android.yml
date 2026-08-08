@@ -28,7 +28,7 @@ jobs:
       fail-fast: false
       matrix:
         # test-* 标签用于单架构验证（如 32 位 TV 调试），只构建指定的 ABI；
-        # 正式 tag（v*/rc-*）与手动触发跑双架构。
+        # 正式 tag（v*/rc-*）与手动触发跑双架构（arm64 phone + v7a tv）。
         abi: ${{ fromJson(startsWith(github.ref_name, 'test-') && '["armeabi-v7a"]' || '["arm64-v8a", "armeabi-v7a"]') }}
 
     steps:
@@ -156,6 +156,7 @@ jobs:
             --flavor "$APP_FLAVOR" \
             --target-platform "${{ matrix.abi == 'armeabi-v7a' && 'android-arm' || 'android-arm64' }}" \
             --build-number "$GITHUB_RUN_NUMBER" \
+            --dart-define "FLAVOR=$APP_FLAVOR" \
             --dart-define "APP_VERSION=$version" \
             --dart-define "DANDANPLAY_APP_ID=${DANDANPLAY_APP_ID:-}" \
             --dart-define "DANDANPLAY_APP_SECRET=${DANDANPLAY_APP_SECRET:-}" \

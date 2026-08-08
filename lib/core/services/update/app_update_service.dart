@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 
 import '../../app_identity.dart';
+import '../../utils/platform_utils.dart';
 import '../app_logger.dart';
 
 /// 应用当前版本：统一取自 [kAppVersion]（CI 构建时通过 --dart-define=APP_VERSION 注入）。
@@ -16,6 +17,15 @@ class UpdateAsset {
   final String name;
   final String url;
   final int size;
+
+  /// 是否为本平台资产。TV 版只看 WJPlayerTV-*，手机版看 WJPlayer-Android-*（排除 TV）。
+  bool get isForThisPlatform {
+    if (isTvPlatform) {
+      return name.toLowerCase().contains('wjplayertv');
+    }
+    return name.toLowerCase().contains('wjplayer-android') &&
+        !name.toLowerCase().contains('wjplayertv');
+  }
 }
 
 /// 一次可用更新的信息。
@@ -43,6 +53,14 @@ class UpdateInfo {
     for (final a in assets) {
       final lower = a.name.toLowerCase();
       if (keywords.every((k) => lower.contains(k.toLowerCase()))) return a;
+    }
+    return null;
+  }
+
+  /// 取本平台首个匹配资产（TV 过滤 WJPlayerTV-*，手机过滤 WJPlayer-Android-*）。
+  UpdateAsset? get assetForPlatform {
+    for (final a in assets) {
+      if (a.isForThisPlatform) return a;
     }
     return null;
   }

@@ -7,6 +7,7 @@ import '../core/providers/app_providers.dart';
 import '../core/providers/media_providers.dart';
 import '../core/theme/app_colors.dart';
 import '../core/theme/app_motion.dart';
+import '../core/utils/platform_utils.dart';
 import '../plugins/plugin_system.dart';
 import '../ui/screens/discover/discover_screen.dart';
 import '../ui/screens/history/history_screen.dart';
@@ -400,6 +401,10 @@ class _MainShellState extends ConsumerState<MainShell> {
   final ValueNotifier<bool> _tabCollapsed = ValueNotifier<bool>(false);
   DateTime? _lastBackPress;
 
+  // TV 遥控器：底部 tab 栏焦点入口。
+  final _tabBarFocusNode = FocusNode();
+  bool _tabBarFocused = false;
+
   // 分支内 push 的页面（如从服务器管理页进入的 /home、/edit、/add 等）先逐级返回；
   // 分支根返回统一回到默认“影视”；影视根两次返回退出。
   void _handleShellPop() {
@@ -478,6 +483,7 @@ class _MainShellState extends ConsumerState<MainShell> {
   @override
   void dispose() {
     _tabCollapsed.dispose();
+    _tabBarFocusNode.dispose();
     super.dispose();
   }
 
@@ -498,81 +504,152 @@ class _MainShellState extends ConsumerState<MainShell> {
       },
       child: NotificationListener<ScrollNotification>(
         onNotification: _onScrollNotification,
-        child: Scaffold(
-          resizeToAvoidBottomInset: true, // 显式设置以确保键盘正确处理
-          body: isKeyboardVisible
-              ? widget.navigationShell // 键盘显示时不修改 MediaQuery，让系统自动处理
-              : MediaQuery(
-                  data: mediaQuery.copyWith(
-                    padding: mediaQuery.padding.copyWith(
-                      bottom: mediaQuery.padding.bottom + tabHeight,
+        child: _TvKeyboardWrapper(
+          child: Scaffold(
+            resizeToAvoidBottomInset: true, // 显式设置以确保键盘正确处理
+            body: isKeyboardVisible
+                ? widget.navigationShell // 键盘显示时不修改 MediaQuery，让系统自动处理
+                : MediaQuery(
+                    data: mediaQuery.copyWith(
+                      padding: mediaQuery.padding.copyWith(
+                        bottom: mediaQuery.padding.bottom + tabHeight,
+                      ),
                     ),
+                    child: widget.navigationShell,
                   ),
-                  child: widget.navigationShell,
-                ),
-          bottomNavigationBar: const SizedBox.shrink(),
-          floatingActionButtonLocation:
-              FloatingActionButtonLocation.centerDocked,
-          floatingActionButton: showFloatingTabBar
-              ? ValueListenableBuilder<bool>(
-                  valueListenable: _tabCollapsed,
-                  builder: (context, collapsed, _) => _FloatingTabBar(
-                    navigationShell: widget.navigationShell,
-                    collapsed: collapsed,
-                    onExpand: () => _tabCollapsed.value = false,
-                  ),
-                )
-              : null,
+            bottomNavigationBar: const SizedBox.shrink(),
+            floatingActionButtonLocation:
+                FloatingActionButtonLocation.centerDocked,
+            floatingActionButton: showFloatingTabBar
+                ? ValueListenableBuilder<bool>(
+                    valueListenable: _tabCollapsed,
+                    builder: (context, collapsed, _) => _FloatingTabBar(
+                      navigationShell: widget.navigationShell,
+                      collapsed: collapsed,
+                      onExpand: () => _tabCollapsed.value = false,
+                      tabBarFocusNode: _tabBarFocusNode,
+                    ),
+                  )
+                : null,
+          ),
         ),
       ),
     );
   }
 }
 
-class _FloatingTabBar extends ConsumerWidget {
+class _FloatingTabBar extends ConsumerStatefulWidget {
   const _FloatingTabBar({
     required this.navigationShell,
     this.collapsed = false,
     this.onExpand,
+    this.tabBarFocusNode,
   });
   final StatefulNavigationShell navigationShell;
 
-  /// 收缩模式：仅显示搜索按钮（滚动下滑时）；点击搜索按钮展开完整栏。
   final bool collapsed;
   final VoidCallback? onExpand;
+  final FocusNode? tabBarFocusNode;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_FloatingTabBar> createState() => _FloatingTabBarState();
+}
+
+class _FloatingTabBarState extends ConsumerState<_FloatingTabBar> {
+  // TV 遥控器导航：每个 tab 一个焦点节点，方向键切换。
+  final _focusNodes = <FocusNode>[];
+  // 当前焦点在哪个 tab 索引（0..4），-1 表示无焦点。
+  int _focusedIndex = -1;
+
+  // TV 遥控器导航使用的 tab 顺序。注意：索引 3（搜索）在 Row 中是最后一个，
+  // 但 currentIndex 里 3 是搜索分支，4 是设置分支。
+  static const _tabOrder = [0, 1, 2, 4, 3]; // 影视/记录/服务器/设置/搜索
+  // _tabOrder 位置 → navigationShell 分支索引
+  int _tabAt(int orderPos) => _tabOrder[orderPos];
+  int _orderOf(int branchIndex) {
+    for (var i = 0; i < _tabOrder.length; i++) {
+      if (_tabOrder[i] == branchIndex) return i;
+    }
+    return -1;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    for (var i = 0; i < _tabOrder.length; i++) {
+      _focusNodes.add(FocusNode());
+    }
+    _focusedIndex = 4; // 搜索
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        // TV 模式下，将父级传入的焦点节点链接到搜索 tab，使 MENU 键能定位到底部栏。
+        if (isTvPlatform && widget.tabBarFocusNode != null) {
+          widget.tabBarFocusNode!
+              ..canRequestFocus = false
+              ..context?.focusNode?.addListener(() {
+            // 父级焦点激活时，把焦点转移到搜索 tab。
+            if (_focusedIndex >= 0 && _focusedIndex < _focusNodes.length) {
+              _focusNodes[_focusedIndex].requestFocus();
+            }
+          });
+          // 初始聚焦到搜索 tab。
+          _focusNodes[_focusedIndex].requestFocus();
+        }
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    for (final fn in _focusNodes) fn.dispose();
+    super.dispose();
+  }
+
+  void _moveFocus(int delta) {
+    if (_focusedIndex < 0 || _focusedIndex >= _tabOrder.length) return;
+    setState(() {
+      _focusedIndex = (_focusedIndex + delta + _tabOrder.length) % _tabOrder.length;
+      _focusNodes[_focusedIndex].requestFocus();
+    });
+  }
+
+  void _activateFocused() {
+    if (_focusedIndex < 0 || _focusedIndex >= _tabOrder.length) return;
+    final branchIndex = _tabAt(_focusedIndex);
+    widget.navigationShell.goBranch(branchIndex);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final navBg = isDark ? AppColors.darkNavBackground : AppColors.lightNavBackground;
     final selectedBg = isDark ? AppColors.darkNavSelected : AppColors.lightNavSelected;
     final textColor = isDark ? Colors.white : const Color(0xFF1C1C1E);
     final mutedColor = isDark ? const Color(0xFFB8B8BA) : const Color(0xFF6F6F72);
 
-    Widget item(int index, IconData icon, String label) {
-      final selected = navigationShell.currentIndex == index;
-      return GestureDetector(
-        onTap: () => navigationShell.goBranch(index),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-          decoration: BoxDecoration(
-            color: selected ? selectedBg : Colors.transparent,
-            borderRadius: BorderRadius.circular(30),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 22, color: selected ? textColor : mutedColor),
-              if (selected) ...[
-                const SizedBox(width: 8),
-                Text(label, style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.w600)),
-              ],
-            ],
-          ),
+    // 收缩模式：4 个 tab 隐藏，遥控器无导航目标；展开后恢复。
+    if (widget.collapsed) {
+      return AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+        decoration: BoxDecoration(
+          color: navBg,
+          borderRadius: BorderRadius.circular(42),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 20, offset: const Offset(0, 8), spreadRadius: 2),
+            BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4, offset: const Offset(0, 2)),
+          ],
+        ),
+        child: SafeArea(
+          top: false,
+          child: _buildSearchButton(context, isDark, navBg, selectedBg, textColor),
         ),
       );
     }
 
+    // 展开模式：正常 5 个 tab。
     return AnimatedContainer(
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
@@ -588,59 +665,338 @@ class _FloatingTabBar extends ConsumerWidget {
       ),
       child: SafeArea(
         top: false,
+        child: isTv
+            ? _TvTabRow(
+                moveLeft: () => _moveFocus(-1),
+                moveRight: () => _moveFocus(1),
+                activate: _activateFocused,
+                children: _buildTabRowChildren(context, isDark, navBg, selectedBg, textColor, mutedColor),
+              )
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: _buildTabRowChildren(context, isDark, navBg, selectedBg, textColor, mutedColor),
+              ),
+      ),
+    );
+  }
+
+  List<Widget> _buildTabRowChildren(BuildContext context, bool isDark, Color navBg,
+      Color selectedBg, Color textColor, Color mutedColor) {
+    return [
+      Container(
+        padding: const EdgeInsets.all(3),
+        decoration: BoxDecoration(color: navBg, borderRadius: BorderRadius.circular(36)),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 收缩模式：4 个 tab 隐藏，只留搜索按钮；点击搜索按钮展开。
-            if (!collapsed) ...[
-              Container(
-                padding: const EdgeInsets.all(3),
-                decoration: BoxDecoration(color: navBg, borderRadius: BorderRadius.circular(36)),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    item(0, Icons.movie_filter_rounded, '影视'),
-                    item(1, Icons.history_rounded, '记录'),
-                    item(2, Icons.dns_rounded, '服务器'),
-                    item(4, Icons.settings_rounded, '设置'),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-            ],
-            GestureDetector(
-              onTap: () {
-                // 收缩态点击搜索按钮 = 展开完整栏；展开态 = 进入搜索页。
-                if (collapsed) {
-                  onExpand?.call();
-                  return;
-                }
-                navigationShell.goBranch(3);
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOutCubic,
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  // 收缩态高亮搜索按钮，提示"点击展开"。
-                  color: collapsed || navigationShell.currentIndex == 3
-                      ? selectedBg
-                      : navBg,
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  collapsed
-                      ? Icons.expand_less_rounded
-                      : Icons.search_rounded,
-                  size: 22,
-                  color: textColor,
-                ),
-              ),
-            ),
+            ...List.generate(4, (i) => _buildTabItem(context, _tabAt(i), i, isDark, navBg, selectedBg, textColor, mutedColor)),
           ],
         ),
       ),
+      const SizedBox(width: 8),
+      _buildSearchButton(context, isDark, navBg, selectedBg, textColor),
+    ];
+  }
+
+  /// 单个 tab 项：TV 遥控器焦点 + 方向键导航 + 激活跳转。
+  Widget _buildTabItem(BuildContext context, int branchIndex, int orderPos,
+      bool isDark, Color navBg, Color selectedBg, Color textColor, Color mutedColor) {
+    final selected = widget.navigationShell.currentIndex == branchIndex;
+    final focused = _focusedIndex == orderPos;
+    // 焦点时给描边，与 TV Leanback 一致。
+    final borderWidth = focused ? 1.5 : 0.0;
+    final borderColor = focused ? textColor.withValues(alpha: 0.5) : Colors.transparent;
+    final isTv = isTvPlatform;
+
+    return FocusableActionDetector(
+      focusNode: _focusNodes[orderPos],
+      enabled: !widget.collapsed,
+      autofocus: isTv && orderPos == _focusedIndex,
+      actions: isTv
+          ? <Type, Action<Intent>>{
+              ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) => _activateFocused()),
+              // 方向键由父级 KeyboardListener 统一处理，这里只处理激活。
+            }
+          : <Type, Action<Intent>>{},
+      onShowFocusHighlight: (v) {
+        if (isTv) setState(() {});
+      },
+      child: _TabItemBase(
+        onTap: () {
+          if (isTv) _activateFocused();
+          widget.navigationShell.goBranch(branchIndex);
+        },
+        selected: selected,
+        focused: focused,
+        borderWidth: borderWidth,
+        borderColor: borderColor,
+        branchIndex: branchIndex,
+        navBg: navBg,
+        selectedBg: selectedBg,
+        textColor: textColor,
+        mutedColor: mutedColor,
+      ),
+    );
+  }
+
+  /// 搜索按钮（最后位置）。
+  Widget _buildSearchButton(BuildContext context, bool isDark, Color navBg,
+      Color selectedBg, Color textColor) {
+    final searchOrderPos = 4;
+    final focused = _focusedIndex == searchOrderPos;
+    final borderWidth = focused ? 1.5 : 0.0;
+    final borderColor = focused ? textColor.withValues(alpha: 0.5) : Colors.transparent;
+    final isTv = isTvPlatform;
+
+    return FocusableActionDetector(
+      focusNode: _focusNodes[searchOrderPos],
+      enabled: !widget.collapsed,
+      autofocus: isTv && searchOrderPos == _focusedIndex,
+      actions: isTv
+          ? <Type, Action<Intent>>{
+              ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
+                if (widget.collapsed) {
+                  widget.onExpand?.call();
+                } else {
+                  widget.navigationShell.goBranch(3);
+                }
+              }),
+            }
+          : <Type, Action<Intent>>{},
+      onShowFocusHighlight: (v) {
+        if (isTv) setState(() {});
+      },
+      child: _SearchButtonBase(
+        onTap: () {
+          if (widget.collapsed) {
+            widget.onExpand?.call();
+          } else {
+            widget.navigationShell.goBranch(3);
+          }
+        },
+        collapsed: widget.collapsed,
+        focused: focused,
+        borderWidth: borderWidth,
+        borderColor: borderColor,
+        selectedBg: selectedBg,
+        navBg: navBg,
+        textColor: textColor,
+      ),
+    );
+  }
+}
+
+/// 纯展示层 tab 项（逻辑抽离，方便复用）。
+class _TabItemBase extends StatelessWidget {
+  const _TabItemBase({
+    required this.onTap,
+    required this.selected,
+    required this.focused,
+    required this.borderWidth,
+    required this.borderColor,
+    required this.branchIndex,
+    required this.navBg,
+    required this.selectedBg,
+    required this.textColor,
+    required this.mutedColor,
+  });
+
+  final VoidCallback onTap;
+  final bool selected;
+  final bool focused;
+  final double borderWidth;
+  final Color borderColor;
+  final int branchIndex;
+  final Color navBg;
+  final Color selectedBg;
+  final Color textColor;
+  final Color mutedColor;
+
+  static const _labels = ['影视', '记录', '服务器', '搜索', '设置'];
+  static const _icons = [
+    Icons.movie_filter_rounded,
+    Icons.history_rounded,
+    Icons.dns_rounded,
+    Icons.search_rounded,
+    Icons.settings_rounded,
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final label = _labels[branchIndex];
+    final icon = _icons[branchIndex];
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? selectedBg : Colors.transparent,
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(color: borderColor, width: borderWidth),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 22, color: selected ? textColor : mutedColor),
+            if (selected) ...[
+              const SizedBox(width: 8),
+              Text(label, style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.w600)),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 搜索按钮纯展示层。
+class _SearchButtonBase extends StatelessWidget {
+  const _SearchButtonBase({
+    required this.onTap,
+    required this.collapsed,
+    required this.focused,
+    required this.borderWidth,
+    required this.borderColor,
+    required this.selectedBg,
+    required this.navBg,
+    required this.textColor,
+  });
+
+  final VoidCallback onTap;
+  final bool collapsed;
+  final bool focused;
+  final double borderWidth;
+  final Color borderColor;
+  final Color selectedBg;
+  final Color navBg;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          color: collapsed || focused ? selectedBg : navBg,
+          shape: BoxShape.circle,
+          border: Border.all(color: borderColor, width: borderWidth),
+        ),
+        child: Icon(
+          collapsed ? Icons.expand_less_rounded : Icons.search_rounded,
+          size: 22,
+          color: textColor,
+        ),
+      ),
+    );
+  }
+}
+
+/// TV 遥控器焦点控制器：MainShell 持有实例，通过 _FloatingTabBar 操作焦点。
+class _TabBarTvController {
+  // 当前聚焦的 tab 顺序位置（0..4）。
+  int focusedOrderIndex = 4; // 默认搜索
+  final List<FocusNode> focusNodes = [];
+  final int Function(int orderPos) tabAt;
+  final VoidCallback? onExpand;
+
+  _TabBarTvController({
+    required this.tabAt,
+    this.onExpand,
+  });
+
+  void moveFocus(int delta) {
+    final len = focusNodes.length;
+    if (focusedOrderIndex < 0 || focusedOrderIndex >= len) return;
+    focusedOrderIndex = (focusedOrderIndex + delta + len) % len;
+    focusNodes[focusedOrderIndex].requestFocus();
+  }
+
+  void activate() {
+    if (focusedOrderIndex < 0 || focusedOrderIndex >= focusNodes.length) return;
+    if (onExpand != null) {
+      // 如果 tab 栏处于收缩态，激活 = 展开。
+      // 收缩态由调用方处理，这里不做判断。
+    }
+  }
+}
+
+/// TV 遥控器键盘监听：包裹 tab 行，拦截方向键。
+class _TvTabRow extends StatelessWidget {
+  const _TvTabRow({
+    required this.moveLeft,
+    required this.moveRight,
+    required this.activate,
+    required this.children,
+  });
+
+  final VoidCallback moveLeft;
+  final VoidCallback moveRight;
+  final VoidCallback activate;
+  final List<Widget> children;
+
+  bool _handleKeyEvent(RawKeyEvent event) {
+    if (event is! RawKeyDownEvent) return false;
+    final logical = event.logicalKey;
+    if (logical == LogicalKeyboardKey.arrowLeft) {
+      moveLeft();
+      return true;
+    }
+    if (logical == LogicalKeyboardKey.arrowRight) {
+      moveRight();
+      return true;
+    }
+    if (logical == LogicalKeyboardKey.arrowUp ||
+        logical == LogicalKeyboardKey.enter ||
+        logical == LogicalKeyboardKey.numpadEnter ||
+        logical == LogicalKeyboardKey.gamepadA ||
+        logical == LogicalKeyboardKey.gamepadSouth) {
+      activate();
+      return true;
+    }
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RawKeyboardListener(
+      focusNode: FocusNode(),
+      autofocus: true,
+      onKeyEvent: (event) => _handleKeyEvent(event),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: children,
+      ),
+    );
+  }
+}
+
+/// TV 遥控器键盘监听：包裹整个 Scaffold，拦截 MENU 键将焦点转到底部 tab 栏。
+class _TvKeyboardWrapper extends StatelessWidget {
+  const _TvKeyboardWrapper({required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isTvPlatform) return child;
+    return RawKeyboardListener(
+      focusNode: FocusNode(),
+      autofocus: true,
+      onKeyEvent: (event) {
+        if (event is! RawKeyDownEvent) return KeyEventResult.ignored;
+        final logical = event.logicalKey;
+        // MENU 键 / GAMEPAD START：将焦点从主内容区转到 tab 栏。
+        if (logical == LogicalKeyboardKey.contextMenu ||
+            logical == LogicalKeyboardKey.gamepadStart) {
+          // 触发 _tabBarFocusNode 接收焦点（由父级 _MainShellState 持有）。
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: child,
     );
   }
 }

@@ -54,7 +54,10 @@ class UpdateInstaller {
   /// 当前平台应下载的资产名关键字（全部命中才算匹配）。null = 不支持。
   static List<String>? assetKeywords() {
     if (Platform.isAndroid) {
-      return const ['android', 'arm64-v8a'];
+      if (isTvPlatform) {
+        return const ['wjplayertv', 'android', 'armeabi-v7a'];
+      }
+      return const ['wjplayer-android', 'arm64-v8a'];
     }
     if (Platform.isWindows) return const ['windows'];
     if (Platform.isMacOS) return const ['macos'];
