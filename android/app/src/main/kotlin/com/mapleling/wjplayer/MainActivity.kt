@@ -201,10 +201,10 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        // TV 遥控器 MENU 键（KEYCODE_MENU / KEYCODE_BUTTON_MENU，部分设备映射不同）：
+        // TV ���� �遥控器 MENU ���� �� �� 键（KEYCODE_MENU / 137（KEYCODE_BUTTON_MENU 的值），部分设备映射不同）：
         // 通知 Flutter 聚焦底部 tab 栏（进服务器/设置页）。
         if (keyCode == KeyEvent.KEYCODE_MENU ||
-            keyCode == KeyEvent.KEYCODE_BUTTON_MENU
+            keyCode == 137
         ) {
             try {
                 tvKeyChannel?.invokeMethod("menu", null)
