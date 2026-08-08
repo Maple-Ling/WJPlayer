@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 import '../api/danmaku/danmaku_source.dart';
 import '../api/emby_api.dart';
 import '../providers/server_providers.dart';
+import 'server_error_classifier.dart';
 import 'server_batch_parser.dart';
 
 /// 把 [ParsedServerBlock] 变成已鉴权的 [ServerConfig] / 弹幕源配置。
@@ -79,7 +80,8 @@ class ServerBatchAdder {
         // 换下一条线路重试。
       }
     }
-    throw Exception('所有线路均登录失败：$lastErr');
+    final info = classifyServerError(lastErr, context: '登录服务器失败：');
+    throw Exception(info.message);
   }
 
   /// 服务器图标地址。优先用登录用户的头像——很多 Emby 服把品牌 logo 直接设成

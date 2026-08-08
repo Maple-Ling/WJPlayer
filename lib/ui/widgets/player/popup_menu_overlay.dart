@@ -1858,6 +1858,8 @@ class PopupMenuOverlay extends ConsumerWidget {
     required this.onDanmakuFloatingWhiteChanged,
     required this.onDanmakuScrollColorfulChanged,
     required this.onDanmakuScrollWhiteChanged,
+    required this.onDanmakuBottomColorfulChanged,
+    required this.onDanmakuBottomWhiteChanged,
     required this.onDanmakuStrokeChanged,
     required this.onAutoSkipChanged,
     required this.onDanmakuOpacityChanged,
@@ -1936,6 +1938,8 @@ class PopupMenuOverlay extends ConsumerWidget {
   final ValueChanged<bool> onDanmakuFloatingWhiteChanged;
   final ValueChanged<bool> onDanmakuScrollColorfulChanged;
   final ValueChanged<bool> onDanmakuScrollWhiteChanged;
+  final ValueChanged<bool> onDanmakuBottomColorfulChanged;
+  final ValueChanged<bool> onDanmakuBottomWhiteChanged;
   final ValueChanged<bool> onDanmakuStrokeChanged;
   final ValueChanged<bool> onAutoSkipChanged;
   final ValueChanged<double> onDanmakuOpacityChanged;

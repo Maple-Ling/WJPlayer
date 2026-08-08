@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +7,7 @@ import '../../../core/providers/app_providers.dart';
 import '../../../core/providers/server_providers.dart';
 import '../../../core/sources/feiniu_backend.dart';
 import '../../../core/utils/server_batch_adder.dart';
+import '../../../core/utils/server_error_classifier.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../widgets/server/protocol_address_field.dart';
 
@@ -537,66 +536,9 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
     }
   }
 
-  /// 规范化提示（沿用原添加页逻辑）。
+  /// 规范化提示：统一走 [classifyServerError]，区分「服务器不支持此客户端」
+  /// 与「服务器不兼容（非标准 Emby）」等归因类别。
   String _formatError(dynamic e) {
-    // DioException 原文（如 "DioException [connectionError]: ..."）对用户不友好，
-    // 先转成可读的中文提示，再走原有规则。
-    if (e is DioException) {
-      final status = e.response?.statusCode;
-      final type = e.type;
-      if (type == DioExceptionType.connectionTimeout ||
-          type == DioExceptionType.receiveTimeout ||
-          type == DioExceptionType.sendTimeout) {
-        return '连接服务器超时，请检查地址、端口和当前网络';
-      }
-      if (type == DioExceptionType.connectionError ||
-          type == DioExceptionType.unknown && e.message?.contains('SocketException') == true) {
-        return '无法连接服务器：\n1. 地址或端口是否正确\n2. 当前网络是否能访问该服务器';
-      }
-      // Dio 会把 TLS 握手失败（证书过期/自签/不受信任）归为 unknown——
-      // 其他第三方客户端默认不验证证书所以能连，这里明确提示解决办法。
-      if (type == DioExceptionType.unknown) {
-        final inner = e.error;
-        final msg = '${e.message ?? ''}'.toLowerCase();
-        final isTlsFailure = inner is HandshakeException ||
-            msg.contains('handshake') ||
-            msg.contains('certificate') ||
-            msg.contains('ssl');
-        if (isTlsFailure) {
-          return 'TLS 握手失败（服务器证书过期或不受信任）：\n1. 请确认服务器证书有效\n2. 或开启该服务器的「允许不安全 TLS」';
-        }
-      }
-      if (status != null) {
-        if (status == 400) {
-          return '服务器返回 400 错误，可能原因：\n1. URL 路径重复（如 /emby/emby）\n2. 服务器不是 Emby/Jellyfin\n3. 需要修改路径（尝试将路径改为 / 或其他）\n\n请检查浏览器中能访问的完整地址，确保和输入一致';
-        }
-        if (status == 401) return '认证失败：用户名或密码错误';
-        if (status == 403) return '访问被拒绝';
-        if (status == 404) return '服务器接口不存在，请检查 URL 和路径是否正确';
-        if (status == 502) return '服务器网关错误';
-        if (status >= 500) return '服务器内部错误（HTTP $status）';
-      }
-      return '服务器请求失败：${e.message ?? e.type.name}';
-    }
-    final msg = e.toString().toLowerCase();
-    if (msg.contains('failed host lookup') ||
-        msg.contains('no address associated with hostname') ||
-        msg.contains('name or service not known') ||
-        msg.contains('errno = 7')) {
-      return '无法解析服务器地址，请检查：\n1. 域名是否拼写正确\n2. 当前网络是否能访问该域名\n3. 是否需要使用 http 而非 https';
-    }
-    if (msg.contains('400')) {
-      return '服务器返回 400 错误，可能原因：\n1. URL 路径重复（如 /emby/emby）\n2. 服务器不是 Emby/Jellyfin\n3. 需要修改路径（尝试将路径改为 / 或其他）\n\n请检查浏览器中能访问的完整地址，确保和输入一致';
-    }
-    if (msg.contains('401')) return '认证失败：用户名或密码错误';
-    if (msg.contains('403')) return '访问被拒绝';
-    if (msg.contains('404')) return '服务器接口不存在，请检查 URL 和路径是否正确';
-    if (msg.contains('502')) return '服务器网关错误';
-    if (msg.contains('connection') ||
-        msg.contains('timeout') ||
-        msg.contains('refused')) {
-      return '网络连接失败，请检查：\n1. 服务器地址和端口是否正确\n2. 当前网络是否能访问该服务器';
-    }
-    return e.toString().replaceAll('Exception: ', '');
+    return classifyServerError(e, context: '添加服务器失败：').message;
   }
 }

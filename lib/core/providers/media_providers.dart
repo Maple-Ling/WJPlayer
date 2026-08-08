@@ -4,6 +4,7 @@ import 'package:dio/dio.dart' show CancelToken;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/api_interfaces.dart';
+import '../utils/server_error_classifier.dart';
 import '../api/discover/discover_models.dart';
 import 'discover_providers.dart';
 import '../providers/app_providers.dart';
@@ -541,7 +542,8 @@ final aggregateSearchByQueryProvider = StreamProvider.autoDispose
       }
       return MapEntry(server.name, filtered);
     } catch (e) {
-      AppLogger().w('AggregateSearch', '服务器「${server.name}」搜索失败: $e');
+      AppLogger().w('AggregateSearch',
+          '服务器「${server.name}」搜索失败: ${classifyServerError(e, context: '搜索').message}');
       return MapEntry(server.name, const <MediaItem>[]);
     }
   }
@@ -554,7 +556,8 @@ final aggregateSearchByQueryProvider = StreamProvider.autoDispose
       ).future);
       return FeiniuSearchGroup(server: server, entries: entries);
     } catch (error) {
-      AppLogger().w('AggregateSearch', '服务器「${server.name}」飞牛搜索失败: $error');
+      AppLogger().w('AggregateSearch',
+          '服务器「${server.name}」飞牛搜索失败: ${classifyServerError(error, context: '搜索').message}');
       return FeiniuSearchGroup(server: server, entries: const []);
     }
   }
@@ -621,7 +624,8 @@ final aggregateFeiniuSearchProvider = FutureProvider.autoDispose
       ).future);
       return FeiniuSearchGroup(server: server, entries: entries);
     } catch (error) {
-      AppLogger().w('AggregateSearch', '服务器「${server.name}」飞牛搜索失败: $error');
+      AppLogger().w('AggregateSearch',
+          '服务器「${server.name}」飞牛搜索失败: ${classifyServerError(error, context: '搜索').message}');
       return FeiniuSearchGroup(server: server, entries: const []);
     }
   }));
@@ -700,7 +704,8 @@ final aggregateSearchResultsProvider =
       }
       return MapEntry(server.name, filtered);
     } catch (e) {
-      AppLogger().w('AggregateSearch', '服务器「${server.name}」搜索失败: $e');
+      AppLogger().w('AggregateSearch',
+          '服务器「${server.name}」搜索失败: ${classifyServerError(e, context: '搜索').message}');
       return MapEntry(server.name, const <MediaItem>[]);
     }
   }
@@ -879,7 +884,8 @@ final rankingCrossServerMatchProvider = StreamProvider.autoDispose
         mediaSource: mediaSource,
       );
     } catch (e) {
-      AppLogger().w('RankingMatch', '服务器「${server.name}」搜索失败: $e');
+      AppLogger().w('RankingMatch',
+          '服务器「${server.name}」搜索失败: ${classifyServerError(e, context: '搜索').message}');
       return null;
     }
   }
