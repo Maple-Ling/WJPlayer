@@ -482,7 +482,26 @@ class VideoPlayerService extends ChangeNotifier {
 
     if (subtitleTrackId != null && subtitleTrackId.isNotEmpty) {
       try {
-        await _adapter!.selectSubtitleTrack(subtitleTrackId);
+        // 重建/重载后轨道需要时间从底层下发（ExoPlayer 整体重建竞态、mpv
+        // reload 同理）。先等字幕轨道出现再恢复，避免轨道尚未就绪时旧 id
+        // 匹配不到 → 字幕可选但未选中（"回后台再点播放字幕掉了"的根因）。
+        await _waitForSubtitleTracksReady();
+        // 轨道 id 可能是重建前生成的（groupIndex/序号可能变化）。先按旧 id 尝试，
+        // 失败（未找到/异常）再按字幕轨顺序索引兜底——内置字幕流顺序通常稳定。
+        final allTracks = subtitleTracks;
+        final idFound = allTracks.any((t) =>
+            t['id']?.toString() == subtitleTrackId ||
+            t['trackIndex']?.toString() == subtitleTrackId);
+        if (idFound) {
+          await _adapter!.selectSubtitleTrack(subtitleTrackId);
+        } else if (allTracks.isNotEmpty) {
+          _logger.i('VideoPlayerService',
+              '字幕轨 id $subtitleTrackId 重建后未找到，按顺序索引兜底恢复');
+          final fallbackId = allTracks.first['id']?.toString() ?? '';
+          if (fallbackId.isNotEmpty) {
+            await _adapter!.selectSubtitleTrack(fallbackId);
+          }
+        }
       } catch (e, stackTrace) {
         _logger.eWithStack(
           'VideoPlayerService',
@@ -492,6 +511,16 @@ class VideoPlayerService extends ChangeNotifier {
         );
       }
     }
+  }
+
+  /// 等待内置字幕轨道就绪（最多 ~9 秒）。轨道出现即返回，不会白等满。
+  Future<void> _waitForSubtitleTracksReady() async {
+    for (var i = 0; i < 30; i++) {
+      if (subtitleTracks.isNotEmpty) return;
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      if (_disposed) return;
+    }
+    _logger.w('VideoPlayerService', '等待字幕轨道就绪超时，继续恢复');
   }
 
   Future<bool> _tryActivateFallbackUrl({
