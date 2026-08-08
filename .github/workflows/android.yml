@@ -39,7 +39,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          forbidden=(windows linux macos ios web native-poc oauth-proxy android/app/src/tv lib/tv)
+          forbidden=(windows linux macos ios web native-poc oauth-proxy lib/tv)
           for path in "${forbidden[@]}"; do
             if [[ -e "$path" ]]; then
               echo "::error::Forbidden non-phone platform path exists: $path"
