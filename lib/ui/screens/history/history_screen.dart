@@ -5,15 +5,18 @@ import 'package:go_router/go_router.dart';
 import '../../../core/providers/media_providers.dart';
 import '../../../core/providers/server_providers.dart';
 import '../../../core/providers/watch_history_providers.dart';
+import '../../../core/services/tv_focus_manager.dart';
 import '../../../core/services/watch_history/watch_history_models.dart';
 import '../../../core/sources/feiniu_backend.dart';
 import '../../../core/sources/media_source_backend.dart';
 // SourcePlayback is no longer used; resume flows through unified detail.
 import '../../../core/sources/unified_media_adapter.dart';
+import '../../../core/utils/platform_utils.dart';
 import '../source/unified_media_screens.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../widgets/common/media_widgets.dart';
 import '../../widgets/common/tv_focusable.dart';
+import '../../widgets/common/tv_focus_widgets.dart';
 
 final watchHistoryRefreshProvider = StateProvider<int>((ref) => 0);
 final allWatchHistoryProvider =
@@ -74,6 +77,51 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   @override
   Widget build(BuildContext context) {
     final history = ref.watch(allWatchHistoryProvider);
+    final items = history.asData?.value;
+    // TV：数据就绪且有记录时注册焦点区域（工具行 + 记录卡片）。
+    final tvAreaReady = isTvPlatform && items != null && items.isNotEmpty;
+
+    return PopScope(
+      // TV：拦截返回键实现多选取消 → 回顶部刷新按钮 → 回状态栏的阶梯；
+      // 手机端不拦截（零副作用）。
+      canPop: !isTvPlatform,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _handleTvBack();
+      },
+      child: tvAreaReady
+          ? TvFocusArea(
+              // 记录条数变化时用 Key 重建区域（count 稳定约束）。
+              key: ValueKey('history_${items!.length}'),
+              id: 'history',
+              count: items.length + 1,
+              traversal: _historyTraversal(items.length),
+              // 长按 OK（记录卡片）：进入多选并选中当前卡片。
+              onLongPressAt: (index) {
+                if (index <= 0 || index > items.length) return;
+                final record = items[index - 1];
+                setState(() => _selectedIds.add(record.recordId));
+              },
+              // 顶部上键 / 最底部下键：退出页面区域回到状态栏。
+              onBoundary: (_) =>
+                  TvFocusManager.instance.enterArea('main_tabs'),
+              // Builder 保证取焦点节点时区域已注册（TvFocusArea 先挂载）。
+              child: Builder(
+                builder: (ctx) =>
+                    _buildScaffold(ctx, items, useTvArea: true),
+              ),
+            )
+          : _buildScaffold(context, items, useTvArea: false),
+    );
+  }
+
+  Widget _buildScaffold(
+    BuildContext ctx,
+    List<WatchHistoryRecord>? items, {
+    required bool useTvArea,
+  }) {
+    // 工具行焦点节点：0 = 刷新按钮（非多选）/ 删除按钮（多选）。
+    final toolNode = useTvArea ? ctx.getFocusNode('history', 0) : null;
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
@@ -81,14 +129,27 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         actions: [
           if (_selecting) ...[
             TextButton(onPressed: _selectAll, child: const Text('全选')),
-            IconButton(tooltip: '删除所选', onPressed: _deleteSelected, icon: const Icon(Icons.delete_rounded)),
-            IconButton(tooltip: '取消多选', onPressed: () => setState(_selectedIds.clear), icon: const Icon(Icons.close_rounded)),
-          ] else IconButton(
-            tooltip: '刷新记录',
-            onPressed: () =>
-                ref.read(watchHistoryRefreshProvider.notifier).state++,
-            icon: const Icon(Icons.refresh_rounded),
-          ),
+            // TV：工具行焦点 = 删除按钮（持续按上键可达，OK 执行删除）。
+            IconButton(
+              focusNode: toolNode,
+              tooltip: '删除所选',
+              onPressed: _deleteSelected,
+              icon: const Icon(Icons.delete_rounded),
+            ),
+            IconButton(
+              tooltip: '取消多选',
+              onPressed: () => setState(_selectedIds.clear),
+              icon: const Icon(Icons.close_rounded),
+            ),
+          ] else
+            // TV：工具行焦点 = 刷新按钮（状态栏上键退出/返回键回顶部即聚焦此处）。
+            IconButton(
+              focusNode: toolNode,
+              tooltip: '刷新记录',
+              onPressed: () =>
+                  ref.read(watchHistoryRefreshProvider.notifier).state++,
+              icon: const Icon(Icons.refresh_rounded),
+            ),
         ],
       ),
       body: RefreshIndicator(
@@ -99,16 +160,16 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         child: history.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (_, __) => const _HistoryEmpty(text: '记录加载失败，下拉重试'),
-          data: (items) => items.isEmpty
+          data: (data) => data.isEmpty
               ? const _HistoryEmpty(text: '播放后会自动记录在这里')
               : ListView.separated(
                   physics: const AlwaysScrollableScrollPhysics(),
                   padding: EdgeInsets.fromLTRB(
                       12, 8, 12, 20 + MediaQuery.paddingOf(context).bottom),
-                  itemCount: items.length,
+                  itemCount: data.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 8),
                   itemBuilder: (context, index) {
-                    final record = items[index];
+                    final record = data[index];
                     return Dismissible(
                       key: ValueKey(record.recordId),
                       direction: _selecting ? DismissDirection.none : DismissDirection.endToStart,
@@ -117,6 +178,9 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                       child: _HistoryTile(
                         record: record,
                         selected: _selectedIds.contains(record.recordId),
+                        focusNode: useTvArea
+                            ? ctx.getFocusNode('history', index + 1)
+                            : null,
                         onLongPress: () => setState(() => _selectedIds.add(record.recordId)),
                         onTap: _selecting ? () => setState(() { _selectedIds.contains(record.recordId) ? _selectedIds.remove(record.recordId) : _selectedIds.add(record.recordId); }) : null,
                       ),
@@ -126,6 +190,51 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         ),
       ),
     );
+  }
+
+  /// 历史页方向键遍历：0=工具行（刷新/删除），1..N=记录卡片。
+  /// 单列列表左右停留；顶部再上 / 底部再下返回 -1 触发区域边界（→ 状态栏）。
+  TraversalFn _historyTraversal(int recordCount) {
+    final last = recordCount;
+    return (current, direction) {
+      switch (direction) {
+        case DPad.up:
+          return current <= 0 ? -1 : current - 1;
+        case DPad.down:
+          return current >= last ? -1 : current + 1;
+        case DPad.left:
+        case DPad.right:
+          return current;
+      }
+    };
+  }
+
+  /// TV 返回键阶梯：
+  ///   多选 → 取消多选；卡片 → 顶部刷新按钮；工具行/无焦点 → 状态栏；
+  ///   状态栏 → 退出历史页回影视 tab（与全局返回语义一致）。
+  void _handleTvBack() {
+    final manager = TvFocusManager.instance;
+    if (manager.activeArea?.config.id == 'main_tabs') {
+      manager.exitArea('main_tabs');
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) context.go('/discover');
+      });
+      return;
+    }
+    if (_selecting) {
+      setState(_selectedIds.clear);
+      return;
+    }
+    final area = manager.getArea('history');
+    if (area != null && manager.activeArea?.config.id == 'history') {
+      if (area.focusIndex > 0) {
+        manager.focusAt('history', 0); // 回到顶部刷新按钮
+      } else {
+        manager.enterArea('main_tabs'); // 工具行：回状态栏
+      }
+      return;
+    }
+    manager.enterArea('main_tabs');
   }
 
   Future<void> _selectAll() async {
@@ -146,11 +255,20 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
 }
 
 class _HistoryTile extends ConsumerWidget {
-  const _HistoryTile({required this.record, this.selected = false, this.onTap, this.onLongPress});
+  const _HistoryTile({
+    required this.record,
+    this.selected = false,
+    this.onTap,
+    this.onLongPress,
+    this.focusNode,
+  });
   final WatchHistoryRecord record;
   final bool selected;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
+
+  /// TV 集中焦点管理注入的节点（null = 自建节点，走 Flutter 默认遍历）。
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -170,6 +288,7 @@ class _HistoryTile extends ConsumerWidget {
       onActivate: onTap ??
           (server == null ? () {} : () => _openDetail(context, ref, server)),
       borderRadius: 14,
+      focusNode: focusNode,
       child: Card(
         margin: EdgeInsets.zero,
         color: selected ? Theme.of(context).colorScheme.primaryContainer : null,

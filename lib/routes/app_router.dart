@@ -41,6 +41,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   attachPluginNavigator(_rootNavigatorKey);
   return GoRouter(
     navigatorKey: _rootNavigatorKey,
+    observers: [appRouteObserver],
     initialLocation: '/discover',
     onException: (context, state, router) => router.go('/discover'),
     routes: [
@@ -406,10 +407,27 @@ class _MainShellState extends ConsumerState<MainShell> {
   final ValueNotifier<bool> _tabCollapsed = ValueNotifier<bool>(false);
   DateTime? _lastBackPress;
 
-  // 菜单键处理器
+  // 菜单键处理器：进入/退出状态栏。
+  //   · 仅「影视页」（/discover）与「服务器内媒体页」（/home）允许 MENU 返回
+  //     状态栏；其他页面（记录/设置/服务器列表/搜索等）MENU 不触发状态栏，
+  //     由返回键/下键回状态栏（handled 吞掉，避免落到 tv_key_channel 默认分支）。
+  //   · 状态栏内部再按一次 MENU → 安全退出并归还进入前的区域焦点。
   KeyEventResult _handleMenuKey(LogicalKeyboardKey key, KeyEventSource source) {
     if (key != LogicalKeyboardKey.contextMenu) return KeyEventResult.ignored;
-    TvFocusManager.instance.toggleArea('main_tabs');
+    final path = widget.currentPath;
+    if (path != '/discover' && path != '/home') {
+      return KeyEventResult.handled;
+    }
+    final manager = TvFocusManager.instance;
+    if (manager.activeArea?.config.id == 'main_tabs') {
+      manager.exitArea('main_tabs');
+    } else {
+      // 进入状态栏：处于收缩/折叠状态时先自动展开，再切入焦点。
+      if (_tabCollapsed.value) {
+        _tabCollapsed.value = false;
+      }
+      manager.enterArea('main_tabs');
+    }
     return KeyEventResult.handled;
   }
 
@@ -487,6 +505,10 @@ class _MainShellState extends ConsumerState<MainShell> {
       ref.read(watchHistoryRefreshProvider.notifier).state++;
     }
     if (isTvPlatform && oldWidget.currentPath != widget.currentPath) {
+      _syncCurrentPageArea();
+      // 路由变化：旧的返回目标失效（如 tab 间切换后退出状态栏不应回到
+      // 已不可见的旧页面区域），清空后由下一次 MENU 进入重新记录。
+      TvFocusManager.instance.clearReturnTarget();
       final wasTabPage = switch (oldWidget.currentPath) {
         '/discover' ||
         '/history' ||
@@ -513,7 +535,31 @@ class _MainShellState extends ConsumerState<MainShell> {
   @override
   void initState() {
     super.initState();
-    if (isTvPlatform) registerGlobalKeyHandler(_handleMenuKey);
+    if (isTvPlatform) {
+      registerGlobalKeyHandler(_handleMenuKey);
+      _syncCurrentPageArea();
+    }
+  }
+
+  /// 同步"当前可见 tab 页面对应的页面区域"（供状态栏上键退出/下键切入）。
+  void _syncCurrentPageArea() {
+    switch (widget.currentPath) {
+      case '/history':
+        // 状态栏上键 → 刷新按钮（tools[0]）；下键 → 第一条记录（index 1）。
+        TvFocusManager.instance.setCurrentPageArea('history');
+      case '/servers':
+        // 状态栏上键 → 右上角加号按钮（tools[3]）；下键 → 第一张服务器卡（index 4）。
+        TvFocusManager.instance
+            .setCurrentPageArea('servers', topIndex: 3, firstCardIndex: 4);
+      case '/settings':
+        // 状态栏上/下键 → 第一张设置卡（界面）。
+        TvFocusManager.instance.setCurrentPageArea('settings');
+      case '/search':
+        // 状态栏上键 → 搜索框（tools[0]）；下键 → 搜索框（同）。
+        TvFocusManager.instance.setCurrentPageArea('search');
+      default:
+        TvFocusManager.instance.setCurrentPageArea(null);
+    }
   }
 
   @override
@@ -602,6 +648,12 @@ class _FloatingTabBarState extends ConsumerState<_FloatingTabBar> {
         traversal: TraversalPolicies.linear(_tabOrder.length),
         releaseOnUp: true,
         ignoreDown: true,
+        // 左右键移动焦点即直接切换对应页面（无需再按 OK 确认）。
+        onMoveActivated: (orderPos) {
+          if (mounted) {
+            widget.navigationShell.goBranch(_tabAt(orderPos));
+          }
+        },
       ),
     );
     TvFocusManager.instance.addListener(_onFocusChanged);

@@ -236,17 +236,18 @@ class _DiscoverGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return GridView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
+      clipBehavior: Clip.none,
       padding: EdgeInsets.fromLTRB(
+        14,
         12,
-        12,
-        12,
+        14,
         20 + MediaQuery.paddingOf(context).bottom,
       ),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 150,
         childAspectRatio: 0.56,
-        mainAxisSpacing: 14,
-        crossAxisSpacing: 10,
+        mainAxisSpacing: 18,
+        crossAxisSpacing: 12,
       ),
       itemCount: items.length,
       itemBuilder: (context, index) => _DiscoverCard(entry: items[index]),
@@ -270,65 +271,68 @@ class _DiscoverCard extends StatelessWidget {
         onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
           builder: (_) => ExternalMediaDetailScreen(entry: entry),
         )),
-        child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  MediaImage(
-                    imageUrl: entry.posterUrl,
-                    httpHeaders: entry.source == ReviewSource.douban
-                        ? const {'Referer': 'https://m.douban.com/'}
-                        : null,
-                    fit: BoxFit.cover,
-                  ),
-                  if (entry.rating != null && entry.rating! > 0)
-                    Positioned(
-                      top: 7,
-                      left: 7,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.76),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.star_rounded,
-                                size: 13, color: Color(0xFFFFC107)),
-                            const SizedBox(width: 2),
-                            Text(entry.rating!.toStringAsFixed(1),
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700)),
-                          ],
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    MediaImage(
+                      imageUrl: entry.posterUrl,
+                      httpHeaders: entry.source == ReviewSource.douban
+                          ? const {'Referer': 'https://m.douban.com/'}
+                          : null,
+                      fit: BoxFit.cover,
+                    ),
+                    if (entry.rating != null && entry.rating! > 0)
+                      Positioned(
+                        top: 7,
+                        left: 7,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.76),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.star_rounded,
+                                  size: 13, color: Color(0xFFFFC107)),
+                              const SizedBox(width: 2),
+                              Text(entry.rating!.toStringAsFixed(1),
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700)),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 7),
-          Text(entry.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style:
-                  const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-          if ((entry.year ?? '').isNotEmpty)
-            Text(entry.year!,
-                style: TextStyle(
-                    fontSize: 11,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
-        ],
-      ),
+            const SizedBox(height: 7),
+            Text(entry.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style:
+                    const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            if ((entry.year ?? '').isNotEmpty)
+              Text(entry.year!,
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant)),
+          ],
+        ),
+        ),
       ),
     );
   }
@@ -478,8 +482,9 @@ class _DiscoverCategoryScreenState extends ConsumerState<DiscoverCategoryScreen>
           data: (items) => GridView.builder(
             controller: _controller,
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.all(12),
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 150, childAspectRatio: 0.56, mainAxisSpacing: 14, crossAxisSpacing: 10),
+            clipBehavior: Clip.none,
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 150, childAspectRatio: 0.56, mainAxisSpacing: 18, crossAxisSpacing: 12),
             itemCount: items.length,
             itemBuilder: (_, index) => _DiscoverCard(entry: items[index]),
           ),

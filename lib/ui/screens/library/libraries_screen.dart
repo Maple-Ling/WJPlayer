@@ -132,12 +132,13 @@ class _GridView extends ConsumerWidget {
     final api = ref.read(apiClientProvider);
 
     return GridView.builder(
-      padding: const EdgeInsets.all(16),
+      clipBehavior: Clip.none,
+      padding: const EdgeInsets.all(18),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         childAspectRatio: 0.85,
-        crossAxisSpacing: 16,
-        mainAxisSpacing: 16,
+        crossAxisSpacing: 20,
+        mainAxisSpacing: 20,
       ),
       itemCount: libraries.length,
       itemBuilder: (context, index) {

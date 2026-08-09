@@ -12,6 +12,7 @@ class ProtocolAddressField extends StatefulWidget {
     this.onProtocolChanged,
     this.onPathExtracted,
     this.initialProtocol = ServerProtocol.https,
+    this.focusNode,
   });
 
   final TextEditingController controller;
@@ -23,6 +24,9 @@ class ProtocolAddressField extends StatefulWidget {
   /// 用于填入该线路的路径输入框；解析为空或 / 时不回调。
   final ValueChanged<String>? onPathExtracted;
   final ServerProtocol initialProtocol;
+
+  /// TV 集中焦点管理注入的地址输入框节点。
+  final FocusNode? focusNode;
 
   @override
   State<ProtocolAddressField> createState() => _ProtocolAddressFieldState();
@@ -107,6 +111,7 @@ class _ProtocolAddressFieldState extends State<ProtocolAddressField> {
         const SizedBox(height: 10),
         TextField(
           controller: widget.controller,
+          focusNode: widget.focusNode,
           keyboardType: TextInputType.url,
           autocorrect: false,
           enableSuggestions: false,

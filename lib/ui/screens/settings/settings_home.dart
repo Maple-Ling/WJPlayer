@@ -3,9 +3,61 @@ part of 'settings_screen.dart';
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
+  /// TV 设置卡片数（固定 6 张：界面/播放/弹幕/检查更新/备份与恢复/关于）。
+  static const int _cardCount = 6;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    // TV：设置页注册焦点区域（卡片线性导航，边界/返回 → 状态栏）。
+    final tvAreaReady = isTvPlatform;
+    return PopScope(
+      // TV：任意位置按返回键 → 回到状态栏；手机端不拦截（零副作用）。
+      canPop: !isTvPlatform,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        final manager = TvFocusManager.instance;
+        if (manager.activeArea?.config.id == 'main_tabs') {
+          manager.exitArea('main_tabs');
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted) context.go('/discover');
+          });
+          return;
+        }
+        manager.enterArea('main_tabs');
+      },
+      child: tvAreaReady
+          ? TvFocusArea(
+              id: 'settings',
+              count: _cardCount,
+              // 单列线性：顶部上键/底部「关于」下键 → 状态栏（onBoundary）。
+              traversal: (current, direction) {
+                switch (direction) {
+                  case DPad.up:
+                    return current > 0 ? current - 1 : -1;
+                  case DPad.down:
+                    return current < _cardCount - 1 ? current + 1 : -1;
+                  case DPad.left:
+                  case DPad.right:
+                    return current;
+                }
+              },
+              onBoundary: (_) =>
+                  TvFocusManager.instance.enterArea('main_tabs'),
+              // Builder 保证取焦点节点时区域已注册。
+              child: Builder(
+                builder: (ctx) => _buildList(ctx, ref),
+              ),
+            )
+          : _buildList(context, ref),
+    );
+  }
+
+  Widget _buildList(BuildContext ctx, WidgetRef ref) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final useTv = isTvPlatform &&
+        TvFocusManager.instance.getArea('settings') != null;
+    FocusNode? node(int i) => useTv ? ctx.getFocusNode('settings', i) : null;
     return Scaffold(
       backgroundColor:
           isDark ? AppColors.darkBackground : AppColors.lightBackground,
@@ -31,16 +83,16 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
             _SettingsGroup(children: [
-              _SettingsCard(icon: Icons.dashboard_customize_rounded, title: '界面', subtitle: '布局、语言与启动页', onTap: () => _showGeneralSettings(context)),
-              _SettingsCard(icon: Icons.play_circle_fill_rounded, title: '播放', subtitle: '内核、手势与播放行为', onTap: () => _showPlayerSettings(context)),
-              _SettingsCard(icon: Icons.chat_bubble_rounded, title: '弹幕', subtitle: '外观、屏蔽词与延迟', onTap: () => _showDanmakuSettings(context), showDivider: false),
+              _SettingsCard(focusNode: node(0), icon: Icons.dashboard_customize_rounded, title: '界面', subtitle: '布局、语言与启动页', onTap: () => _showGeneralSettings(context)),
+              _SettingsCard(focusNode: node(1), icon: Icons.play_circle_fill_rounded, title: '播放', subtitle: '内核、手势与播放行为', onTap: () => _showPlayerSettings(context)),
+              _SettingsCard(focusNode: node(2), icon: Icons.chat_bubble_rounded, title: '弹幕', subtitle: '外观、屏蔽词与延迟', onTap: () => _showDanmakuSettings(context), showDivider: false),
             ]),
             _SettingsGroup(children: [
-              _SettingsCard(icon: Icons.system_update_rounded, title: '检查更新', subtitle: '当前 $kCurrentAppVersion · 每 24 小时自动检查', onTap: () => _checkUpdate(context, ref), showDivider: false),
-              _SettingsCard(icon: Icons.restore_page_rounded, title: '备份与恢复', subtitle: '备份或恢复设置', onTap: () => _showBackupRestore(context)),
+              _SettingsCard(focusNode: node(3), icon: Icons.system_update_rounded, title: '检查更新', subtitle: '当前 $kCurrentAppVersion · 每 24 小时自动检查', onTap: () => _checkUpdate(context, ref), showDivider: false),
+              _SettingsCard(focusNode: node(4), icon: Icons.restore_page_rounded, title: '备份与恢复', subtitle: '备份或恢复设置', onTap: () => _showBackupRestore(context)),
             ]),
             _SettingsGroup(children: [
-              _SettingsCard(icon: Icons.info_rounded, title: '关于', subtitle: '版本、开源许可与致谢', onTap: () => _showAbout(context), showDivider: false),
+              _SettingsCard(focusNode: node(5), icon: Icons.info_rounded, title: '关于', subtitle: '版本、开源许可与致谢', onTap: () => _showAbout(context), showDivider: false),
             ]),
           ],
         ),
@@ -225,7 +277,8 @@ class _SettingsGroup extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
-      clipBehavior: Clip.antiAlias,
+      // Clip.none：TV 聚焦放大（TvFocusable 1.04）不被圆角容器裁切。
+      clipBehavior: Clip.none,
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkSurface : AppColors.lightSurface,
         borderRadius: BorderRadius.circular(22),
@@ -243,6 +296,7 @@ class _SettingsCard extends StatelessWidget {
     required this.subtitle,
     required this.onTap,
     this.showDivider = true,
+    this.focusNode,
   });
 
   final IconData icon;
@@ -250,6 +304,9 @@ class _SettingsCard extends StatelessWidget {
   final String subtitle;
   final VoidCallback onTap;
   final bool showDivider;
+
+  /// TV 集中焦点管理注入的节点（null = 手机端，不接区域）。
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -262,38 +319,48 @@ class _SettingsCard extends StatelessWidget {
       Color(0xFFAF52DE),
     ];
     final iconColor = iconColors[title.hashCode.abs() % iconColors.length];
-    return Column(
-      children: [
-        ListTile(
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-          leading: Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: iconColor,
-              borderRadius: BorderRadius.circular(14),
+    return TvFocusable(
+      // TV：聚焦时显示主题色描边 + 轻微放大（清晰可见的高亮标识）。
+      onActivate: onTap,
+      borderRadius: 22,
+      focusNode: focusNode,
+      child: Column(
+        children: [
+          ListTile(
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            leading: Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: iconColor,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(icon, color: Colors.white, size: 25),
             ),
-            child: Icon(icon, color: Colors.white, size: 25),
+            title:
+                Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+            subtitle: Text(
+              subtitle,
+              style: TextStyle(
+                  color:
+                      isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary),
+            ),
+            trailing: Icon(
+              Icons.chevron_right_rounded,
+              color: isDark ? const Color(0xFFB8B8BA) : const Color(0xFF8E8E93),
+            ),
+            onTap: onTap,
           ),
-          title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-          subtitle: Text(
-            subtitle,
-            style: TextStyle(color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary),
-          ),
-          trailing: Icon(
-            Icons.chevron_right_rounded,
-            color: isDark ? const Color(0xFFB8B8BA) : const Color(0xFF8E8E93),
-          ),
-          onTap: onTap,
-        ),
-        if (showDivider)
-          Divider(
-            height: 1,
-            indent: 80,
-            endIndent: 16,
-            color: isDark ? AppColors.darkDivider : AppColors.lightDivider,
-          ),
-      ],
+          if (showDivider)
+            Divider(
+              height: 1,
+              indent: 80,
+              endIndent: 16,
+              color: isDark ? AppColors.darkDivider : AppColors.lightDivider,
+            ),
+        ],
+      ),
     );
   }
 }

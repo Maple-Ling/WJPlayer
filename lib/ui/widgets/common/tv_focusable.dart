@@ -21,6 +21,7 @@ class TvFocusable extends StatefulWidget {
     this.enabled = true,
     this.onFocusChanged,
     this.autofocus = false,
+    this.focusNode,
   });
 
   /// 聚焦后确认（遥控 OK/Enter/Select）触发。
@@ -43,32 +44,54 @@ class TvFocusable extends StatefulWidget {
 
   final ValueChanged<bool>? onFocusChanged;
 
+  /// 外部注入的焦点节点（由 TvFocusArea/TvFocusManager 统一管理）。
+  /// 传入后本组件不再自建节点；节点生命周期归调用方，本组件不 dispose。
+  final FocusNode? focusNode;
+
   @override
   State<TvFocusable> createState() => _TvFocusableState();
 }
 
 class _TvFocusableState extends State<TvFocusable> {
-  final FocusNode _focusNode = FocusNode();
+  FocusNode? _externalNode;
+  late final FocusNode _internalNode = FocusNode();
   bool _focused = false;
+
+  FocusNode get _node => _externalNode ?? _internalNode;
 
   @override
   void initState() {
     super.initState();
     if (isTvPlatform) {
-      _focusNode.addListener(_onFocusChange);
+      _externalNode = widget.focusNode;
+      _node.addListener(_onFocusChange);
+    }
+  }
+
+  @override
+  void didUpdateWidget(TvFocusable oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!isTvPlatform || oldWidget.focusNode == widget.focusNode) return;
+    _node.removeListener(_onFocusChange);
+    _externalNode = widget.focusNode;
+    _node.addListener(_onFocusChange);
+    final hasFocus = _node.hasFocus;
+    if (hasFocus != _focused) {
+      _focused = hasFocus;
+      widget.onFocusChanged?.call(hasFocus);
     }
   }
 
   void _onFocusChange() {
     if (!mounted) return;
-    final hasFocus = _focusNode.hasFocus;
+    final hasFocus = _node.hasFocus;
     if (hasFocus != _focused) {
       setState(() => _focused = hasFocus);
       widget.onFocusChanged?.call(hasFocus);
     }
     if (hasFocus) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_focusNode.hasFocus) return;
+        if (!mounted || !_node.hasFocus) return;
         Scrollable.ensureVisible(
           context,
           duration: const Duration(milliseconds: 180),
@@ -81,9 +104,10 @@ class _TvFocusableState extends State<TvFocusable> {
   @override
   void dispose() {
     if (isTvPlatform) {
-      _focusNode.removeListener(_onFocusChange);
+      _node.removeListener(_onFocusChange);
     }
-    _focusNode.dispose();
+    // 外部节点归 TvFocusManager 管理，不在此 dispose。
+    _internalNode.dispose();
     super.dispose();
   }
 
@@ -110,28 +134,31 @@ class _TvFocusableState extends State<TvFocusable> {
           },
         ),
       },
-      child: AnimatedScale(
-        scale: isFocused ? widget.focusScale : 1.0,
-        duration: const Duration(milliseconds: 150),
-        curve: Curves.easeOutCubic,
-        child: Container(
-          foregroundDecoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(widget.borderRadius),
-            // 聚焦：主题色描边 + 柔光阴影（foregroundDecoration 不挤压内容布局）。
-            border: isFocused
-                ? Border.all(color: scheme.primary, width: 3)
-                : Border.all(color: Colors.transparent, width: 3),
-            boxShadow: isFocused
-                ? [
-                    BoxShadow(
-                      color: scheme.primary.withValues(alpha: 0.45),
-                      blurRadius: 18,
-                      spreadRadius: 1,
-                    ),
-                  ]
-                : null,
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: AnimatedScale(
+          scale: isFocused ? widget.focusScale : 1.0,
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOutCubic,
+          child: Container(
+            foregroundDecoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(widget.borderRadius),
+              // 聚焦：主题色描边 + 柔光阴影（foregroundDecoration 不挤压内容布局）。
+              border: isFocused
+                  ? Border.all(color: scheme.primary, width: 3)
+                  : Border.all(color: Colors.transparent, width: 3),
+              boxShadow: isFocused
+                  ? [
+                      BoxShadow(
+                        color: scheme.primary.withValues(alpha: 0.45),
+                        blurRadius: 18,
+                        spreadRadius: 1,
+                      ),
+                    ]
+                  : null,
+            ),
+            child: widget.child,
           ),
-          child: widget.child,
         ),
       ),
     );

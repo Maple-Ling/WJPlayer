@@ -340,14 +340,15 @@ class _FeiniuLibraryScreenState extends State<FeiniuLibraryScreen> {
                           ],
                         )
                       : GridView.builder(
-                          padding: const EdgeInsets.all(12),
+                          clipBehavior: Clip.none,
+                          padding: const EdgeInsets.all(14),
                           gridDelegate:
                               const SliverGridDelegateWithMaxCrossAxisExtent(
                             // 与首页 126dp 海报卡统一视觉尺寸；大屏仅增加列数。
                             maxCrossAxisExtent: 138,
                             childAspectRatio: 0.58,
-                            crossAxisSpacing: 10,
-                            mainAxisSpacing: 14,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 18,
                           ),
                           itemCount: _sortedItems.length,
                           itemBuilder: (_, index) => _FeiniuMediaCard(
@@ -593,12 +594,13 @@ class _FeiniuLibrarySection extends StatelessWidget {
           const SizedBox(height: 80, child: Center(child: Text('暂无内容')))
         else
           SizedBox(
-            height: 220,
+            height: 236,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+              clipBehavior: Clip.none,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
               itemCount: preview!.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
               itemBuilder: (_, index) => SizedBox(
                 width: 126,
                 child: _FeiniuMediaCard(

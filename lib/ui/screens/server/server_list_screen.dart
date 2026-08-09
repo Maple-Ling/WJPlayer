@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_reorderable_grid_view/widgets/widgets.dart';
@@ -8,12 +9,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/api/emby_api.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/providers/reveal_hidden_provider.dart';
+import '../../../core/services/tv_focus_manager.dart';
+import '../../../core/services/tv_key_channel.dart';
 import '../../../core/sources/feiniu_backend.dart';
 import '../../../core/sources/source_http.dart';
 import '../../../core/sources/source_kind.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/utils/platform_utils.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../widgets/common/media_widgets.dart';
+import '../../widgets/common/tv_focusable.dart';
+import '../../widgets/common/tv_focus_widgets.dart';
 
 /// 服务器列表页面
 class ServerListScreen extends ConsumerStatefulWidget {
@@ -32,6 +38,13 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
   // 双排长按拖动排序（flutter_reorderable_grid_view）需要共享 ScrollController。
   final ScrollController _gridScrollController = ScrollController();
 
+  /// TV 排序模式：长按 OK 进入，方向键移动卡片位置，OK/返回退出。
+  bool _sorting = false;
+  int _sortingIndex = 0;
+
+  /// 工具行元素数：0=标题「服务器」、1=布局切换、2=搜索、3=加号。
+  static const int _toolCount = 4;
+
   @override
   void initState() {
     super.initState();
@@ -43,13 +56,147 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
         await ref.read(currentServerProvider.notifier).loadFromSaved(servers);
       }
     });
+    if (isTvPlatform) registerGlobalKeyHandler(_handleMenuKey);
   }
 
   @override
   void dispose() {
+    if (isTvPlatform) unregisterGlobalKeyHandler(_handleMenuKey);
     _gridScrollController.dispose();
     super.dispose();
   }
+
+  /// TV 菜单键：服务器卡片聚焦时打开三点菜单（排序中屏蔽）。
+  KeyEventResult _handleMenuKey(LogicalKeyboardKey key, KeyEventSource source) {
+    if (key != LogicalKeyboardKey.contextMenu) return KeyEventResult.ignored;
+    if (_sorting) return KeyEventResult.handled;
+    final manager = TvFocusManager.instance;
+    final area = manager.activeArea;
+    if (area == null || area.config.id != 'servers') {
+      return KeyEventResult.ignored;
+    }
+    final index = area.focusIndex - _toolCount;
+    if (index < 0) return KeyEventResult.ignored;
+    final visible = _computeVisible();
+    if (index >= visible.length) return KeyEventResult.ignored;
+    _showServerMenu(context, ref, visible[index]);
+    return KeyEventResult.handled;
+  }
+
+  /// 与 build 一致的可见服务器计算（隐藏过滤 + 隐藏项排后）。
+  List<ServerConfig> _computeVisible() {
+    final allServers = ref.read(serverListProvider);
+    final revealHidden = ref.read(revealHiddenServersProvider);
+    var visible = _searchQuery.isEmpty
+        ? allServers
+        : allServers
+            .where((s) =>
+                s.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+                s.remark?.toLowerCase().contains(_searchQuery.toLowerCase()) ==
+                    true ||
+                s.activeLineUrl
+                    .toLowerCase()
+                    .contains(_searchQuery.toLowerCase()))
+            .toList();
+    if (!revealHidden) {
+      visible = visible.where((s) => !s.hidden).toList();
+    } else {
+      visible = [
+        ...visible.where((s) => !s.hidden),
+        ...visible.where((s) => s.hidden),
+      ];
+    }
+    return visible;
+  }
+
+  /// TV 排序：方向键移动当前抖动卡片位置（单排仅上下，双排上下左右）。
+  void _moveSortingCard(DPad direction) {
+    final visible = _computeVisible();
+    if (visible.isEmpty) return;
+    final i = _sortingIndex.clamp(0, visible.length - 1);
+    var target = i;
+    if (_gridLayout) {
+      switch (direction) {
+        case DPad.up:
+          target = i >= 2 ? i - 2 : i;
+        case DPad.down:
+          target = i + 2 < visible.length ? i + 2 : i;
+        case DPad.left:
+          target = i % 2 == 1 ? i - 1 : i;
+        case DPad.right:
+          target = (i % 2 == 0 && i + 1 < visible.length) ? i + 1 : i;
+      }
+    } else {
+      switch (direction) {
+        case DPad.up:
+          target = i > 0 ? i - 1 : i;
+        case DPad.down:
+          target = i + 1 < visible.length ? i + 1 : i;
+        case DPad.left:
+        case DPad.right:
+          return; // 单排不支持左右移动
+      }
+    }
+    if (target == i) return;
+    final ids = [for (final s in visible) s.id];
+    final moved = ids.removeAt(i);
+    ids.insert(target, moved);
+    ref.read(serverListProvider.notifier).reorderByVisibleIds(ids);
+    setState(() => _sortingIndex = target);
+    // 焦点跟随抖动卡片（区域不重建，索引即位置）。
+    TvFocusManager.instance.focusAt('servers', _toolCount + target);
+  }
+
+  void _exitSorting() {
+    if (!_sorting) return;
+    setState(() => _sorting = false);
+  }
+
+  /// TV 方向键遍历：0..3=工具行，4..=服务器卡片。
+  /// 工具行：左右线性、上→状态栏、下→第一张卡；
+  /// 卡片：单排上下线性（左右停留）、双排 2 列上下左右；首卡上→工具行加号、
+  /// 末卡下→状态栏。
+  TraversalFn _serversTraversal(int cardCount) {
+    return (current, direction) {
+      if (current < _toolCount) {
+        switch (direction) {
+          case DPad.left:
+            return current > 0 ? current - 1 : current;
+          case DPad.right:
+            return current < _toolCount - 1 ? current + 1 : current;
+          case DPad.up:
+            return -1; // 工具行上键 → 状态栏
+          case DPad.down:
+            return _toolCount; // 工具行下键 → 第一张卡
+        }
+      }
+      final ci = current - _toolCount;
+      if (_gridLayout) {
+        switch (direction) {
+          case DPad.up:
+            return ci >= 2 ? current - 2 : _toolCount - 1;
+          case DPad.down:
+            return ci + 2 < cardCount ? current + 2 : -1;
+          case DPad.left:
+            return ci % 2 == 1 ? current - 1 : current;
+          case DPad.right:
+            return (ci % 2 == 0 && ci + 1 < cardCount) ? current + 1 : current;
+        }
+      }
+      switch (direction) {
+        case DPad.up:
+          return ci > 0 ? current - 1 : _toolCount - 1;
+        case DPad.down:
+          return ci + 1 < cardCount ? current + 1 : -1;
+        case DPad.left:
+        case DPad.right:
+          return current; // 单排左右停留
+      }
+    };
+  }
+
+  /// 排序模式：方向键一律返回 -1，由 onBoundary 转 _moveSortingCard（焦点不动）。
+  TraversalFn _sortingTraversal() => (current, direction) => -1;
 
   /// 连点三次顶部“服务器”标题：切换隐藏服务器显示/隐藏（纯功能，无提示）。
   void _onTitleTap() {
@@ -116,6 +263,80 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
       visible = [...visible.where((s) => !s.hidden), ...visible.where((s) => s.hidden)];
     }
 
+    // TV：非搜索且有可见服务器时注册焦点区域（工具行 + 服务器卡片）。
+    final tvAreaReady = isTvPlatform && !_isSearching && visible.isNotEmpty;
+
+    return PopScope(
+      // TV：拦截返回键——排序中退出排序；任意位置返回 → 状态栏
+      // （与记录/设置/搜索页一致）；状态栏内返回 → 退出页面回影视 tab。
+      // 手机端不拦截（零副作用）。
+      canPop: !isTvPlatform,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        final manager = TvFocusManager.instance;
+        if (manager.activeArea?.config.id == 'main_tabs') {
+          manager.exitArea('main_tabs');
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) context.go('/discover');
+          });
+          return;
+        }
+        if (_sorting) {
+          _exitSorting();
+          return;
+        }
+        manager.enterArea('main_tabs');
+      },
+      child: tvAreaReady
+          ? TvFocusArea(
+              // 布局/排序/数量变化时用 Key 重建区域（count 与 traversal 稳定）。
+              key: ValueKey('servers_${visible.length}_$_gridLayout$_sorting'),
+              id: 'servers',
+              count: _toolCount + visible.length,
+              traversal: _sorting
+                  ? _sortingTraversal()
+                  : _serversTraversal(visible.length),
+              // 长按 OK（服务器卡片）：进入排序模式（卡片抖动，方向键移动位置）。
+              onLongPressAt: (index) {
+                if (_sorting || index < _toolCount) return;
+                if (index - _toolCount >= visible.length) return;
+                setState(() {
+                  _sorting = true;
+                  _sortingIndex = index - _toolCount;
+                });
+              },
+              // 边界（工具行上/末卡下）：回状态栏；排序中：方向键移动卡片。
+              onBoundary: (direction) {
+                if (_sorting) {
+                  _moveSortingCard(direction);
+                } else {
+                  TvFocusManager.instance.enterArea('main_tabs');
+                }
+              },
+              // Builder 保证取焦点节点时区域已注册（TvFocusArea 先挂载）。
+              child: Builder(
+                builder: (ctx) => _buildScaffold(
+                  ctx,
+                  visible,
+                  useTvArea: true,
+                ),
+              ),
+            )
+          : _buildScaffold(context, visible, useTvArea: false),
+    );
+  }
+
+  Widget _buildScaffold(
+    BuildContext ctx,
+    List<ServerConfig> visible, {
+    required bool useTvArea,
+  }) {
+    // 工具行节点：0=标题「服务器」、1=布局切换、2=搜索、3=加号。
+    final titleNode = useTvArea ? ctx.getFocusNode('servers', 0) : null;
+    final layoutNode = useTvArea ? ctx.getFocusNode('servers', 1) : null;
+    final searchNode = useTvArea ? ctx.getFocusNode('servers', 2) : null;
+    final addNode = useTvArea ? ctx.getFocusNode('servers', 3) : null;
+
     return Scaffold(
       appBar: AppBar(
         title: _isSearching
@@ -131,22 +352,37 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
                     color: Theme.of(context).textTheme.bodyLarge?.color),
                 onChanged: (value) => setState(() => _searchQuery = value),
               )
-            : GestureDetector(
-                onTap: _onTitleTap,
-                child: const Text('服务器'),
+            : // TV：标题聚焦时连按三下 OK 切换隐藏服务器显隐。
+              TvFocusable(
+                onActivate: _onTitleTap,
+                borderRadius: 8,
+                focusNode: titleNode,
+                child: GestureDetector(
+                  onTap: _onTitleTap,
+                  child: const Padding(
+                    padding:
+                        EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: Text('服务器'),
+                  ),
+                ),
               ),
         actions: [
           if (!_isSearching)
             IconButton(
+              focusNode: layoutNode,
               tooltip: _gridLayout ? '切换单排' : '切换双排',
-              icon: Icon(_gridLayout ? Icons.view_agenda_rounded : Icons.grid_view_rounded),
+              icon: Icon(_gridLayout
+                  ? Icons.view_agenda_rounded
+                  : Icons.grid_view_rounded),
               onPressed: () {
                 final next = !_gridLayout;
                 setState(() => _gridLayout = next);
-                AppPreferencesStore.instance.setString('wjplayer_server_layout', next ? 'grid' : 'list');
+                AppPreferencesStore.instance.setString(
+                    'wjplayer_server_layout', next ? 'grid' : 'list');
               },
             ),
           IconButton(
+            focusNode: searchNode,
             icon: Icon(_isSearching ? Icons.close : Icons.search),
             onPressed: () {
               setState(() {
@@ -158,6 +394,7 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
           if (!_isSearching) ...[
             // 下载入口已移除，右侧保留搜索与添加。
             IconButton(
+              focusNode: addNode,
               icon: const Icon(Icons.add),
               onPressed: () {
                 context.push('/add');
@@ -168,7 +405,7 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
       ),
       body: visible.isEmpty
           ? _buildEmptyState(context)
-          : _buildServerList(context, visible),
+          : _buildServerList(ctx, visible, useTvArea: useTvArea),
     );
   }
 
@@ -203,7 +440,11 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
     );
   }
 
-  Widget _buildServerList(BuildContext context, List<ServerConfig> servers) {
+  Widget _buildServerList(
+    BuildContext ctx,
+    List<ServerConfig> servers, {
+    required bool useTvArea,
+  }) {
     // 双排（grid）：flutter_reorderable_grid_view 支持长按单卡片拖动排序；
     // 单排：官方 ReorderableListView。排序结果统一走
     // serverListProvider.reorderByVisibleIds（按可见列表 id 重排，
@@ -211,13 +452,19 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
     if (_gridLayout) {
       return ReorderableBuilder<ServerConfig>(
         children: [
-          for (final server in servers)
+          for (var i = 0; i < servers.length; i++)
             _ServerCard(
-              key: ValueKey(server.id),
-              server: server,
+              key: ValueKey(servers[i].id),
+              server: servers[i],
               compact: true,
-              onTap: () => _openServer(context, server),
-              onMoreTap: () => _showServerMenu(context, ref, server),
+              focusNode: useTvArea
+                  ? ctx.getFocusNode('servers', _toolCount + i)
+                  : null,
+              sorting: _sorting && i == _sortingIndex,
+              onTap: _sorting
+                  ? _exitSorting
+                  : () => _openServer(context, servers[i]),
+              onMoreTap: () => _showServerMenu(context, ref, servers[i]),
             ),
         ],
         scrollController: _gridScrollController,
@@ -238,11 +485,12 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
         },
         builder: (children) => GridView(
           controller: _gridScrollController,
-          padding: const EdgeInsets.all(12),
+          clipBehavior: Clip.none,
+          padding: const EdgeInsets.all(14),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
+            crossAxisSpacing: 14,
+            mainAxisSpacing: 14,
             childAspectRatio: 1.12,
           ),
           children: children,
@@ -268,7 +516,13 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
         return _ServerCard(
           key: ValueKey(server.id),
           server: server,
-          onTap: () => _openServer(context, server),
+          focusNode: useTvArea
+              ? ctx.getFocusNode('servers', _toolCount + index)
+              : null,
+          sorting: _sorting && index == _sortingIndex,
+          onTap: _sorting
+              ? _exitSorting
+              : () => _openServer(context, server),
           onMoreTap: () => _showServerMenu(context, ref, server),
         );
       },
@@ -293,7 +547,8 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
+            _MenuTile(
+              autofocus: true,
               leading: const Icon(Icons.edit),
               title: const Text('编辑信息'),
               onTap: () {
@@ -301,7 +556,7 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
                 context.push('/edit/${server.id}');
               },
             ),
-            ListTile(
+            _MenuTile(
               leading: const Icon(Icons.notes),
               title: const Text('修改备注'),
               onTap: () {
@@ -309,7 +564,7 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
                 _showEditRemarkDialog(context, ref, server);
               },
             ),
-            ListTile(
+            _MenuTile(
               leading: Icon(
                   server.hidden
                       ? Icons.visibility_rounded
@@ -332,7 +587,7 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
                 }
               },
             ),
-            ListTile(
+            _MenuTile(
               leading: Icon(Icons.delete,
                   color: Theme.of(context).colorScheme.error),
               title: Text('删除',
@@ -617,12 +872,20 @@ class _ServerCard extends ConsumerWidget {
   final VoidCallback onTap;
   final VoidCallback onMoreTap;
 
+  /// TV 集中焦点管理注入的节点（null = 自建节点，走 Flutter 默认遍历）。
+  final FocusNode? focusNode;
+
+  /// TV 排序模式：卡片抖动。
+  final bool sorting;
+
   const _ServerCard({
     super.key,
     required this.server,
     required this.onTap,
     required this.onMoreTap,
     this.compact = false,
+    this.focusNode,
+    this.sorting = false,
   });
 
   String _date(DateTime value) {
@@ -655,15 +918,21 @@ class _ServerCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final stats = ref.watch(serverCardStatsProvider(server.id));
-    return Card(
-      margin: EdgeInsets.only(bottom: compact ? 0 : 12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppTheme.borderRadiusLarge),
-        child: Padding(
-          padding: EdgeInsets.all(compact ? 8 : 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return TvFocusable(
+      onActivate: onTap,
+      borderRadius: 14,
+      focusNode: focusNode,
+      child: _Shake(
+        enabled: sorting,
+        child: Card(
+          margin: EdgeInsets.only(bottom: compact ? 0 : 12),
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(AppTheme.borderRadiusLarge),
+            child: Padding(
+              padding: EdgeInsets.all(compact ? 8 : 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(children: [
                 Container(
@@ -747,6 +1016,97 @@ class _ServerCard extends ConsumerWidget {
           ),
         ),
       ),
+      ),
+      ),
+    );
+  }
+}
+
+/// 三点菜单项：TV 上可聚焦（OK 触发），手机端原样 ListTile。
+class _MenuTile extends StatelessWidget {
+  const _MenuTile({
+    required this.leading,
+    required this.title,
+    required this.onTap,
+    this.autofocus = false,
+  });
+  final Widget leading;
+  final Widget title;
+  final VoidCallback onTap;
+  final bool autofocus;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isTvPlatform) {
+      return ListTile(leading: leading, title: title, onTap: onTap);
+    }
+    return TvFocusable(
+      onActivate: onTap,
+      borderRadius: 12,
+      autofocus: autofocus,
+      child: ListTile(
+        leading: leading,
+        title: title,
+        onTap: onTap,
+        // TV 上不显示 ListTile 自身的按压水波纹（由 TvFocusable 描边指示）。
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+      ),
+    );
+  }
+}
+
+/// TV 排序模式抖动动画：水平往返 + 垂直正弦微抖。
+class _Shake extends StatefulWidget {
+  const _Shake({required this.child, this.enabled = false});
+  final Widget child;
+  final bool enabled;
+
+  @override
+  State<_Shake> createState() => _ShakeState();
+}
+
+class _ShakeState extends State<_Shake> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 160),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.enabled) _controller.repeat(reverse: true);
+  }
+
+  @override
+  void didUpdateWidget(_Shake oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.enabled && !_controller.isAnimating) {
+      _controller.repeat(reverse: true);
+    } else if (!widget.enabled && _controller.isAnimating) {
+      _controller.stop();
+      _controller.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        if (!widget.enabled) return child!;
+        final t = _controller.value; // 0..1 往返
+        final dx = (t * 2 - 1) * 2.4; // -2.4..2.4
+        final dy = math.sin(t * math.pi * 2) * 1.4;
+        return Transform.translate(offset: Offset(dx, dy), child: child);
+      },
+      child: widget.child,
     );
   }
 }

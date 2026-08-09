@@ -46,6 +46,8 @@ class TvFocusArea extends StatefulWidget {
     required this.count,
     required this.traversal,
     this.onFocusChanged,
+    this.onLongPressAt,
+    this.onBoundary,
     this.child,
     super.key,
   });
@@ -57,6 +59,12 @@ class TvFocusArea extends StatefulWidget {
   /// 焦点索引变更回调
   final ValueChanged<int>? onFocusChanged;
 
+  /// 长按 OK/Enter（按键重复事件）时以当前索引回调。
+  final ValueChanged<int>? onLongPressAt;
+
+  /// 遍历到达区域边界（traversal 返回 -1）时回调，用于区域间衔接。
+  final ValueChanged<DPad>? onBoundary;
+
   final Widget? child;
 
   @override
@@ -67,6 +75,7 @@ class _TvFocusAreaState extends State<TvFocusArea> {
   @override
   void initState() {
     super.initState();
+    if (!isTvPlatform) return; // 手机端零副作用：不注册焦点区域。
 
     // 焦点区域：注册后仅创建 FocusNode 集合，焦点行为由 [TvFocusManager] 集中
     // 管理（焦点索引、方向键遍历、初始/恢复聚焦）。
@@ -76,8 +85,36 @@ class _TvFocusAreaState extends State<TvFocusArea> {
         count: widget.count,
         traversal: widget.traversal,
         onFocusChanged: widget.onFocusChanged,
+        onLongPressAt: widget.onLongPressAt,
+        onBoundary: widget.onBoundary,
       ),
     );
+    _autoActivate();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (isTvPlatform) _autoActivate();
+  }
+
+  /// 区域就绪后自动激活（首次进入页面即获得初始焦点）；其他区域正在使用
+  /// （其节点持有系统焦点）或本页被上层页面覆盖时不抢占。
+  void _autoActivate() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !isTvPlatform) return;
+      final manager = TvFocusManager.instance;
+      if (manager.activeArea?.config.id == widget.id) return;
+      if (manager.hasManagedFocus) {
+        final active = manager.activeArea;
+        if (active != null && active.nodes[active.focusIndex].hasFocus) {
+          return; // 底部栏等其他区域正在使用，不抢占。
+        }
+      }
+      final route = ModalRoute.of(context);
+      if (route != null && !route.isCurrent) return; // 被上层页面覆盖。
+      manager.switchArea(widget.id);
+    });
   }
 
   @override
@@ -91,7 +128,7 @@ class _TvFocusAreaState extends State<TvFocusArea> {
 
   @override
   void dispose() {
-    TvFocusManager.instance.unregisterArea(widget.id);
+    if (isTvPlatform) TvFocusManager.instance.unregisterArea(widget.id);
     super.dispose();
   }
 
@@ -120,6 +157,126 @@ extension TvFocusNodeX on BuildContext {
   /// 获取指定区域的当前焦点索引
   int? currentFocusIndex(String areaId) {
     return TvFocusManager.instance.getArea(areaId)?.focusIndex;
+  }
+}
+
+// ─── 简化可聚焦卡片 ───
+
+/// TV 两段式输入框包装：聚焦（区域节点）时**仅显示高亮描边**，绝不直接进入
+/// 键盘输入；用户按 OK 键后才激活内部编辑器（聚焦 TextField 并打开 IME）。
+/// 手机端直接渲染编辑器（零副作用）。
+class TvInputField extends StatefulWidget {
+  const TvInputField({
+    super.key,
+    required this.focusNode,
+    required this.buildEditor,
+    this.borderRadius = 14,
+  });
+
+  /// 区域焦点节点（聚焦态：仅高亮，不进入输入）。
+  final FocusNode focusNode;
+
+  /// 构建内部编辑器（接收内部编辑节点，交给 TextField 的 focusNode）。
+  final Widget Function(BuildContext context, FocusNode editorNode)
+      buildEditor;
+
+  final double borderRadius;
+
+  @override
+  State<TvInputField> createState() => _TvInputFieldState();
+}
+
+class _TvInputFieldState extends State<TvInputField> {
+  final FocusNode _editorNode = FocusNode();
+  bool _focused = false;
+  bool _editing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (isTvPlatform) {
+      widget.focusNode.addListener(_onOuterChange);
+      _editorNode.addListener(_onEditorChange);
+    }
+  }
+
+  @override
+  void didUpdateWidget(TvInputField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (isTvPlatform && oldWidget.focusNode != widget.focusNode) {
+      oldWidget.focusNode.removeListener(_onOuterChange);
+      widget.focusNode.addListener(_onOuterChange);
+    }
+  }
+
+  @override
+  void dispose() {
+    if (isTvPlatform) {
+      widget.focusNode.removeListener(_onOuterChange);
+      _editorNode.removeListener(_onEditorChange);
+    }
+    _editorNode.dispose();
+    super.dispose();
+  }
+
+  void _onOuterChange() {
+    if (!mounted) return;
+    final has = widget.focusNode.hasFocus;
+    if (has != _focused) setState(() => _focused = has);
+    if (has) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !widget.focusNode.hasFocus) return;
+        Scrollable.ensureVisible(
+          context,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+        );
+      });
+    }
+  }
+
+  void _onEditorChange() {
+    if (!mounted) return;
+    final editing = _editorNode.hasFocus;
+    if (editing != _editing) setState(() => _editing = editing);
+  }
+
+  /// OK 键：从"聚焦高亮"进入"编辑"（打开键盘）。
+  void _activate() {
+    if (!isTvPlatform || _editing) return;
+    _editorNode.requestFocus();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isTvPlatform) {
+      return widget.buildEditor(context, _editorNode);
+    }
+    final scheme = Theme.of(context).colorScheme;
+    return FocusableActionDetector(
+      focusNode: widget.focusNode,
+      actions: {
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (_) {
+            _activate();
+            return null;
+          },
+        ),
+      },
+      child: Container(
+        foregroundDecoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(widget.borderRadius),
+          // 聚焦（非编辑）：主题色描边；编辑态交给 TextField 自身 focusedBorder。
+          border: Border.all(
+            color: _focused && !_editing
+                ? scheme.primary
+                : Colors.transparent,
+            width: 3,
+          ),
+        ),
+        child: widget.buildEditor(context, _editorNode),
+      ),
+    );
   }
 }
 
@@ -224,27 +381,30 @@ class _TvFocusCardState extends State<TvFocusCard> {
           },
         ),
       },
-      child: AnimatedScale(
-        scale: isFocused ? widget.focusScale : 1.0,
-        duration: const Duration(milliseconds: 150),
-        curve: Curves.easeOutCubic,
-        child: Container(
-          foregroundDecoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(widget.borderRadius),
-            border: isFocused
-                ? Border.all(color: scheme.primary, width: 3)
-                : Border.all(color: Colors.transparent, width: 3),
-            boxShadow: isFocused
-                ? [
-                    BoxShadow(
-                      color: scheme.primary.withValues(alpha: 0.45),
-                      blurRadius: 18,
-                      spreadRadius: 1,
-                    ),
-                  ]
-                : null,
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: AnimatedScale(
+          scale: isFocused ? widget.focusScale : 1.0,
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOutCubic,
+          child: Container(
+            foregroundDecoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(widget.borderRadius),
+              border: isFocused
+                  ? Border.all(color: scheme.primary, width: 3)
+                  : Border.all(color: Colors.transparent, width: 3),
+              boxShadow: isFocused
+                  ? [
+                      BoxShadow(
+                        color: scheme.primary.withValues(alpha: 0.45),
+                        blurRadius: 18,
+                        spreadRadius: 1,
+                      ),
+                    ]
+                  : null,
+            ),
+            child: widget.child,
           ),
-          child: widget.child,
         ),
       ),
     );
@@ -271,6 +431,19 @@ class TvKeyboardListener extends StatelessWidget {
       onKeyEvent: (node, event) {
         if (event is! KeyDownEvent) return KeyEventResult.ignored;
         final key = event.logicalKey;
+
+        // 长按 OK/Enter（按键重复事件）：通知当前焦点区域处理
+        // （如历史页长按 OK 进入多选删除）。
+        if (event.repeat &&
+            (key == LogicalKeyboardKey.enter ||
+                key == LogicalKeyboardKey.select)) {
+          final manager = TvFocusManager.instance;
+          final area = manager.activeArea;
+          if (area != null && area.config.onLongPressAt != null) {
+            area.config.onLongPressAt!(area.focusIndex);
+            return KeyEventResult.handled;
+          }
+        }
 
         if (dispatchGlobalTvKey(key, KeyEventSource.flutter) ==
             KeyEventResult.handled) {

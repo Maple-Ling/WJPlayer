@@ -325,10 +325,11 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
     final end = (_episodeRangeStart + 9).clamp(_episodeRangeStart, season.episodes.length);
     final visible = season.episodes.where((episode) =>
         episode.number >= _episodeRangeStart && episode.number <= end).toList();
-    return SizedBox(height: 220, child: ListView.separated(
+    return SizedBox(height: 232, child: ListView.separated(
       scrollDirection: Axis.horizontal,
+      clipBehavior: Clip.none,
       itemCount: visible.length,
-      separatorBuilder: (_, __) => const SizedBox(width: 8),
+      separatorBuilder: (_, __) => const SizedBox(width: 10),
       itemBuilder: (_, index) {
         final episode = visible[index];
         final selected = _episode?.number == episode.number;
@@ -403,7 +404,12 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
 
   Widget _gallery(List<String> images) => SizedBox(height: 150, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: images.length, separatorBuilder: (_, __) => const SizedBox(width: 9), itemBuilder: (_, index) => TvFocusable(onActivate: () => _showImage(images, index), borderRadius: 18, child: InkWell(onTap: () => _showImage(images, index), child: AspectRatio(aspectRatio: 16 / 9, child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaImage(imageUrl: images[index], fit: BoxFit.cover, cacheWidth: 320)))))));
 
-  Widget _recommendations(List<DiscoverEntry> items) => SizedBox(height: 180, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: items.length, separatorBuilder: (_, __) => const SizedBox(width: 8), itemBuilder: (_, index) { final item = items[index]; return TvFocusable(onActivate: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ExternalMediaDetailScreen(entry: item))), borderRadius: 18, child: InkWell(onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ExternalMediaDetailScreen(entry: item))), child: SizedBox(width: 100, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaImage(imageUrl: item.posterUrl, fit: BoxFit.cover, cacheWidth: 200))), const SizedBox(height: 8), Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)), Text(item.year ?? '', style: const TextStyle(color: Colors.black54))])))); }));
+  Widget _recommendations(List<DiscoverEntry> items) => SizedBox(height: 196, child: ListView.separated(
+      scrollDirection: Axis.horizontal,
+      clipBehavior: Clip.none,
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      itemCount: items.length,
+      separatorBuilder: (_, __) => const SizedBox(width: 10), itemBuilder: (_, index) { final item = items[index]; return TvFocusable(onActivate: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ExternalMediaDetailScreen(entry: item))), borderRadius: 18, child: InkWell(onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ExternalMediaDetailScreen(entry: item))), child: SizedBox(width: 100, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaImage(imageUrl: item.posterUrl, fit: BoxFit.cover, cacheWidth: 200))), const SizedBox(height: 8), Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)), Text(item.year ?? '', style: const TextStyle(color: Colors.black54))])))); }));
 
   Widget _mediaInfo(ExternalMediaDetail detail) {
     final values = <(String, String)>[

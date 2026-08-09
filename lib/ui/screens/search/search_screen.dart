@@ -5,13 +5,17 @@ import '../../../core/api/api_interfaces.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/providers/media_providers.dart';
 import '../../../core/providers/server_providers.dart';
+import '../../../core/services/tv_focus_manager.dart';
 import '../../../core/sources/media_source_backend.dart';
 import '../../../core/theme/app_motion.dart';
+import '../../../core/utils/platform_utils.dart';
 import '../source/unified_media_screens.dart';
 import '../../../core/widgets/app_shimmer.dart';
 import '../../utils/media_helpers.dart';
 import '../../widgets/common/media_widgets.dart';
 import '../../widgets/common/server_group_header.dart';
+import '../../widgets/common/tv_focusable.dart';
+import '../../widgets/common/tv_focus_widgets.dart';
 
 /// 搜索页（含聚合搜索）
 class SearchScreen extends ConsumerStatefulWidget {
@@ -46,50 +50,132 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final isAggregate = ref.watch(aggregateSearchProvider);
     final searchResults = ref.watch(searchResultsProvider);
     final searchHistory = ref.watch(searchHistoryProvider);
-    
+    // TV：注册焦点区域（0=搜索框、1=聚合开关），上下/边界 → 状态栏。
+    final tvAreaReady = isTvPlatform;
+    return PopScope(
+      // TV：选框聚焦时按返回键 → 直接回到状态栏；手机端不拦截。
+      canPop: !isTvPlatform,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        final manager = TvFocusManager.instance;
+        if (manager.activeArea?.config.id == 'main_tabs') {
+          manager.exitArea('main_tabs');
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted) context.go('/discover');
+          });
+          return;
+        }
+        manager.enterArea('main_tabs');
+      },
+      child: tvAreaReady
+          ? TvFocusArea(
+              id: 'search',
+              count: 2,
+              // 0=搜索框、1=聚合开关：
+              //   上：聚合→搜索框；搜索框→状态栏；下：任意→状态栏；
+              //   右：搜索框→聚合；左：聚合→搜索框。
+              traversal: (current, direction) {
+                switch (direction) {
+                  case DPad.up:
+                    return current == 1 ? 0 : -1;
+                  case DPad.down:
+                    return -1;
+                  case DPad.left:
+                    return current == 1 ? 0 : current;
+                  case DPad.right:
+                    return current == 0 ? 1 : current;
+                }
+              },
+              onBoundary: (_) =>
+                  TvFocusManager.instance.enterArea('main_tabs'),
+              // Builder 保证取焦点节点时区域已注册。
+              child: Builder(
+                builder: (ctx) => _buildScaffold(
+                  ctx,
+                  isAggregate: isAggregate,
+                  searchResults: searchResults,
+                  searchHistory: searchHistory,
+                ),
+              ),
+            )
+          : _buildScaffold(
+              context,
+              isAggregate: isAggregate,
+              searchResults: searchResults,
+              searchHistory: searchHistory,
+            ),
+    );
+  }
+
+  Widget _buildScaffold(
+    BuildContext ctx, {
+    required bool isAggregate,
+    required AsyncValue<List<MediaItem>> searchResults,
+    required List<String> searchHistory,
+  }) {
+    final useTv = isTvPlatform &&
+        TvFocusManager.instance.getArea('search') != null;
+    FocusNode? node(int i) => useTv ? ctx.getFocusNode('search', i) : null;
     return Scaffold(
       appBar: AppBar(
-        title: TextField(
-          controller: _searchController,
-          autofocus: true,
-          decoration: InputDecoration(
-            hintText: '搜索...',
-            border: InputBorder.none,
-            suffixIcon: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_searchController.text.isNotEmpty)
-                  IconButton(
-                    icon: const Icon(Icons.clear),
-                    onPressed: () {
-                      _searchController.clear();
-                      ref.read(searchQueryProvider.notifier).state = '';
-                      setState(() => _showResults = false);
-                    },
+        title: TvInputField(
+          // TV 两段式：聚焦仅高亮，OK 后进入编辑输入。
+          focusNode: node(0),
+          borderRadius: 6,
+          buildEditor: (ctx, editorNode) => TextField(
+            controller: _searchController,
+            // TV：不自动聚焦（状态栏上键/右键才切入搜索框），手机端保持。
+            autofocus: !isTvPlatform,
+            focusNode: editorNode,
+            decoration: InputDecoration(
+              hintText: '搜索...',
+              border: InputBorder.none,
+              suffixIcon: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_searchController.text.isNotEmpty)
+                    IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        _searchController.clear();
+                        ref.read(searchQueryProvider.notifier).state = '';
+                        setState(() => _showResults = false);
+                      },
+                    ),
+                  // 聚合搜索开关（TV：右键从搜索框聚焦此处，OK 切换）。
+                  TvFocusable(
+                    focusNode: node(1),
+                    onActivate: () => ref
+                        .read(aggregateSearchProvider.notifier)
+                        .state = !isAggregate,
+                    borderRadius: 14,
+                    child: _AggregateToggle(
+                      isAggregate: isAggregate,
+                      onToggle: (value) {
+                        ref.read(aggregateSearchProvider.notifier).state =
+                            value;
+                      },
+                    ),
                   ),
-                // 聚合搜索开关
-                _AggregateToggle(
-                  isAggregate: isAggregate,
-                  onToggle: (value) {
-                    ref.read(aggregateSearchProvider.notifier).state = value;
-                  },
-                ),
-              ],
+                ],
+              ),
             ),
+            onSubmitted: (value) {
+              if (value.isNotEmpty) {
+                ref.read(searchQueryProvider.notifier).state = value;
+                ref.read(searchHistoryProvider.notifier).addQuery(value);
+                setState(() => _showResults = true);
+              }
+            },
+            onChanged: (value) {
+              setState(() {});
+            },
           ),
-          onSubmitted: (value) {
-            if (value.isNotEmpty) {
-              ref.read(searchQueryProvider.notifier).state = value;
-              ref.read(searchHistoryProvider.notifier).addQuery(value);
-              setState(() => _showResults = true);
-            }
-          },
-          onChanged: (value) {
-            setState(() {});
-          },
         ),
       ),
-      body: _showResults ? _buildSearchResults(searchResults) : _buildSearchHistory(searchHistory),
+      body: _showResults
+          ? _buildSearchResults(searchResults)
+          : _buildSearchHistory(searchHistory),
     );
   }
   

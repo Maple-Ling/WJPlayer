@@ -57,8 +57,14 @@ void installNativeKeyBridge() {
       return;
     }
 
-    // 没有页面级覆盖时，MENU 恢复到底部栏上次焦点。
-    TvFocusManager.instance.toggleArea('main_tabs');
+    // 没有页面级覆盖时，MENU 在状态栏内外切换：
+    // 进入记录来源区域，退出时归还来源焦点（无来源则交还 Flutter 默认焦点树）。
+    final manager = TvFocusManager.instance;
+    if (manager.activeArea?.config.id == 'main_tabs') {
+      manager.exitArea('main_tabs');
+    } else {
+      manager.enterArea('main_tabs');
+    }
   });
 }
 

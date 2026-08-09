@@ -270,7 +270,7 @@ class _PlaybackResourceCardState extends State<PlaybackResourceCard> {
       onPointerDown: _onPointerDown,
       onPointerUp: _onPointerUp,
       child: Card(
-        clipBehavior: Clip.antiAlias,
+        clipBehavior: Clip.none,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
           side: widget.isSelected
@@ -278,56 +278,59 @@ class _PlaybackResourceCardState extends State<PlaybackResourceCard> {
                   color: Theme.of(context).colorScheme.primary, width: 2.5)
               : BorderSide.none,
         ),
-        child: InkWell(
-          // 空 onTap 仅提供按下涟漪（down 即显示）；实际单击/双击由外层
-          // Listener 原始事件判定并立即回调，避免双击等待延迟。
-          onTap: () {},
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(children: [
-                    SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: widget.serverIcon ??
-                            const Icon(Icons.dns_rounded, size: 20)),
-                    const SizedBox(width: 8),
-                    Expanded(
-                        child: Text(widget.serverName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w800))),
-                    if (widget.isBest)
-                      tag('最佳资源',
-                          color: const Color(0xFF6B4F00),
-                          background: const Color(0xFFFFD66B))
-                    else if (widget.isCurrent)
-                      tag('当前资源', color: const Color(0xFF238B57)),
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: InkWell(
+            // 空 onTap 仅提供按下涟漪（down 即显示）；实际单击/双击由外层
+            // Listener 原始事件判定并立即回调，避免双击等待延迟。
+            onTap: () {},
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: widget.serverIcon ??
+                              const Icon(Icons.dns_rounded, size: 20)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                          child: Text(widget.serverName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w800))),
+                      if (widget.isBest)
+                        tag('最佳资源',
+                            color: const Color(0xFF6B4F00),
+                            background: const Color(0xFFFFD66B))
+                      else if (widget.isCurrent)
+                        tag('当前资源', color: const Color(0xFF238B57)),
+                    ]),
+                    const SizedBox(height: 10),
+                    Wrap(spacing: 6, runSpacing: 6, children: [
+                      tag(_text(widget.resolution, '分辨率未知')),
+                      tag(_text(widget.dynamicRange, 'SDR')),
+                      tag(_text(widget.codec, '编码未知')),
+                      if (widget.frameRate?.isNotEmpty == true)
+                        tag(widget.frameRate!),
+                    ]),
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      Icon(Icons.storage_rounded, size: 15, color: muted),
+                      const SizedBox(width: 4),
+                      Text(_sizeText(),
+                          style: TextStyle(fontSize: 11, color: muted)),
+                      const Spacer(),
+                      Icon(Icons.speed_rounded, size: 15, color: muted),
+                      const SizedBox(width: 4),
+                      Text(_bitrateText(),
+                          style: TextStyle(fontSize: 11, color: muted)),
+                    ]),
                   ]),
-                  const SizedBox(height: 10),
-                  Wrap(spacing: 6, runSpacing: 6, children: [
-                    tag(_text(widget.resolution, '分辨率未知')),
-                    tag(_text(widget.dynamicRange, 'SDR')),
-                    tag(_text(widget.codec, '编码未知')),
-                    if (widget.frameRate?.isNotEmpty == true)
-                      tag(widget.frameRate!),
-                  ]),
-                  const SizedBox(height: 10),
-                  Row(children: [
-                    Icon(Icons.storage_rounded, size: 15, color: muted),
-                    const SizedBox(width: 4),
-                    Text(_sizeText(),
-                        style: TextStyle(fontSize: 11, color: muted)),
-                    const Spacer(),
-                    Icon(Icons.speed_rounded, size: 15, color: muted),
-                    const SizedBox(width: 4),
-                    Text(_bitrateText(),
-                        style: TextStyle(fontSize: 11, color: muted)),
-                  ]),
-                ]),
+            ),
           ),
         ),
       ),

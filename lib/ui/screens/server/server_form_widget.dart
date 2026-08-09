@@ -5,10 +5,14 @@ import '../../../core/api/emby_api.dart';
 import '../../../core/network/proxy_http_client.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/providers/server_providers.dart';
+import '../../../core/services/tv_focus_manager.dart';
 import '../../../core/sources/feiniu_backend.dart';
+import '../../../core/utils/platform_utils.dart';
 import '../../../core/utils/server_batch_adder.dart';
 import '../../../core/utils/server_error_classifier.dart';
 import '../../widgets/common/app_toast.dart';
+import '../../widgets/common/tv_focusable.dart';
+import '../../widgets/common/tv_focus_widgets.dart';
 import '../../widgets/server/protocol_address_field.dart';
 
 /// 单条线路的编辑状态（控制器持有，避免 build 内重建丢失输入）。
@@ -137,6 +141,78 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
     setState(() => _lines.removeAt(index).dispose());
   }
 
+  // ─── TV 表单焦点导航 ───
+  // 元素顺序：0名称 1备注 2用户名 3密码 4TLS 5加号
+  //          线路卡 i（base=6+i*5）：+0备注 +1协议 +2地址 +3路径 +4删除
+  //          末尾：连接并保存
+  static const int _leadCount = 6;
+  static const int _lineSpan = 5;
+
+  int get _totalCount => _leadCount + _lines.length * _lineSpan + 1;
+  int get _saveIndex => _leadCount + _lines.length * _lineSpan;
+
+  static bool _isProtocolIndex(int idx) =>
+      idx >= _leadCount && (idx - _leadCount) % _lineSpan == 1;
+  static bool _isDeleteIndex(int idx) =>
+      idx >= _leadCount && (idx - _leadCount) % _lineSpan == 4;
+  static int _lineOf(int idx) => (idx - _leadCount) ~/ _lineSpan;
+  static int _deleteIndexOf(int line) => _leadCount + line * _lineSpan + 4;
+
+  /// 上下线性导航；协议位左右 → -1（onBoundary 切 http/https）；
+  /// 线路卡内任意位置右 → -1（onBoundary 聚焦删除按钮）。
+  TraversalFn _formTraversal(int lineCount) {
+    final saveIndex = _leadCount + lineCount * _lineSpan;
+    return (current, direction) {
+      switch (direction) {
+        case DPad.up:
+          return current > 0 ? current - 1 : current;
+        case DPad.down:
+          return current < saveIndex ? current + 1 : current;
+        case DPad.left:
+          if (_isProtocolIndex(current)) return -1;
+          return current;
+        case DPad.right:
+          if (_isProtocolIndex(current)) return -1;
+          if (current >= _leadCount &&
+              current < saveIndex &&
+              !_isDeleteIndex(current)) {
+            return -1;
+          }
+          return current;
+      }
+    };
+  }
+
+  void _handleFormBoundary(DPad direction) {
+    final manager = TvFocusManager.instance;
+    final area = manager.activeArea;
+    if (area == null) return;
+    final idx = area.focusIndex;
+    if (_isProtocolIndex(idx)) {
+      if (direction == DPad.left || direction == DPad.right) {
+        _toggleProtocolAt(_lineOf(idx));
+      }
+      return;
+    }
+    if (direction == DPad.right && idx >= _leadCount) {
+      final line = _lineOf(idx);
+      if (line >= 0 && line < _lines.length) {
+        manager.focusAt('server_form', _deleteIndexOf(line));
+      }
+    }
+  }
+
+  /// 左右键直接切换线路协议（无需 OK）。
+  void _toggleProtocolAt(int lineIndex) {
+    if (lineIndex < 0 || lineIndex >= _lines.length) return;
+    final line = _lines[lineIndex];
+    line.protocol = line.protocol == ServerProtocol.http
+        ? ServerProtocol.https
+        : ServerProtocol.http;
+    // ProtocolAddressField 以 ValueKey('proto_$i_$protocol') 重建刷新协议显示。
+    setState(() {});
+  }
+
   TextStyle get _labelStyle =>
       const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF687386));
 
@@ -182,7 +258,29 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
 
   @override
   Widget build(BuildContext context) {
+    return TvFocusArea(
+      // 线路数变化时用 Key 重建区域（count 稳定约束）。
+      key: ValueKey('server_form_${_lines.length}'),
+      id: 'server_form',
+      count: _totalCount,
+      traversal: _formTraversal(_lines.length),
+      onBoundary: _handleFormBoundary,
+      // Builder 保证取焦点节点时区域已注册（TvFocusArea 先挂载）。
+      child: Builder(builder: (ctx) => _buildForm(ctx)),
+    );
+  }
+
+  Widget _buildForm(BuildContext ctx) {
     final theme = Theme.of(context);
+    final useTv = isTvPlatform &&
+        TvFocusManager.instance.getArea('server_form') != null;
+    final nodes = <FocusNode?>[
+      if (useTv)
+        for (var i = 0; i < _totalCount; i++)
+          ctx.getFocusNode('server_form', i),
+    ];
+    FocusNode? node(int i) => useTv ? nodes[i] : null;
+
     return ColoredBox(
       color: const Color(0xFFF4F6F9),
       child: SingleChildScrollView(
@@ -194,58 +292,95 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _fieldLabel('服务器名称'),
-              TextField(
-                controller: _nameController,
-                decoration: _fieldDeco(
-                    hint: '留空则自动获取', icon: Icons.dns_outlined),
+              // TV 两段式输入框：聚焦仅高亮，OK 后才进入编辑（打开键盘）。
+              TvInputField(
+                focusNode: node(0),
+                borderRadius: 22,
+                buildEditor: (ctx, editorNode) => TextField(
+                  focusNode: editorNode,
+                  controller: _nameController,
+                  decoration: _fieldDeco(
+                      hint: '留空则自动获取', icon: Icons.dns_outlined),
+                ),
               ),
               const SizedBox(height: 14),
               _fieldLabel('服务器备注（例如：到期时间、归属）'),
-              TextField(
-                controller: _remarkController,
-                decoration: _fieldDeco(
-                    hint: '服务器全局备注，与线路备注无关',
-                    icon: Icons.notes_rounded),
+              TvInputField(
+                focusNode: node(1),
+                borderRadius: 22,
+                buildEditor: (ctx, editorNode) => TextField(
+                  focusNode: editorNode,
+                  controller: _remarkController,
+                  decoration: _fieldDeco(
+                      hint: '服务器全局备注，与线路备注无关',
+                      icon: Icons.notes_rounded),
+                ),
               ),
               const SizedBox(height: 14),
               _fieldLabel('用户名'),
-              TextField(
-                controller: _usernameController,
-                decoration: _fieldDeco(
-                    hint: '服务器登录用户名', icon: Icons.person_outline_rounded),
-                keyboardType: TextInputType.text,
-                autocorrect: false,
+              TvInputField(
+                focusNode: node(2),
+                borderRadius: 22,
+                buildEditor: (ctx, editorNode) => TextField(
+                  focusNode: editorNode,
+                  controller: _usernameController,
+                  decoration: _fieldDeco(
+                      hint: '服务器登录用户名', icon: Icons.person_outline_rounded),
+                  keyboardType: TextInputType.text,
+                  autocorrect: false,
+                ),
               ),
               const SizedBox(height: 14),
               _fieldLabel('密码'),
-              TextField(
-                controller: _passwordController,
-                decoration: _fieldDeco(
-                    hint: '服务器登录密码', icon: Icons.lock_outline_rounded),
-                obscureText: true,
-                autocorrect: false,
+              TvInputField(
+                focusNode: node(3),
+                borderRadius: 22,
+                buildEditor: (ctx, editorNode) => TextField(
+                  focusNode: editorNode,
+                  controller: _passwordController,
+                  decoration: _fieldDeco(
+                      hint: '服务器登录密码', icon: Icons.lock_outline_rounded),
+                  obscureText: true,
+                  autocorrect: false,
+                ),
               ),
               const SizedBox(height: 14),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF0F2F5),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: SwitchListTile.adaptive(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('允许不安全 TLS（自签名/过期证书）',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                  subtitle: const Text('证书过期或不受信任的服务器开启后即可连接',
-                      style: TextStyle(fontSize: 11)),
-                  value: _allowInsecureTls,
-                  onChanged: (v) => setState(() => _allowInsecureTls = v),
+              // TV：TLS 开关聚焦（OK 切换），描边指示。
+              TvFocusable(
+                focusNode: node(4),
+                onActivate: () =>
+                    setState(() => _allowInsecureTls = !_allowInsecureTls),
+                borderRadius: 18,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF0F2F5),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('允许不安全 TLS（自签名/过期证书）',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600)),
+                    subtitle: const Text('证书过期或不受信任的服务器开启后即可连接',
+                        style: TextStyle(fontSize: 11)),
+                    value: _allowInsecureTls,
+                    onChanged: (v) =>
+                        setState(() => _allowInsecureTls = v),
+                  ),
                 ),
               ),
               const SizedBox(height: 20),
               Row(children: [
                 Expanded(child: _sectionTitle('服务器线路')),
-                _addLineButton(),
+                // TV：新增线路按钮聚焦（OK 添加）。
+                TvFocusable(
+                  focusNode: node(5),
+                  onActivate: _addLine,
+                  borderRadius: 24,
+                  child: _addLineButton(),
+                ),
               ]),
               const SizedBox(height: 4),
               Text(
@@ -257,7 +392,8 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
               if (_lines.isEmpty)
                 _emptyLinesHint()
               else
-                ...List.generate(_lines.length, (i) => _buildLineCard(i)),
+                ...List.generate(
+                    _lines.length, (i) => _buildLineCard(ctx, i, node)),
               if (_errorMessage != null) ...[
                 const SizedBox(height: 14),
                 Container(
@@ -272,24 +408,31 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
                 ),
               ],
               const SizedBox(height: 20),
-              SizedBox(
-                height: 52,
-                child: FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF4A7BD0),
-                    shape: const StadiumBorder(),
-                    elevation: 4,
-                    shadowColor: const Color(0x555B8DEF),
+              // TV：保存按钮聚焦（OK 保存），加载中禁用。
+              TvFocusable(
+                focusNode: node(_saveIndex),
+                onActivate: _isLoading ? () {} : _saveAndConnect,
+                enabled: !_isLoading,
+                borderRadius: 28,
+                child: SizedBox(
+                  height: 52,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF4A7BD0),
+                      shape: const StadiumBorder(),
+                      elevation: 4,
+                      shadowColor: const Color(0x555B8DEF),
+                    ),
+                    onPressed: _isLoading ? null : _saveAndConnect,
+                    icon: _isLoading
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2,
+                                color: Colors.white))
+                        : const Icon(Icons.link_rounded),
+                    label: Text(_isEdit ? '保存并连接' : '连接并保存'),
                   ),
-                  onPressed: _isLoading ? null : _saveAndConnect,
-                  icon: _isLoading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2,
-                              color: Colors.white))
-                      : const Icon(Icons.link_rounded),
-                  label: Text(_isEdit ? '保存并连接' : '连接并保存'),
                 ),
               ),
             ],
@@ -323,8 +466,13 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
             style: TextStyle(color: Color(0xFF8B95A5), fontSize: 12)),
       );
 
-  Widget _buildLineCard(int index) {
+  Widget _buildLineCard(
+    BuildContext ctx,
+    int index,
+    FocusNode? Function(int) node,
+  ) {
     final line = _lines[index];
+    final base = _leadCount + index * _lineSpan;
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(16),
@@ -336,37 +484,66 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
             Text('线路 ${index + 1}',
                 style: const TextStyle(fontWeight: FontWeight.w700)),
             const Spacer(),
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              icon: Icon(Icons.delete_outline, color: Colors.red.shade300),
-              onPressed: () => _removeLine(index),
+            // TV：删除按钮聚焦（卡内任意位置右键 → 此处，OK 删除）。
+            TvFocusable(
+              focusNode: node(base + 4),
+              onActivate: () => _removeLine(index),
+              borderRadius: 24,
+              child: IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: Icon(Icons.delete_outline, color: Colors.red.shade300),
+                onPressed: () => _removeLine(index),
+              ),
             ),
           ]),
           _fieldLabel('线路备注（如：备用线路、电信宽带）'),
-          TextField(
-            controller: line.remarkController,
-            decoration: _fieldDeco(
-                hint: '仅用于备注这条线路', icon: Icons.notes_rounded),
+          TvInputField(
+            focusNode: node(base + 0),
+            borderRadius: 22,
+            buildEditor: (ctx, editorNode) => TextField(
+              focusNode: editorNode,
+              controller: line.remarkController,
+              decoration: _fieldDeco(
+                  hint: '仅用于备注这条线路', icon: Icons.notes_rounded),
+            ),
           ),
           const SizedBox(height: 12),
           _fieldLabel('服务器地址'),
-          ProtocolAddressField(
-            controller: line.urlController,
-            label: '服务器地址',
-            hint: 'example.com:8096 或粘贴完整网址',
-            initialProtocol: line.protocol,
-            onProtocolChanged: (v) => line.protocol = v,
-            // 粘贴完整网址：自动把路径剥离并填入下方路径输入框。
-            onPathExtracted: (path) {
-              line.pathController.text = path;
-            },
+          // TV：协议位（base+1）聚焦时左右键直接切换 http/https；
+          // 地址框（base+2）两段式：聚焦仅高亮，OK 后进入编辑。
+          TvFocusable(
+            focusNode: node(base + 1),
+            onActivate: () {},
+            borderRadius: 14,
+            child: TvInputField(
+              focusNode: node(base + 2),
+              borderRadius: 22,
+              buildEditor: (ctx, editorNode) => ProtocolAddressField(
+                key: ValueKey('proto_$index${line.protocol}'),
+                controller: line.urlController,
+                label: '服务器地址',
+                hint: 'example.com:8096 或粘贴完整网址',
+                initialProtocol: line.protocol,
+                focusNode: editorNode,
+                onProtocolChanged: (v) => line.protocol = v,
+                // 粘贴完整网址：自动把路径剥离并填入下方路径输入框。
+                onPathExtracted: (path) {
+                  line.pathController.text = path;
+                },
+              ),
+            ),
           ),
           const SizedBox(height: 12),
           _fieldLabel('路径'),
-          TextField(
-            controller: line.pathController,
-            decoration: _fieldDeco(
-                hint: '默认 /，如 /emby', icon: Icons.folder_open_rounded),
+          TvInputField(
+            focusNode: node(base + 3),
+            borderRadius: 22,
+            buildEditor: (ctx, editorNode) => TextField(
+              focusNode: editorNode,
+              controller: line.pathController,
+              decoration: _fieldDeco(
+                  hint: '默认 /，如 /emby', icon: Icons.folder_open_rounded),
+            ),
           ),
         ],
       ),

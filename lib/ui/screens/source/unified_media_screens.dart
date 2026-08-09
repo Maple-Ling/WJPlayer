@@ -18,17 +18,20 @@ import '../../../core/providers/unified_resource_provider.dart';
 import '../../../core/providers/server_card_stats_provider.dart';
 import '../../../core/providers/server_providers.dart';
 import '../../../core/providers/watch_history_providers.dart';
+import '../../../core/services/tv_focus_manager.dart';
 import '../../../core/services/watch_history/watch_history_models.dart';
 import '../../../core/services/home_data_cache.dart';
 import '../../../core/sources/media_source_backend.dart';
 import '../../../core/sources/source_playback.dart';
 import '../../../core/sources/unified_media_adapter.dart';
+import '../../../core/utils/platform_utils.dart';
 import '../../widgets/common/collapsible_overview.dart';
 import '../../widgets/common/media_metadata_badges.dart';
 import '../../widgets/common/media_widgets.dart';
 import '../../widgets/common/adaptive_poster_blend.dart';
 import '../../widgets/common/playback_resource_card.dart';
 import '../../widgets/common/tv_focusable.dart';
+import '../../widgets/common/tv_focus_widgets.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../utils/media_helpers.dart';
 import '../../../core/utils/track_preference.dart';
@@ -127,7 +130,7 @@ class UnifiedMediaHomeScreen extends ConsumerStatefulWidget {
 }
 
 class _UnifiedMediaHomeScreenState
-    extends ConsumerState<UnifiedMediaHomeScreen> {
+    extends ConsumerState<UnifiedMediaHomeScreen> with RouteAware {
   List<UnifiedMediaLibrary> _libraries = const [];
   List<UnifiedContinueItem> _continueItems = const [];
   final Map<String, List<UnifiedMediaEntry>> _previews = {};
@@ -213,30 +216,34 @@ class _UnifiedMediaHomeScreenState
       final visibleLibraries = libraries
           .where((library) => !hiddenLibraries.contains(library.id))
           .toList();
+      // 所有库预览一次性加载完再 setState，保证 TV 焦点区域 count 稳定
+      // （避免逐项填充导致区域重建、焦点漂移）。
+      final previewResults = await Future.wait(
+        visibleLibraries.map((library) async {
+          try {
+            final items = await HomeCacheLoader.load<List<UnifiedMediaEntry>>(
+              serverId: server.id,
+              dataType: 'latest:${library.id}',
+              decode: (json) =>
+                  (json as List).map(_entryFromCacheJson).toList(),
+              load: () => adapter.preview(library.id),
+              encode: (v) => v.map(_entryToCacheJson).toList(),
+            );
+            return (library.id, items);
+          } catch (_) {
+            return (library.id, <UnifiedMediaEntry>[]);
+          }
+        }),
+      );
+      if (!mounted || server.id != _serverId) return;
       setState(() {
         _libraries = visibleLibraries;
         _continueItems = continueItems;
+        for (final result in previewResults) {
+          _previews[result.$1] = result.$2;
+        }
         _loading = false;
       });
-      await Future.wait(visibleLibraries.map((library) async {
-        try {
-          final items = await HomeCacheLoader.load<List<UnifiedMediaEntry>>(
-            serverId: server.id,
-            dataType: 'latest:${library.id}',
-            decode: (json) =>
-                (json as List).map(_entryFromCacheJson).toList(),
-            load: () => adapter.preview(library.id),
-            encode: (v) => v.map(_entryToCacheJson).toList(),
-          );
-          if (mounted && server.id == _serverId) {
-            setState(() => _previews[library.id] = items);
-          }
-        } catch (_) {
-          if (mounted && server.id == _serverId) {
-            setState(() => _previews[library.id] = const []);
-          }
-        }
-      }));
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -294,6 +301,37 @@ class _UnifiedMediaHomeScreenState
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void dispose() {
+    appRouteObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  /// 离开首页（push 详情/库页等）：释放首页焦点区域，交还上层页面。
+  @override
+  void didPushNext() {
+    if (isTvPlatform) {
+      TvFocusManager.instance.releaseArea('home_media');
+    }
+  }
+
+  /// 返回首页：恢复首页焦点区域（记住上次位置）。
+  @override
+  void didPopNext() {
+    if (isTvPlatform) {
+      TvFocusManager.instance.switchArea('home_media');
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final server = ref.watch(currentServerProvider);
     if (server == null) {
@@ -315,43 +353,75 @@ class _UnifiedMediaHomeScreenState
       ),
       body: _error != null
           ? _ErrorRetry(message: _error!, onRetry: () => _load(forceRefresh: true))
-          : RefreshIndicator(
-              onRefresh: () => _load(forceRefresh: true),
-              child: _libraries.isEmpty && _continueItems.isEmpty
-                  ? ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      children: const [
-                        SizedBox(height: 260),
-                        Center(child: Text('暂无媒体内容')),
-                      ],
-                    )
-                  : ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.only(bottom: 24),
-                      children: [
-                        if (_continueItems.isNotEmpty)
-                          _ContinueSection(
-                            items: _continueItems,
-                            onTap: (item) => _openContinueDetail(server, item),
-                            onPlay: (item) => _playContinue(server, item),
-                          ),
-                        for (final library in _libraries)
-                          _LibrarySection(
-                            library: library,
-                            preview: _previews[library.id],
-                            onOpenLibrary: () => Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                builder: (_) => UnifiedMediaLibraryScreen(
-                                  server: server,
-                                  library: library,
-                                ),
-                              ),
-                            ),
-                            onOpenEntry: (entry) => _openEntry(server, entry),
-                          ),
-                      ],
-                    ),
+          : _buildBody(server),
+    );
+  }
+
+  /// 首页主体：全部数据就绪后包一层 TvFocusArea（区域 count 稳定），
+  /// 提供 TV 确定性方向键导航；未就绪时普通渲染。
+  Widget _buildBody(ServerConfig server) {
+    if (_libraries.isEmpty && _continueItems.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: const [
+          SizedBox(height: 260),
+          Center(child: Text('暂无媒体内容')),
+        ],
+      );
+    }
+    final sections = <FocusSection>[
+      if (_continueItems.isNotEmpty)
+        FocusSection('continue', _continueItems.length),
+      for (final library in _libraries)
+        if ((_previews[library.id] ?? const []).isNotEmpty)
+          FocusSection('lib_${library.id}',
+              _previews[library.id]!.length,
+              trailing: true),
+    ];
+    final ready =
+        _previews.length >= _libraries.length && sections.isNotEmpty;
+    // 手机端不接集中焦点管理（避免 TvFocusArea 未注册时 getFocusNode 抛错）。
+    if (!ready || !isTvPlatform) return _buildHomeList(server, null);
+    final layout = FocusSectionLayout(sections);
+    return TvFocusArea(
+      id: 'home_media',
+      count: layout.totalCount,
+      traversal: layout.traversal,
+      child: _buildHomeList(server, layout),
+    );
+  }
+
+  Widget _buildHomeList(ServerConfig server, FocusSectionLayout? layout) {
+    return RefreshIndicator(
+      onRefresh: () => _load(forceRefresh: true),
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.only(bottom: 24),
+        children: [
+          if (_continueItems.isNotEmpty)
+            _ContinueSection(
+              items: _continueItems,
+              onTap: (item) => _openContinueDetail(server, item),
+              onPlay: (item) => _playContinue(server, item),
+              layout: layout,
             ),
+          for (final library in _libraries)
+            _LibrarySection(
+              library: library,
+              preview: _previews[library.id],
+              onOpenLibrary: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => UnifiedMediaLibraryScreen(
+                    server: server,
+                    library: library,
+                  ),
+                ),
+              ),
+              onOpenEntry: (entry) => _openEntry(server, entry),
+              layout: layout,
+            ),
+        ],
+      ),
     );
   }
 }
@@ -491,13 +561,14 @@ class _UnifiedMediaLibraryScreenState
                           ],
                         )
                       : GridView.builder(
-                          padding: const EdgeInsets.all(12),
+                          clipBehavior: Clip.none,
+                          padding: const EdgeInsets.all(14),
                           gridDelegate:
                               const SliverGridDelegateWithMaxCrossAxisExtent(
                             maxCrossAxisExtent: 138,
                             childAspectRatio: 0.58,
-                            crossAxisSpacing: 10,
-                            mainAxisSpacing: 14,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 18,
                           ),
                           itemCount: _sortedItems.length,
                           itemBuilder: (_, index) {
@@ -1720,6 +1791,7 @@ class _UnifiedMediaDetailScreenState
     return SizedBox(
       height: 155,
       child: ListView.separated(
+        clipBehavior: Clip.none,
         scrollDirection: Axis.horizontal,
         itemCount: _resources.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
@@ -1787,11 +1859,13 @@ class _UnifiedMediaDetailScreenState
       );
 
   Widget _recommendations(List<DiscoverEntry> items) => SizedBox(
-        height: 180,
+        height: 196,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
+          clipBehavior: Clip.none,
+          padding: const EdgeInsets.symmetric(horizontal: 2),
           itemCount: items.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          separatorBuilder: (_, __) => const SizedBox(width: 10),
           itemBuilder: (_, index) {
             final item = items[index];
             return InkWell(
@@ -1999,12 +2073,14 @@ class _UnifiedMediaDetailScreenState
                       error: (_, __) =>
                           const Center(child: Text('作品加载失败')),
                       data: (items) => GridView.builder(
+                        clipBehavior: Clip.none,
+                        padding: const EdgeInsets.fromLTRB(14, 0, 14, 20),
                         gridDelegate:
                             const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 3,
                           childAspectRatio: .55,
-                          crossAxisSpacing: 10,
-                          mainAxisSpacing: 12,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 16,
                         ),
                         itemCount: items.length,
                         itemBuilder: (_, index) {
@@ -2818,13 +2894,28 @@ class _ServerListMenuEntryState extends State<_ServerListMenuEntry> {
 }
 
 class _ContinueSection extends StatelessWidget {
-  const _ContinueSection({required this.items, required this.onTap, required this.onPlay});
+  const _ContinueSection({
+    required this.items,
+    required this.onTap,
+    required this.onPlay,
+    this.layout,
+  });
   final List<UnifiedContinueItem> items;
   final ValueChanged<UnifiedContinueItem> onTap;
   final ValueChanged<UnifiedContinueItem> onPlay;
 
+  /// TV 焦点区域布局（null = 手机端或数据未就绪，不接集中焦点管理）。
+  final FocusSectionLayout? layout;
+
   @override
-  Widget build(BuildContext context) => Column(
+  Widget build(BuildContext context) {
+    final cardNodes = layout == null
+        ? null
+        : [
+            for (var i = 0; i < items.length; i++)
+              context.getFocusNode('home_media', layout!.indexOf('continue', i)),
+          ];
+    return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
@@ -2836,65 +2927,70 @@ class _ContinueSection extends StatelessWidget {
                     ?.copyWith(fontWeight: FontWeight.w700)),
           ),
           SizedBox(
-            height: 166,
+            height: 182, // 166 + 放大 1.04/描边留白
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
+              clipBehavior: Clip.none,
               padding: const EdgeInsets.symmetric(horizontal: 12),
               itemCount: items.length,
               separatorBuilder: (_, __) => const SizedBox(width: 12),
               itemBuilder: (_, index) {
                 final item = items[index];
-                return SizedBox(
-                  width: 220,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () => onTap(item),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: Stack(fit: StackFit.expand, children: [
-                              GestureDetector(
-                                onTap: () => onPlay(item),
-                                child: MediaImage(
-                                  imageUrl:
-                                      item.entry.backdropUrl?.isNotEmpty == true
-                                          ? item.entry.backdropUrl
-                                          : item.entry.posterUrl,
-                                  httpHeaders: item.entry.imageHeaders,
-                                  fit: BoxFit.cover,
-                                ),
-                              ),
-                              Center(
-                                child: GestureDetector(
+                return TvFocusable(
+                  onActivate: () => onTap(item),
+                  borderRadius: 12,
+                  focusNode: cardNodes?[index],
+                  child: SizedBox(
+                    width: 220,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => onTap(item),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Stack(fit: StackFit.expand, children: [
+                                GestureDetector(
                                   onTap: () => onPlay(item),
-                                  child: const Icon(Icons.play_circle_fill_rounded,
-                                      color: Colors.white, size: 42),
+                                  child: MediaImage(
+                                    imageUrl: item.entry.backdropUrl?.isNotEmpty == true
+                                        ? item.entry.backdropUrl
+                                        : item.entry.posterUrl,
+                                    httpHeaders: item.entry.imageHeaders,
+                                    fit: BoxFit.cover,
+                                  ),
                                 ),
-                              ),
-                              Positioned(
-                                left: 0,
-                                right: 0,
-                                bottom: 0,
-                                child: LinearProgressIndicator(
-                                  value: item.progress,
-                                  minHeight: 4,
+                                Center(
+                                  child: GestureDetector(
+                                    onTap: () => onPlay(item),
+                                    child: const Icon(Icons.play_circle_fill_rounded,
+                                        color: Colors.white, size: 42),
+                                  ),
                                 ),
-                              ),
-                            ]),
+                                Positioned(
+                                  left: 0,
+                                  right: 0,
+                                  bottom: 0,
+                                  child: LinearProgressIndicator(
+                                    value: item.progress,
+                                    minHeight: 4,
+                                  ),
+                                ),
+                              ]),
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 7),
-                        Text(item.entry.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style:
-                                const TextStyle(fontWeight: FontWeight.w600)),
-                        Text('已观看 ${(item.progress * 100).round()}%',
-                            style: Theme.of(context).textTheme.bodySmall),
-                      ],
+                          const SizedBox(height: 7),
+                          Text(item.entry.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w600)),
+                          Text('已观看 ${(item.progress * 100).round()}%',
+                              style: Theme.of(context).textTheme.bodySmall),
+                        ],
+                      ),
                     ),
                   ),
                 );
@@ -2903,6 +2999,7 @@ class _ContinueSection extends StatelessWidget {
           ),
         ],
       );
+  }
 }
 
 class _LibrarySection extends StatelessWidget {
@@ -2911,14 +3008,31 @@ class _LibrarySection extends StatelessWidget {
     required this.preview,
     required this.onOpenLibrary,
     required this.onOpenEntry,
+    this.layout,
   });
   final UnifiedMediaLibrary library;
   final List<UnifiedMediaEntry>? preview;
   final VoidCallback onOpenLibrary;
   final ValueChanged<UnifiedMediaEntry> onOpenEntry;
 
+  /// TV 焦点区域布局（null = 手机端或数据未就绪，不接集中焦点管理）。
+  final FocusSectionLayout? layout;
+
   @override
-  Widget build(BuildContext context) => Column(
+  Widget build(BuildContext context) {
+    final sectionId = 'lib_${library.id}';
+    // 卡片节点 + 行尾「查看全部」节点（layout 中该行索引 = count）。
+    final hasCards = layout != null && (preview?.isNotEmpty ?? false);
+    final cardNodes = hasCards
+        ? [
+            for (var i = 0; i < preview!.length; i++)
+              context.getFocusNode('home_media', layout!.indexOf(sectionId, i)),
+          ]
+        : null;
+    final moreNode = hasCards
+        ? context.getFocusNode('home_media', layout!.indexOf(sectionId, preview!.length))
+        : null;
+    return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
@@ -2931,7 +3045,21 @@ class _LibrarySection extends StatelessWidget {
                         .titleLarge
                         ?.copyWith(fontWeight: FontWeight.w700)),
               ),
-              TextButton(onPressed: onOpenLibrary, child: const Text('查看全部')),
+              TextButton(
+                // TV：上键第一次聚焦到本行「查看更多」；节点由 TvFocusManager 管理。
+                focusNode: moreNode,
+                onPressed: onOpenLibrary,
+                style: TextButton.styleFrom(
+                  overlayColor: WidgetStateProperty.resolveWith((states) =>
+                      states.contains(WidgetState.focused)
+                          ? Theme.of(context)
+                              .colorScheme
+                              .primary
+                              .withValues(alpha: 0.22)
+                          : null),
+                ),
+                child: const Text('查看全部'),
+              ),
             ]),
           ),
           if (preview == null)
@@ -2941,29 +3069,39 @@ class _LibrarySection extends StatelessWidget {
             const SizedBox(height: 80, child: Center(child: Text('暂无内容')))
           else
             SizedBox(
-              height: 220,
+              height: 236,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
+                clipBehavior: Clip.none,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
                 itemCount: preview!.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                separatorBuilder: (_, __) => const SizedBox(width: 12),
                 itemBuilder: (_, index) => SizedBox(
                   width: 126,
                   child: _UnifiedMediaCard(
                     entry: preview![index],
                     onTap: () => onOpenEntry(preview![index]),
+                    focusNode: cardNodes?[index],
                   ),
                 ),
               ),
             ),
         ],
       );
+  }
 }
 
 class _UnifiedMediaCard extends StatelessWidget {
-  const _UnifiedMediaCard({required this.entry, required this.onTap});
+  const _UnifiedMediaCard({
+    required this.entry,
+    required this.onTap,
+    this.focusNode,
+  });
   final UnifiedMediaEntry entry;
   final VoidCallback onTap;
+
+  /// TV 集中焦点管理注入的节点（null = 自建节点，走 Flutter 默认遍历）。
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -2984,6 +3122,7 @@ class _UnifiedMediaCard extends StatelessWidget {
     return TvFocusable(
       onActivate: onTap,
       borderRadius: 10,
+      focusNode: focusNode,
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
         onTap: onTap,
