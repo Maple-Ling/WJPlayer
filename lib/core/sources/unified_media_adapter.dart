@@ -413,11 +413,33 @@ class FeiniuUnifiedMediaAdapter implements UnifiedMediaAdapter {
           .toList();
 
   @override
-  Future<List<UnifiedMediaEntry>> preview(String libraryId) async =>
-      (await backend.libraryItems(server, libraryId))
-          .take(12)
-          .map(_entry)
-          .toList();
+  Future<List<UnifiedMediaEntry>> preview(String libraryId) async {
+    final items = await backend.libraryItems(server, libraryId);
+    // 类型均衡预览（2026-08-09 修复）：原混合取前 12 按 create_time 排序，
+    // 海量电影会把新入库剧集挤出首页分类栏。改为电影/剧集/其他分组各取，
+    // 每组内仍按最新优先（后端已按 create_time DESC），新入库各类媒体
+    // 都能出现在首页预览。
+    final movies = <SourceEntry>[];
+    final series = <SourceEntry>[];
+    final others = <SourceEntry>[];
+    for (final item in items) {
+      final type = item.raw?['type']?.toString();
+      if (type == 'Movie' || type == 'Video') {
+        movies.add(item);
+      } else if (type == 'TV') {
+        series.add(item);
+      } else {
+        others.add(item);
+      }
+    }
+    return <UnifiedMediaEntry>[
+      ...movies.take(8).map(_entry),
+      ...series.take(8).map(_entry),
+      ...others.take(4).map(_entry),
+    ]
+        .take(12)
+        .toList();
+  }
 
   @override
   Future<List<UnifiedMediaEntry>> libraryItems(String libraryId) async =>

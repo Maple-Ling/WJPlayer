@@ -482,17 +482,23 @@ class ExoPlayerAdapter implements PlayerAdapter {
   Future<void> _pollState() async {
     if (_playerId == null || !_isInitialized) return;
     try {
-      final pos = await _channel.invokeMethod<int>('getPosition', {'playerId': _playerId});
+      // 合并轮询：一次 MethodChannel 调用取回 position/duration/buffered，
+      // 替代原来的 3 次调用（低端 TV 盒子上跨通道往返开销可观）。
+      final state = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'getState',
+        {'playerId': _playerId},
+      );
+      if (state == null) return;
+      final pos = (state['position'] as num?)?.toInt();
       if (pos != null) {
         _position = Duration(milliseconds: pos);
         _callbacks?.onPositionChanged?.call();
       }
-      final dur = await _channel.invokeMethod<int>('getDuration', {'playerId': _playerId});
+      final dur = (state['duration'] as num?)?.toInt();
       if (dur != null && dur > 0) {
         _duration = Duration(milliseconds: dur);
       }
-      final buf = await _channel
-          .invokeMethod<int>('getBufferedPosition', {'playerId': _playerId});
+      final buf = (state['buffered'] as num?)?.toInt();
       if (buf != null && buf > 0) {
         _bufferedPosition = Duration(milliseconds: buf);
       }

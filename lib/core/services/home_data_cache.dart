@@ -57,18 +57,9 @@ class HomeDataCache {
     await _deleteKey(key);
   }
 
-  /// 失效服务器所有首页缓存。
+  /// 失效服务器所有首页缓存（含动态 latest:<libraryId> 预览键）。
   static Future<void> invalidateAll(String serverId) async {
-    const types = [
-      'libraries',
-      'resume',
-      'random',
-      'collections',
-      'counts',
-    ];
-    for (final type in types) {
-      await invalidate(serverId, type);
-    }
+    await PersistentJsonCache.deleteByPrefix('home_${serverId}_');
   }
 
   static String _cacheKey(String serverId, String dataType) =>

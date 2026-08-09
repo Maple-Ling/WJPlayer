@@ -50,23 +50,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final isAggregate = ref.watch(aggregateSearchProvider);
     final searchResults = ref.watch(searchResultsProvider);
     final searchHistory = ref.watch(searchHistoryProvider);
-    // TV：注册焦点区域（0=搜索框、1=聚合开关），上下/边界 → 状态栏。
+    // TV：注册焦点区域（0=搜索框、1=聚合开关），方向键边界 → 状态栏；
+    // 返回键放行系统默认（逐级后退/分支根返回回影视 tab，主流 TV 语义）。
     final tvAreaReady = isTvPlatform;
     return PopScope(
-      // TV：选框聚焦时按返回键 → 直接回到状态栏；手机端不拦截。
-      canPop: !isTvPlatform,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        final manager = TvFocusManager.instance;
-        if (manager.activeArea?.config.id == 'main_tabs') {
-          manager.exitArea('main_tabs');
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (context.mounted) context.go('/discover');
-          });
-          return;
-        }
-        manager.enterArea('main_tabs');
-      },
+      canPop: true, // 不拦截返回：手机/电视一致走系统返回。
       child: tvAreaReady
           ? TvFocusArea(
               id: 'search',

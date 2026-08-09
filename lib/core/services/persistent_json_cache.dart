@@ -56,6 +56,26 @@ class PersistentJsonCache {
     } catch (_) {}
   }
 
+  /// 按 key 前缀删除（缓存文件内含明文 key，用于清首页缓存
+  /// home_<serverId>_*，含无法枚举的动态 latest:<libraryId> 键）。
+  static Future<void> deleteByPrefix(String prefix) async {
+    try {
+      final dir = Directory(await root);
+      if (!await dir.exists()) return;
+      await for (final entry in dir.list()) {
+        if (entry is! File || !entry.path.endsWith('.json')) continue;
+        try {
+          final content = jsonDecode(await entry.readAsString());
+          if (content is Map &&
+              content['key'] is String &&
+              (content['key'] as String).startsWith(prefix)) {
+            await entry.delete();
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
   /// 启动展示优先命中永久缓存；没有缓存才访问网络。
   static Future<T> cacheFirst<T>({
     required String key,

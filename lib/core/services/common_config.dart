@@ -70,6 +70,7 @@ class CommonConfig {
         'password': s.password,
         'access_token': s.authToken,
         'icon': s.iconUrl,
+        'hidden': s.hidden,
         'lines': s.lines
             .map((l) => {
                   'id': l.id,
@@ -122,6 +123,7 @@ class CommonConfig {
       password: j['password'] as String?,
       allowInsecureTls: options['allow_insecure_tls'] as bool? ?? false,
       sourceKind: sourceKind,
+      hidden: j['hidden'] as bool? ?? false,
     );
   }
 

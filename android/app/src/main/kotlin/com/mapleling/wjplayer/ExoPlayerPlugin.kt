@@ -148,6 +148,19 @@ class ExoPlayerPlugin(
                 getPlayer(playerId)?.setVolume(volume.toFloat())
                 result.success(true)
             }
+            "getState" -> {
+                // 合并轮询（2026-08-09）：position/duration/buffered 一次取回，
+                // 减少 200ms 轮询的 MethodChannel 往返（低端 TV 盒子开销可观）。
+                val playerId = call.argument<String>("playerId") ?: ""
+                val p = getPlayer(playerId)?.exoPlayer
+                val dur = p?.duration?.toInt() ?: 0
+                val buf = p?.bufferedPosition?.toInt() ?: 0
+                result.success(mapOf(
+                    "position" to (p?.currentPosition?.toInt() ?: 0),
+                    "duration" to (if (dur > 0) dur else 0),
+                    "buffered" to (if (buf > 0) buf else 0),
+                ))
+            }
             "getPosition" -> {
                 val playerId = call.argument<String>("playerId") ?: ""
                 val pos = getPlayer(playerId)?.exoPlayer?.currentPosition?.toInt() ?: 0
@@ -275,20 +288,27 @@ class ExoPlayerPlugin(
                 }
                 trackSelector.parameters = paramsBuilder.build()
 
+                // 解码器策略（2026-08-09 修复「Exo 巨卡」根因）：
+                //   EXTENSION_RENDERER_MODE_PREFER 会让 FFmpeg 软解优先于 MediaCodec 硬解
+                //   （FFmpeg 扩展能解一切格式 → 所有视频全走软解 → 高码率巨卡）。
+                //   改为 EXTENSION_RENDERER_MODE_ON：平台硬解优先，FFmpeg 仅兜底平台
+                //   不支持的格式（如部分音频编码/特殊像素格式），两全其美。
                 val renderersFactory = DefaultRenderersFactory(context)
-                    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+                    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
                     .setEnableDecoderFallback(true)
 
-                android.util.Log.i("ExoPlayerPlugin", "Creating ExoPlayer with Media3 extension renderers")
+                android.util.Log.i("ExoPlayerPlugin", "Creating ExoPlayer with Media3 renderers (hardware decode preferred, ffmpeg fallback)")
 
                 // 统一 UA：用自定义 HTTP DataSource 工厂覆盖 ExoPlayer 默认 UA，
                 // 部分 CDN 拒绝默认 UA 导致取流失败（403/空响应）。
+                // 缓冲放宽（2026-08-09）：网盘/聚合直链源响应慢、吞吐波动大，
+                // 15s 预缓冲 + 3s rebuffer 恢复对慢源太紧，频繁 rebuffer 表现为卡顿。
                 val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
                     .setBufferDurationsMs(
-                        15_000, // minBufferMs
-                        90_000, // maxBufferMs
-                        1_500,  // bufferForPlaybackMs
-                        3_000,  // bufferForPlaybackAfterRebufferMs
+                        30_000, // minBufferMs
+                        120_000, // maxBufferMs
+                        5_000,  // bufferForPlaybackMs
+                        10_000, // bufferForPlaybackAfterRebufferMs
                     )
                     .setPrioritizeTimeOverSizeThresholds(true)
                     .build()

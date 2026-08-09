@@ -9,6 +9,7 @@ import '../../../core/services/tv_focus_manager.dart';
 import '../../../core/services/watch_history/watch_history_models.dart';
 import '../../../core/sources/feiniu_backend.dart';
 import '../../../core/sources/media_source_backend.dart';
+import '../../../core/utils/platform_utils.dart';
 // SourcePlayback is no longer used; resume flows through unified detail.
 import '../../../core/sources/unified_media_adapter.dart';
 import '../../../core/utils/platform_utils.dart';
@@ -82,24 +83,27 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     final tvAreaReady = isTvPlatform && items != null && items.isNotEmpty;
 
     return PopScope(
-      // TV：拦截返回键实现多选取消 → 回顶部刷新按钮 → 回状态栏的阶梯；
+      // TV：仅多选态拦截返回键（取消多选）；其余返回放行系统默认——
+      // 逐级后退/分支根返回回影视 tab（与主流 TV「返回=后退」一致）。
       // 手机端不拦截（零副作用）。
-      canPop: !isTvPlatform,
+      canPop: !isTvPlatform || !_selecting,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        _handleTvBack();
+        if (_selecting) setState(_selectedIds.clear);
       },
       child: tvAreaReady
           ? TvFocusArea(
               // 记录条数变化时用 Key 重建区域（count 稳定约束）。
               key: ValueKey('history_${items!.length}'),
               id: 'history',
-              count: items.length + 1,
+              // 0=工具行 + 每张卡 2 元素（卡片 / 搜索按钮）。
+              count: items.length * 2 + 1,
               traversal: _historyTraversal(items.length),
-              // 长按 OK（记录卡片）：进入多选并选中当前卡片。
+              // 长按 OK（记录卡片）：进入多选并选中当前卡片；
+              // 搜索按钮（偶数索引）不触发。
               onLongPressAt: (index) {
-                if (index <= 0 || index > items.length) return;
-                final record = items[index - 1];
+                if (index <= 0 || index.isEven) return;
+                final record = items[(index - 1) ~/ 2];
                 setState(() => _selectedIds.add(record.recordId));
               },
               // 顶部上键 / 最底部下键：退出页面区域回到状态栏。
@@ -164,6 +168,8 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               ? const _HistoryEmpty(text: '播放后会自动记录在这里')
               : ListView.separated(
                   physics: const AlwaysScrollableScrollPhysics(),
+                  // TV：cacheExtent 预构建，确保列表焦点节点挂载。
+                  cacheExtent: 3000,
                   padding: EdgeInsets.fromLTRB(
                       12, 8, 12, 20 + MediaQuery.paddingOf(context).bottom),
                   itemCount: data.length,
@@ -179,7 +185,10 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                         record: record,
                         selected: _selectedIds.contains(record.recordId),
                         focusNode: useTvArea
-                            ? ctx.getFocusNode('history', index + 1)
+                            ? ctx.getFocusNode('history', 1 + index * 2)
+                            : null,
+                        searchNode: useTvArea
+                            ? ctx.getFocusNode('history', 2 + index * 2)
                             : null,
                         onLongPress: () => setState(() => _selectedIds.add(record.recordId)),
                         onTap: _selecting ? () => setState(() { _selectedIds.contains(record.recordId) ? _selectedIds.remove(record.recordId) : _selectedIds.add(record.recordId); }) : null,
@@ -195,46 +204,43 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   /// 历史页方向键遍历：0=工具行（刷新/删除），1..N=记录卡片。
   /// 单列列表左右停留；顶部再上 / 底部再下返回 -1 触发区域边界（→ 状态栏）。
   TraversalFn _historyTraversal(int recordCount) {
-    final last = recordCount;
+    final last = recordCount; // 卡片数
+    // 区域索引：0=工具行；每张卡 2 元素——卡片 = 1+2i、搜索按钮 = 2+2i。
+    //   · 上下：始终切卡片（搜索按钮上/下也回到上一/下一张卡的卡片列）
+    //   · 左/右：卡片→搜索按钮→（搜索右停留）；搜索左→卡片；卡片左停留
+    //   · 工具行：上→状态栏（-1，onBoundary）、下→第一张卡
+    //   · 最后一张卡下 → 状态栏（-1，onBoundary）
     return (current, direction) {
+      if (current == 0) {
+        switch (direction) {
+          case DPad.down:
+            return 1;
+          case DPad.up:
+            return -1;
+          case DPad.left:
+          case DPad.right:
+            return current;
+        }
+      }
+      final isCard = current.isOdd;
+      final i = (current - 1) ~/ 2;
       switch (direction) {
         case DPad.up:
-          return current <= 0 ? -1 : current - 1;
+          return i > 0 ? 1 + 2 * (i - 1) : 0;
         case DPad.down:
-          return current >= last ? -1 : current + 1;
+          return i < last - 1 ? 1 + 2 * (i + 1) : -1;
         case DPad.left:
+          return isCard ? current : 1 + 2 * i;
         case DPad.right:
-          return current;
+          return isCard ? 2 + 2 * i : current;
       }
     };
   }
 
-  /// TV 返回键阶梯：
-  ///   多选 → 取消多选；卡片 → 顶部刷新按钮；工具行/无焦点 → 状态栏；
-  ///   状态栏 → 退出历史页回影视 tab（与全局返回语义一致）。
+  /// TV 返回键：多选 → 取消多选；其余放行系统默认（逐级后退/回影视 tab）。
+  /// 状态栏聚焦时的返回由 MainShell._handleShellPop 处理（收起状态栏）。
   void _handleTvBack() {
-    final manager = TvFocusManager.instance;
-    if (manager.activeArea?.config.id == 'main_tabs') {
-      manager.exitArea('main_tabs');
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) context.go('/discover');
-      });
-      return;
-    }
-    if (_selecting) {
-      setState(_selectedIds.clear);
-      return;
-    }
-    final area = manager.getArea('history');
-    if (area != null && manager.activeArea?.config.id == 'history') {
-      if (area.focusIndex > 0) {
-        manager.focusAt('history', 0); // 回到顶部刷新按钮
-      } else {
-        manager.enterArea('main_tabs'); // 工具行：回状态栏
-      }
-      return;
-    }
-    manager.enterArea('main_tabs');
+    if (_selecting) setState(_selectedIds.clear);
   }
 
   Future<void> _selectAll() async {
@@ -261,6 +267,7 @@ class _HistoryTile extends ConsumerWidget {
     this.onTap,
     this.onLongPress,
     this.focusNode,
+    this.searchNode,
   });
   final WatchHistoryRecord record;
   final bool selected;
@@ -269,6 +276,9 @@ class _HistoryTile extends ConsumerWidget {
 
   /// TV 集中焦点管理注入的节点（null = 自建节点，走 Flutter 默认遍历）。
   final FocusNode? focusNode;
+
+  /// TV：搜索按钮焦点节点（卡片右键到达；播放按钮不参与聚焦）。
+  final FocusNode? searchNode;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -286,7 +296,12 @@ class _HistoryTile extends ConsumerWidget {
         : 0.0;
     return TvFocusable(
       onActivate: onTap ??
-          (server == null ? () {} : () => _openDetail(context, ref, server)),
+          (server == null
+              ? () {}
+              : isTvPlatform
+                  // TV：整卡一焦点，点击即续播（跳过详情页）。
+                  ? () => _resume(context, ref, server)
+                  : () => _openDetail(context, ref, server)),
       borderRadius: 14,
       focusNode: focusNode,
       child: Card(
@@ -294,7 +309,12 @@ class _HistoryTile extends ConsumerWidget {
         color: selected ? Theme.of(context).colorScheme.primaryContainer : null,
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: onTap ?? (server == null ? null : () => _openDetail(context, ref, server)),
+          onTap: onTap ??
+              (server == null
+                  ? null
+                  : isTvPlatform
+                      ? () => _resume(context, ref, server)
+                      : () => _openDetail(context, ref, server)),
           onLongPress: onLongPress,
           child: Padding(
           padding: const EdgeInsets.all(14),
@@ -362,10 +382,17 @@ class _HistoryTile extends ConsumerWidget {
                 ),
               ),
               const SizedBox(width: 4),
-              IconButton(
-                tooltip: '搜索所有媒体库',
-                icon: const Icon(Icons.travel_explore_rounded),
-                onPressed: () => _searchAllLibraries(context, ref),
+              // TV：搜索按钮参与聚焦（卡片右键到达），播放按钮不聚焦
+              // （卡片 OK 即播放）。
+              TvFocusable(
+                onActivate: () => _searchAllLibraries(context, ref),
+                focusNode: searchNode,
+                borderRadius: 20,
+                child: IconButton(
+                  tooltip: '搜索所有媒体库',
+                  icon: const Icon(Icons.travel_explore_rounded),
+                  onPressed: () => _searchAllLibraries(context, ref),
+                ),
               ),
               IconButton(
                 tooltip: '播放',

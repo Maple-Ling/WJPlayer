@@ -4,10 +4,13 @@ import 'package:go_router/go_router.dart';
 import '../../../core/api/api_interfaces.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/providers/media_providers.dart';
+import '../../../core/services/tv_focus_manager.dart';
 import '../../../core/theme/app_motion.dart';
+import '../../../core/utils/platform_utils.dart';
 import '../../../core/widgets/app_shimmer.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../widgets/common/media_widgets.dart';
+import '../../widgets/common/tv_focus_widgets.dart';
 import '../../widgets/common/tv_focusable.dart';
 
 enum LibraryViewMode { grid, list }
@@ -131,8 +134,10 @@ class _GridView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final api = ref.read(apiClientProvider);
 
-    return GridView.builder(
+    final grid = GridView.builder(
       clipBehavior: Clip.none,
+      // TV：cacheExtent 预构建，确保网格焦点节点挂载。
+      cacheExtent: 3000,
       padding: const EdgeInsets.all(18),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
@@ -152,6 +157,9 @@ class _GridView extends ConsumerWidget {
 
         return TvFocusable(
           onActivate: () => onTap(library),
+          focusNode: isTvPlatform
+              ? context.getFocusNode('libraries', index)
+              : null,
           borderRadius: 16,
           child: GestureDetector(
             onTap: () => onTap(library),
@@ -240,6 +248,17 @@ class _GridView extends ConsumerWidget {
         ),
         ).appEntrance(index: index);
       },
+    );
+    if (!isTvPlatform || libraries.isEmpty) return grid;
+    // TV：网格确定性遍历（2 列，上下/左右逐卡移动，禁止随机跳转）。
+    return TvFocusArea(
+      id: 'libraries',
+      count: libraries.length,
+      traversal: TraversalPolicies.grid(
+        columns: 2,
+        rowCount: (libraries.length / 2).ceil(),
+      ),
+      child: grid,
     );
   }
 }

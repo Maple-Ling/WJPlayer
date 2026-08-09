@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/api_interfaces.dart';
 import '../api/emby_api.dart';
 import '../network/proxy_http_client.dart';
+import '../services/home_data_cache.dart';
 import '../services/secure_credential_store.dart';
 import '../services/server_icon_cache.dart';
 import '../sources/source_credentials.dart';
@@ -393,6 +394,9 @@ class ServerListNotifier extends StateNotifier<List<ServerConfig>> {
     state = state.where((server) => server.id != id).toList();
     SecureCredentialStore.instance.remove(id);
     SourceCredentialStore.instance.remove(id); // 一并清理网盘源的附加凭据
+    // 清首页缓存（含 latest:* 预览）：删除再重接同一 id 时
+    // 不残留 24h 旧数据（新入库媒体立即可见）。
+    unawaited(HomeDataCache.invalidateAll(id));
     _saveServers();
   }
 

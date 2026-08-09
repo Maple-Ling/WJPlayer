@@ -25,11 +25,12 @@
 // )
 // ```
 
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
-    show LogicalKeyboardKey, KeyDownEvent, KeyRepeatEvent;
+    show LogicalKeyboardKey, KeyDownEvent, KeyRepeatEvent, KeyUpEvent;
 import 'package:flutter/widgets.dart'
     show FocusNode, TraversalDirection, WidgetsBinding;
 
@@ -420,33 +421,86 @@ class _TvFocusCardState extends State<TvFocusCard> {
 /// 注意：此 Widget 处理的是 Flutter 自身的 KeyEvent 通道（TextField 输入等），
 /// 原生层（MainActivity.kt）转发的按键由 tv_key_channel.dart 的 installNativeKeyBridge 处理。
 /// 两条路径最终都汇聚到 TvFocusManager，不冲突。
-class TvKeyboardListener extends StatelessWidget {
+class TvKeyboardListener extends StatefulWidget {
   const TvKeyboardListener({required this.child, super.key});
   final Widget child;
 
   @override
+  State<TvKeyboardListener> createState() => _TvKeyboardListenerState();
+}
+
+class _TvKeyboardListenerState extends State<TvKeyboardListener> {
+  // 长按 OK/Enter 判定：按下启动 500ms 计时，触发即回调 onLongPressAt；
+  // 松开（KeyUp）取消。不依赖 KeyRepeatEvent（低端遥控重复间隔不一，
+  // 可能无法触发或间隔抖动），按下计时跨设备可靠。
+  final Map<int, Timer> _longPressTimers = <int, Timer>{};
+
+  @override
+  void dispose() {
+    for (final timer in _longPressTimers.values) {
+      timer.cancel();
+    }
+    _longPressTimers.clear();
+    super.dispose();
+  }
+
+  /// OK/Enter 按下：启动长按计时（区域配置了 onLongPressAt 时）。
+  void _armLongPress(LogicalKeyboardKey key) {
+    final manager = TvFocusManager.instance;
+    final area = manager.activeArea;
+    if (area == null || area.config.onLongPressAt == null) return;
+    _longPressTimers[key.keyId]?.cancel();
+    _longPressTimers[key.keyId] = Timer(const Duration(milliseconds: 500), () {
+      _longPressTimers.remove(key.keyId);
+      final current = TvFocusManager.instance.activeArea;
+      if (current != null && current.config.onLongPressAt != null) {
+        current.config.onLongPressAt!(current.focusIndex);
+      }
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (!isTvPlatform) return child;
+    if (!isTvPlatform) return widget.child;
     return Focus(
       autofocus: true,
       onKeyEvent: (node, event) {
-        if (event is! KeyDownEvent) return KeyEventResult.ignored;
         final key = event.logicalKey;
 
-        // 长按 OK/Enter（按键重复事件）：通知当前焦点区域处理
-        // （如历史页长按 OK 进入多选删除）。
-        if (event is KeyRepeatEvent &&
+        // 长按 OK/Enter：按下计时 500ms（不依赖 KeyRepeatEvent），
+        // 触发当前焦点区域的 onLongPressAt（如历史页多选/服务器页排序）。
+        if (event is KeyDownEvent &&
+            !event.repeat &&
             (key == LogicalKeyboardKey.enter ||
                 key == LogicalKeyboardKey.select)) {
-          final manager = TvFocusManager.instance;
-          final area = manager.activeArea;
-          if (area != null && area.config.onLongPressAt != null) {
-            area.config.onLongPressAt!(area.focusIndex);
-            return KeyEventResult.handled;
-          }
+          _armLongPress(key);
+        }
+        if (event is KeyUpEvent &&
+            (key == LogicalKeyboardKey.enter ||
+                key == LogicalKeyboardKey.select)) {
+          _longPressTimers.remove(key.keyId)?.cancel();
         }
 
-        if (dispatchGlobalTvKey(key, KeyEventSource.flutter) ==
+        // KeyUp 也分发给全局处理器（TV 长按松开恢复倍速等场景需要）；
+        // 现有处理器（菜单键等）对 isUp 一律忽略，无副作用。
+        if (event is KeyUpEvent) {
+          if (dispatchGlobalTvKey(
+                event.logicalKey,
+                KeyEventSource.flutter,
+                isUp: true,
+              ) ==
+              KeyEventResult.handled) {
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        }
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+
+        if (dispatchGlobalTvKey(
+              key,
+              KeyEventSource.flutter,
+              isRepeat: event is KeyRepeatEvent,
+            ) ==
             KeyEventResult.handled) {
           return KeyEventResult.handled;
         }

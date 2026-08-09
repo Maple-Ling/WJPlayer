@@ -14,8 +14,10 @@ import 'tv_focus_manager.dart';
 enum KeyEventSource { nativeChannel, flutter }
 
 /// 全局按键处理器签名
+/// [isRepeat]：Flutter KeyRepeatEvent（长按自动重复）为 true；原生通道恒为 false。
+/// [isUp]：KeyUpEvent（按键松开）为 true；按下/重复为 false。
 typedef GlobalKeyHandler = KeyEventResult Function(
-    LogicalKeyboardKey key, KeyEventSource source);
+    LogicalKeyboardKey key, KeyEventSource source, bool isRepeat, bool isUp);
 
 /// 全局按键处理器注册表。后注册者优先，可让顶层路由覆盖默认行为。
 final List<GlobalKeyHandler> _globalKeyHandlers = <GlobalKeyHandler>[];
@@ -32,10 +34,12 @@ void unregisterGlobalKeyHandler(GlobalKeyHandler handler) {
 
 KeyEventResult dispatchGlobalTvKey(
   LogicalKeyboardKey key,
-  KeyEventSource source,
-) {
+  KeyEventSource source, {
+  bool isRepeat = false,
+  bool isUp = false,
+}) {
   for (final handler in _globalKeyHandlers.reversed.toList(growable: false)) {
-    if (handler(key, source) == KeyEventResult.handled) {
+    if (handler(key, source, isRepeat, isUp) == KeyEventResult.handled) {
       return KeyEventResult.handled;
     }
   }

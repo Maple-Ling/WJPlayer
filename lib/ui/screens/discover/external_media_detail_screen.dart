@@ -9,13 +9,17 @@ import '../../../core/api/discover/external_media_models.dart';
 import '../../../core/providers/external_media_providers.dart';
 import '../../../core/providers/media_providers.dart';
 import '../../../core/providers/server_providers.dart';
+import '../../../core/services/tv_focus_manager.dart';
+import '../../../core/services/tv_key_channel.dart';
 import '../../../core/sources/source_playback.dart';
+import '../../../core/utils/platform_utils.dart';
 import '../../utils/media_helpers.dart';
 import '../source/unified_media_screens.dart';
 import '../../widgets/common/collapsible_overview.dart';
 import '../../widgets/common/media_widgets.dart';
 import '../../widgets/common/adaptive_poster_blend.dart';
 import '../../widgets/common/playback_resource_card.dart';
+import '../../widgets/common/tv_focus_widgets.dart';
 import '../../widgets/common/tv_focusable.dart';
 import '../../widgets/common/app_toast.dart';
 
@@ -35,6 +39,52 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
   List<ServerMatchInfo> _latestMatches = const [];
   bool _hasSelectedServer = false;
   Color? _backgroundColor;
+
+  /// TV 焦点布局（build 时计算，组件方法经此取节点）。
+  FocusSectionLayout? _tvLayout;
+
+  /// 媒体信息行条目数（与 _mediaInfo 的 values 一致，供焦点分区 count）。
+  int _mediaInfoCount(ExternalMediaDetail detail) {
+    var count = 2; // 来源 / 类型
+    if (detail.originalTitle?.isNotEmpty == true) count++;
+    if (detail.year?.isNotEmpty == true) count++;
+    if (detail.runtime != null && detail.runtime! > 0) count++;
+    if (detail.numberOfSeasons != null && detail.numberOfSeasons! > 0) count++;
+    if (detail.status?.isNotEmpty == true) count++;
+    return count;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // TV：MENU=链接菜单（详情页非 tab 页，MENU 默认会落到状态栏兜底，
+    // 必须注册页面级 handler 抢占）。
+    if (isTvPlatform) registerGlobalKeyHandler(_handleMenuKey);
+  }
+
+  @override
+  void dispose() {
+    if (isTvPlatform) unregisterGlobalKeyHandler(_handleMenuKey);
+    super.dispose();
+  }
+
+  /// TV：MENU 键打开「链接」菜单（对齐主流 TV 详情页 MENU=更多操作）。
+  KeyEventResult _handleMenuKey(
+      LogicalKeyboardKey key, KeyEventSource source, bool isRepeat, bool isUp) {
+    if (key != LogicalKeyboardKey.contextMenu) return KeyEventResult.ignored;
+    if (isUp) return KeyEventResult.ignored;
+    final async = ref.read(externalMediaDetailProvider(widget.entry));
+    final detail = async.asData?.value;
+    if (detail != null) _showLinks(detail);
+    return KeyEventResult.handled;
+  }
+
+  /// 取 TV 焦点节点（layout 未就绪/手机端返回 null → 组件自建节点）。
+  FocusNode? _tvNode(String sectionId, int item) {
+    final layout = _tvLayout;
+    if (layout == null || !isTvPlatform) return null;
+    return context.getFocusNode('media_detail', layout.indexOf(sectionId, item));
+  }
 
   /// 跨服务器搜索关键词：一律用纯标题（与 BCD 详情页/播放器聚合一致）。
   /// 注意：不能拼接 SxxExx —— Emby search 的 IncludeItemTypes 硬编码
@@ -91,7 +141,10 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
     }
 
     final background = _backgroundColor ?? Theme.of(context).scaffoldBackgroundColor;
-    return Scaffold(
+    // TV：确定性焦点区域（播放/季/分集分段/分集/资源/演员/剧照/推荐/链接/
+    // 工作室/媒体信息）。count 随分集窗口与异步资源变化 → Key 重建区域。
+    _tvLayout = null;
+    Widget body = Scaffold(
       backgroundColor: background,
       body: AnimatedContainer(
         duration: const Duration(milliseconds: 420),
@@ -190,6 +243,49 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
       ]),
     ),
     );
+    // TV：包确定性焦点区域。仅数据就绪的分区纳入（count 稳定）；
+    // 分集窗口/异步资源变化时经 ValueKey 重建区域。
+    if (!isTvPlatform) return body;
+    final seasons = detail.seasons.where((e) => e.number > 0).toList();
+    final ranges = <int>[
+      for (var start = 1; start <= (seasonInfo.asData?.value.episodes.length ?? 0); start += 10) start,
+    ];
+    final visibleEpisodes = seasonInfo.asData?.value.episodes
+            .where((episode) =>
+                episode.number >= _episodeRangeStart &&
+                episode.number <= (_episodeRangeStart + 9).clamp(_episodeRangeStart, seasonInfo.asData!.value.episodes.length))
+            .toList() ??
+        const <ExternalEpisode>[];
+    final matchList = matches.asData?.value ?? const <ServerMatchInfo>[];
+    final sections = <FocusSection>[
+      const FocusSection('play', 1),
+      if (seasons.isNotEmpty) const FocusSection('season', 1),
+      if (ranges.length > 1) FocusSection('range', ranges.length),
+      if (seasonInfo.hasValue && visibleEpisodes.isNotEmpty)
+        FocusSection('episodes', visibleEpisodes.length),
+      if (matches.hasValue && matchList.isNotEmpty)
+        FocusSection('resources', matchList.length),
+      if (detail.people.isNotEmpty) FocusSection('people', detail.people.length),
+      if (detail.images.isNotEmpty) FocusSection('gallery', detail.images.length),
+      if (detail.recommendations.isNotEmpty)
+        FocusSection('recs', detail.recommendations.length),
+      FocusSection('links', 3),
+      if (detail.companies.isNotEmpty)
+        FocusSection('companies', detail.companies.length),
+      FocusSection('media_info', _mediaInfoCount(detail)),
+    ];
+    if (sections.isEmpty) return body;
+    final layout = FocusSectionLayout(sections);
+    _tvLayout = layout;
+    final revision =
+        '${_season}_${_episodeRangeStart}_${matchList.length}_${seasonInfo.hasValue}';
+    return TvFocusArea(
+      key: ValueKey('media_detail_$revision'),
+      id: 'media_detail',
+      count: layout.totalCount,
+      traversal: layout.traversal,
+      child: body,
+    );
   }
 
   static const _heroMeta = TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF3B3B3B));
@@ -207,7 +303,7 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
         ? null
         : list[_selectedServerIndex.clamp(0, list.length - 1)];
     return Center(child: SizedBox(width: 185, height: 50, child: TvFocusable(
-      autofocus: true,
+      focusNode: _tvNode('play', 0),
       enabled: selected != null,
       borderRadius: 999,
       onActivate: selected == null ? () {} : () => _openMatch(selected, directPlay: true),
@@ -228,17 +324,17 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
       const SizedBox(width: 6),
       Text('第 $_season 季', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
       const SizedBox(width: 6),
-      ExcludeFocus(
-        child: PopupMenuButton<int>(
-          icon: const Icon(Icons.unfold_more_rounded, size: 20),
-          tooltip: '切换分季',
-          onSelected: (value) => setState(() {
-            _season = value;
-            _episode = null;
-            _episodeRangeStart = 1;
-          }),
-          itemBuilder: (_) => [for (final season in seasons) PopupMenuItem(value: season.number, child: Text(season.name))],
-        ),
+      PopupMenuButton<int>(
+        // TV：季选择器可聚焦（去掉原 ExcludeFocus，区域节点注入）。
+        focusNode: _tvNode('season', 0),
+        icon: const Icon(Icons.unfold_more_rounded, size: 20),
+        tooltip: '切换分季',
+        onSelected: (value) => setState(() {
+          _season = value;
+          _episode = null;
+          _episodeRangeStart = 1;
+        }),
+        itemBuilder: (_) => [for (final season in seasons) PopupMenuItem(value: season.number, child: Text(season.name))],
       ),
     ]);
   }
@@ -255,6 +351,8 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
     return SizedBox(
       height: 40,
       child: ListView.separated(
+        // TV：cacheExtent 覆盖整行，确保焦点节点挂载。
+        cacheExtent: 5000,
         scrollDirection: Axis.horizontal,
         itemCount: ranges.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
@@ -262,13 +360,18 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
           final start = ranges[index];
           final end = (start + 9).clamp(start, episodes.length);
           final selected = start == selectedStart;
-          return GestureDetector(
-            onTap: () => setState(() {
-              _episodeRangeStart = start;
-              final current = _episode?.number ?? 0;
-              if (current < start || current > end) _episode = null;
-            }),
-            child: AnimatedContainer(
+          final onSelect = () => setState(() {
+            _episodeRangeStart = start;
+            final current = _episode?.number ?? 0;
+            if (current < start || current > end) _episode = null;
+          });
+          return TvFocusable(
+            onActivate: onSelect,
+            focusNode: _tvNode('range', index),
+            borderRadius: 999,
+            child: GestureDetector(
+              onTap: onSelect,
+              child: AnimatedContainer(
               duration: const Duration(milliseconds: 180),
               curve: Curves.easeOutCubic,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -315,7 +418,8 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
                 ],
               ),
             ),
-          );
+          ),
+        );
         },
       ),
     );
@@ -328,12 +432,18 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
     return SizedBox(height: 232, child: ListView.separated(
       scrollDirection: Axis.horizontal,
       clipBehavior: Clip.none,
+      // TV：cacheExtent 覆盖整行，确保分集焦点节点挂载。
+      cacheExtent: 5000,
       itemCount: visible.length,
       separatorBuilder: (_, __) => const SizedBox(width: 10),
       itemBuilder: (_, index) {
         final episode = visible[index];
         final selected = _episode?.number == episode.number;
-        return SizedBox(width: 220, child: InkWell(
+        return SizedBox(width: 220, child: TvFocusable(
+          onActivate: () => setState(() => _episode = episode),
+          focusNode: _tvNode('episodes', index),
+          borderRadius: 18,
+          child: InkWell(
           onTap: () => setState(() => _episode = episode),
           borderRadius: BorderRadius.circular(18),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -345,6 +455,7 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
             const SizedBox(height: 5),
             Text(episode.overview ?? '', maxLines: 3, overflow: TextOverflow.ellipsis, style: const TextStyle(height: 1.35, color: Colors.black54)),
           ]),
+        ),
         ));
       },
     ));
@@ -358,6 +469,8 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
         : SizedBox(
             height: 155,
             child: ListView.separated(
+              // TV：cacheExtent 覆盖整行，确保资源卡焦点节点挂载。
+              cacheExtent: 5000,
               scrollDirection: Axis.horizontal,
               itemCount: matches.length,
               separatorBuilder: (_, __) => const SizedBox(width: 8),
@@ -372,6 +485,7 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
                       _selectedServerIndex = index;
                       _hasSelectedServer = true;
                     }),
+                    focusNode: _tvNode('resources', index),
                     borderRadius: 12,
                     child: PlaybackResourceCard(
                       serverName: match.serverName,
@@ -400,16 +514,17 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
           ),
   );
 
-  Widget _people(List<ExternalPerson> people) => SizedBox(height: 105, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: people.length, separatorBuilder: (_, __) => const SizedBox(width: 9), itemBuilder: (_, index) { final person = people[index]; return SizedBox(width: 78, child: TvFocusable(onActivate: () => _showPerson(person), borderRadius: 30, child: InkWell(onTap: () => _showPerson(person), child: Column(children: [ClipOval(child: SizedBox(width: 58, height: 58, child: MediaImage(imageUrl: person.profileUrl, fit: BoxFit.cover, cacheWidth: 120))), const SizedBox(height: 8), Text(person.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)), Text(person.character ?? person.originalName ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.black54))])))); }));
+  Widget _people(List<ExternalPerson> people) => SizedBox(height: 105, child: ListView.separated(cacheExtent: 5000, scrollDirection: Axis.horizontal, itemCount: people.length, separatorBuilder: (_, __) => const SizedBox(width: 9), itemBuilder: (_, index) { final person = people[index]; return SizedBox(width: 78, child: TvFocusable(onActivate: () => _showPerson(person), focusNode: _tvNode('people', index), borderRadius: 30, child: InkWell(onTap: () => _showPerson(person), child: Column(children: [ClipOval(child: SizedBox(width: 58, height: 58, child: MediaImage(imageUrl: person.profileUrl, fit: BoxFit.cover, cacheWidth: 120))), const SizedBox(height: 8), Text(person.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)), Text(person.character ?? person.originalName ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.black54))])))); }));
 
-  Widget _gallery(List<String> images) => SizedBox(height: 150, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: images.length, separatorBuilder: (_, __) => const SizedBox(width: 9), itemBuilder: (_, index) => TvFocusable(onActivate: () => _showImage(images, index), borderRadius: 18, child: InkWell(onTap: () => _showImage(images, index), child: AspectRatio(aspectRatio: 16 / 9, child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaImage(imageUrl: images[index], fit: BoxFit.cover, cacheWidth: 320)))))));
+  Widget _gallery(List<String> images) => SizedBox(height: 150, child: ListView.separated(cacheExtent: 5000, scrollDirection: Axis.horizontal, itemCount: images.length, separatorBuilder: (_, __) => const SizedBox(width: 9), itemBuilder: (_, index) => TvFocusable(onActivate: () => _showImage(images, index), focusNode: _tvNode('gallery', index), borderRadius: 18, child: InkWell(onTap: () => _showImage(images, index), child: AspectRatio(aspectRatio: 16 / 9, child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaImage(imageUrl: images[index], fit: BoxFit.cover, cacheWidth: 320)))))));
 
   Widget _recommendations(List<DiscoverEntry> items) => SizedBox(height: 196, child: ListView.separated(
       scrollDirection: Axis.horizontal,
       clipBehavior: Clip.none,
+      cacheExtent: 5000,
       padding: const EdgeInsets.symmetric(horizontal: 2),
       itemCount: items.length,
-      separatorBuilder: (_, __) => const SizedBox(width: 10), itemBuilder: (_, index) { final item = items[index]; return TvFocusable(onActivate: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ExternalMediaDetailScreen(entry: item))), borderRadius: 18, child: InkWell(onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ExternalMediaDetailScreen(entry: item))), child: SizedBox(width: 100, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaImage(imageUrl: item.posterUrl, fit: BoxFit.cover, cacheWidth: 200))), const SizedBox(height: 8), Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)), Text(item.year ?? '', style: const TextStyle(color: Colors.black54))])))); }));
+      separatorBuilder: (_, __) => const SizedBox(width: 10), itemBuilder: (_, index) { final item = items[index]; return TvFocusable(onActivate: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ExternalMediaDetailScreen(entry: item))), focusNode: _tvNode('recs', index), borderRadius: 18, child: InkWell(onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ExternalMediaDetailScreen(entry: item))), child: SizedBox(width: 100, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaImage(imageUrl: item.posterUrl, fit: BoxFit.cover, cacheWidth: 200))), const SizedBox(height: 8), Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)), Text(item.year ?? '', style: const TextStyle(color: Colors.black54))])))); }));
 
   Widget _mediaInfo(ExternalMediaDetail detail) {
     final values = <(String, String)>[
@@ -428,11 +543,12 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
       spacing: 8,
       runSpacing: 8,
       children: [
-        for (final value in values)
+        for (var i = 0; i < values.length; i++)
           TvFocusable(
             onActivate: () {},
+            focusNode: _tvNode('media_info', i),
             borderRadius: 999,
-            child: Chip(label: Text('${value.$1}  ${value.$2}')),
+            child: Chip(label: Text('${values[i].$1}  ${values[i].$2}')),
           ),
       ],
     );
@@ -461,18 +577,19 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
       ),
     ];
     return Wrap(spacing: 12, runSpacing: 10, children: [
-      for (final value in values)
+      for (var i = 0; i < values.length; i++)
         TvFocusable(
           onActivate: () => launchUrl(
-            Uri.parse(value.$2),
+            Uri.parse(values[i].$2),
             mode: LaunchMode.externalApplication,
           ),
+          focusNode: _tvNode('links', i),
           borderRadius: 999,
           child: ActionChip(
             avatar: const Icon(Icons.open_in_new_rounded, size: 17),
-            label: Text(value.$1),
+            label: Text(values[i].$1),
             onPressed: () => launchUrl(
-              Uri.parse(value.$2),
+              Uri.parse(values[i].$2),
               mode: LaunchMode.externalApplication,
             ),
           ),
@@ -480,7 +597,7 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
     ]);
   }
 
-  Widget _companies(List<ExternalCompany> companies) => SizedBox(height: 54, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: companies.length, separatorBuilder: (_, __) => const SizedBox(width: 12), itemBuilder: (_, index) => TvFocusable(onActivate: () {}, borderRadius: 999, child: ActionChip(avatar: companies[index].logoUrl == null ? null : SizedBox(width: 28, height: 20, child: MediaImage(imageUrl: companies[index].logoUrl, fit: BoxFit.contain)), label: Text(companies[index].name), onPressed: () {}))));
+  Widget _companies(List<ExternalCompany> companies) => SizedBox(height: 54, child: ListView.separated(cacheExtent: 5000, scrollDirection: Axis.horizontal, itemCount: companies.length, separatorBuilder: (_, __) => const SizedBox(width: 12), itemBuilder: (_, index) => TvFocusable(onActivate: () {}, focusNode: _tvNode('companies', index), borderRadius: 999, child: ActionChip(avatar: companies[index].logoUrl == null ? null : SizedBox(width: 28, height: 20, child: MediaImage(imageUrl: companies[index].logoUrl, fit: BoxFit.contain)), label: Text(companies[index].name), onPressed: () {}))));
 
   Widget _sectionTitle(String title, {Widget? trailing}) => Row(children: [Text(title, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900)), const Spacer(), if (trailing != null) trailing]);
 

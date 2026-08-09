@@ -408,16 +408,16 @@ class _MainShellState extends ConsumerState<MainShell> {
   DateTime? _lastBackPress;
 
   // 菜单键处理器：进入/退出状态栏。
-  //   · 仅「影视页」（/discover）与「服务器内媒体页」（/home）允许 MENU 返回
-  //     状态栏；其他页面（记录/设置/服务器列表/搜索等）MENU 不触发状态栏，
-  //     由返回键/下键回状态栏（handled 吞掉，避免落到 tv_key_channel 默认分支）。
+  //   · 所有支持底部状态栏的页面（影视/记录/服务器/搜索/设置/服务器媒体页）
+  //     均允许 MENU 切换状态栏——对齐主流 TV 平台「MENU=呼出导航/菜单」的
+  //     惯例，避免按键被无声吞掉（2026-08-09 检测修复）。
   //   · 状态栏内部再按一次 MENU → 安全退出并归还进入前的区域焦点。
-  KeyEventResult _handleMenuKey(LogicalKeyboardKey key, KeyEventSource source) {
+  //   · 播放器等 push 页面注册的 handler 注册更晚、优先执行，不会落到这里。
+  KeyEventResult _handleMenuKey(
+      LogicalKeyboardKey key, KeyEventSource source, bool isRepeat, bool isUp) {
     if (key != LogicalKeyboardKey.contextMenu) return KeyEventResult.ignored;
-    final path = widget.currentPath;
-    if (path != '/discover' && path != '/home') {
-      return KeyEventResult.handled;
-    }
+    if (isUp) return KeyEventResult.ignored; // KeyUp 不处理（避免双触发）。
+    if (!_supportsFloatingTabBar) return KeyEventResult.ignored;
     final manager = TvFocusManager.instance;
     if (manager.activeArea?.config.id == 'main_tabs') {
       manager.exitArea('main_tabs');
@@ -435,6 +435,13 @@ class _MainShellState extends ConsumerState<MainShell> {
   // 分支根返回统一回到默认“影视”；影视根两次返回退出。
   void _handleShellPop() {
     final router = GoRouter.of(context);
+    // TV：状态栏（底部导航）聚焦时按返回 = 收起状态栏、归还页面焦点，
+    // 不执行页面后退（对齐主流「返回关闭最上层 UI」语义）。
+    if (isTvPlatform &&
+        TvFocusManager.instance.activeArea?.config.id == 'main_tabs') {
+      TvFocusManager.instance.exitArea('main_tabs');
+      return;
+    }
     if (router.canPop()) {
       // 延迟到下一帧再 pop：PopScope 回调正处于 pop 手势处理中，
       // 同步导航可能导致 Navigator 状态不一致（"already popping"）而卡死。
@@ -544,6 +551,9 @@ class _MainShellState extends ConsumerState<MainShell> {
   /// 同步"当前可见 tab 页面对应的页面区域"（供状态栏上键退出/下键切入）。
   void _syncCurrentPageArea() {
     switch (widget.currentPath) {
+      case '/discover':
+        // 影视页：状态栏上键 → 首个焦点元素（平台行/首卡），下键 → 第二元素。
+        TvFocusManager.instance.setCurrentPageArea('discover');
       case '/history':
         // 状态栏上键 → 刷新按钮（tools[0]）；下键 → 第一条记录（index 1）。
         TvFocusManager.instance.setCurrentPageArea('history');

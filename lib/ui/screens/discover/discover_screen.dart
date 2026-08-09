@@ -3,10 +3,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/discover/discover_models.dart';
 import '../../../core/providers/discover_providers.dart';
+import '../../../core/services/tv_focus_manager.dart';
+import '../../../core/utils/platform_utils.dart';
 import '../../../core/widgets/app_shimmer.dart';
 import '../../widgets/common/media_widgets.dart';
+import '../../widgets/common/tv_focus_widgets.dart';
 import '../../widgets/common/tv_focusable.dart';
 import 'external_media_detail_screen.dart';
+
+/// 判断分区是否为「播出平台」行（TMDB 来源时显示）。
+bool isPlatformSection(
+    ({DiscoverCategory category, List<DiscoverEntry> entries}) section) {
+  const platforms = {
+    'Netflix', 'Prime Video', 'Disney+', 'Apple TV+', 'HBO Max', 'Hulu',
+    'Crunchyroll', 'YouTube', 'Paramount+', 'Bilibili', '优酷', '爱奇艺',
+    '腾讯视频'
+  };
+  return platforms.contains(section.category.label);
+}
 
 class DiscoverScreen extends ConsumerWidget {
   const DiscoverScreen({super.key});
@@ -15,34 +29,71 @@ class DiscoverScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final source = ref.watch(reviewSourceProvider);
     final sections = ref.watch(discoverSectionsProvider);
-    return Scaffold(
-      appBar: AppBar(
-        automaticallyImplyLeading: false,
-        centerTitle: true,
-        title: _SourceCapsuleSelector(
-          source: source,
-          onChanged: (value) {
-            ref.read(reviewSourceProvider.notifier).state = value;
+    // TV：数据就绪时计算焦点布局（来源选择器 index 0 + 平台行 + 内容分区），
+    // 包住整个 Scaffold——否则 AppBar 的来源选择器在方向键被区域接管后不可达。
+    final visible = sections.maybeWhen(
+      data: (values) =>
+          values.where((section) => section.entries.isNotEmpty).toList(),
+      orElse: () =>
+          const <({DiscoverCategory category, List<DiscoverEntry> entries})>[],
+    );
+    final platforms = source == ReviewSource.tmdb
+        ? visible.where(isPlatformSection).toList()
+        : const <({DiscoverCategory category, List<DiscoverEntry> entries})>[];
+    final content = visible.where((s) => !isPlatformSection(s)).toList();
+
+    Widget buildScaffold(BuildContext ctx, FocusSectionLayout? layout) {
+      return Scaffold(
+        appBar: AppBar(
+          automaticallyImplyLeading: false,
+          centerTitle: true,
+          title: _SourceCapsuleSelector(
+            source: source,
+            // TV：来源选择器 = 区域 index 0（OK 弹出来源菜单）。
+            focusNode:
+                layout == null ? null : ctx.getFocusNode('discover', 0),
+            onChanged: (value) {
+              ref.read(reviewSourceProvider.notifier).state = value;
+              ref.invalidate(discoverSectionsProvider);
+            },
+          ),
+        ),
+        body: RefreshIndicator(
+          onRefresh: () async {
             ref.invalidate(discoverSectionsProvider);
+            await ref.read(discoverSectionsProvider.future);
           },
-        ),
-      ),
-      body: RefreshIndicator(
-        onRefresh: () async {
-          ref.invalidate(discoverSectionsProvider);
-          await ref.read(discoverSectionsProvider.future);
-        },
-        child: sections.when(
-          loading: () => const _DiscoverLoading(),
-          error: (_, __) => _DiscoverEmpty(source: source, failed: true),
-          data: (values) {
-            final visible = values.where((section) => section.entries.isNotEmpty).toList();
-            return visible.isEmpty
+          child: sections.when(
+            loading: () => const _DiscoverLoading(),
+            error: (_, __) => _DiscoverEmpty(source: source, failed: true),
+            data: (values) => visible.isEmpty
                 ? _DiscoverEmpty(source: source)
-                : _DiscoverSections(source: source, sections: visible);
-          },
+                : _DiscoverSections(
+                    source: source,
+                    sections: visible,
+                    layout: layout,
+                  ),
+          ),
         ),
-      ),
+      );
+    }
+
+    if (!isTvPlatform || visible.isEmpty) {
+      return buildScaffold(context, null);
+    }
+    final tvSections = <FocusSection>[
+      const FocusSection('source', 1),
+      if (platforms.isNotEmpty) FocusSection('platforms', platforms.length),
+      for (var i = 0; i < content.length; i++)
+        FocusSection('sec_$i', content[i].entries.length, trailing: true),
+    ];
+    final layout = FocusSectionLayout(tvSections);
+    return TvFocusArea(
+      id: 'discover',
+      count: layout.totalCount,
+      traversal: layout.traversal,
+      // Builder：取焦点节点时区域已注册（TvFocusArea 先挂载）。
+      child: Builder(builder: (ctx) => buildScaffold(ctx, layout)),
     );
   }
 }
@@ -51,15 +102,23 @@ class DiscoverScreen extends ConsumerWidget {
 /// 点开后从胶囊正下方弹出三项列表（豆瓣在上，TMDB 居中，IMDb 在下），
 /// 当前来源带勾选态，选完即收起。改用 PopupMenuButton 确保三项都可点。
 class _SourceCapsuleSelector extends StatelessWidget {
-  const _SourceCapsuleSelector({required this.source, required this.onChanged});
+  const _SourceCapsuleSelector({
+    required this.source,
+    required this.onChanged,
+    this.focusNode,
+  });
   final ReviewSource source;
   final ValueChanged<ReviewSource> onChanged;
+
+  /// TV 集中焦点管理注入的节点（null = 自建节点，走 Flutter 默认遍历）。
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return PopupMenuButton<ReviewSource>(
       tooltip: '切换评分来源',
+      focusNode: focusNode,
       offset: const Offset(0, -56),
       position: PopupMenuPosition.under,
       color: scheme.surfaceContainerHighest,
@@ -151,22 +210,34 @@ class _CapsulePill extends StatelessWidget {
 }
 
 class _DiscoverSections extends StatelessWidget {
-  const _DiscoverSections({required this.source, required this.sections});
+  const _DiscoverSections({
+    required this.source,
+    required this.sections,
+    this.layout,
+  });
   final ReviewSource source;
   final List<
       ({DiscoverCategory category, List<DiscoverEntry> entries})> sections;
 
-  bool _isPlatform(String label) => const {
-    'Netflix','Prime Video','Disney+','Apple TV+','HBO Max','Hulu','Crunchyroll',
-    'YouTube','Paramount+','Bilibili','优酷','爱奇艺','腾讯视频'
-  }.contains(label);
+  /// TV 焦点布局（null = 手机端或数据未就绪，不接集中焦点管理）。
+  /// 区域本身由 DiscoverScreen 包住整个 Scaffold（含 AppBar 来源选择器）。
+  final FocusSectionLayout? layout;
 
   @override
   Widget build(BuildContext context) {
     final platforms = source == ReviewSource.tmdb
-        ? sections.where((section) => _isPlatform(section.category.label)).toList()
+        ? sections.where(isPlatformSection).toList()
         : const <({DiscoverCategory category, List<DiscoverEntry> entries})>[];
-    final content = sections.where((section) => !_isPlatform(section.category.label)).toList();
+    final content = sections.where((s) => !isPlatformSection(s)).toList();
+    return _buildList(context, platforms, content, layout);
+  }
+
+  Widget _buildList(
+    BuildContext context,
+    List<({DiscoverCategory category, List<DiscoverEntry> entries})> platforms,
+    List<({DiscoverCategory category, List<DiscoverEntry> entries})> content,
+    FocusSectionLayout? layout,
+  ) {
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: EdgeInsets.only(top: 8, bottom: 88 + MediaQuery.paddingOf(context).bottom),
@@ -179,51 +250,99 @@ class _DiscoverSections extends StatelessWidget {
           SizedBox(
             height: 52,
             child: ListView.separated(
+              // TV：cacheExtent 覆盖整行，确保视口外卡片节点全部挂载
+              // （否则确定性遍历聚焦到未挂载节点会静默失败、回退默认遍历乱跳）。
+              cacheExtent: 5000,
               padding: const EdgeInsets.symmetric(horizontal: 14),
               scrollDirection: Axis.horizontal,
               itemCount: platforms.length,
               separatorBuilder: (_, __) => const SizedBox(width: 9),
-              itemBuilder: (_, index) => ActionChip(
-                avatar: const Icon(Icons.live_tv_rounded, size: 18),
-                label: Text(platforms[index].category.label),
-                onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                  builder: (_) => _PlatformCatalogScreen(section: platforms[index]),
-                )),
-              ),
+              itemBuilder: (_, index) {
+                final platform = platforms[index];
+                return TvFocusable(
+                  onActivate: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder: (_) => _PlatformCatalogScreen(section: platform),
+                  )),
+                  focusNode: layout == null
+                      ? null
+                      : context.getFocusNode('discover', layout.indexOf('platforms', index)),
+                  borderRadius: 16,
+                  child: ActionChip(
+                    avatar: const Icon(Icons.live_tv_rounded, size: 18),
+                    label: Text(platform.category.label),
+                    onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                      builder: (_) => _PlatformCatalogScreen(section: platform),
+                    )),
+                  ),
+                );
+              },
             ),
           ),
           const SizedBox(height: 18),
         ],
-        for (final section in content)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 22),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                child: Row(
-                  children: [
-                    Expanded(child: Text(section.category.label, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800))),
-                    TextButton(
-                      onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => DiscoverCategoryScreen(category: section.category))),
-                      child: const Text('查看更多'),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 10),
-              SizedBox(
-                height: 226,
-                child: ListView.separated(
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  scrollDirection: Axis.horizontal,
-                  itemCount: section.entries.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 11),
-                  itemBuilder: (_, itemIndex) => SizedBox(width: 120, child: _DiscoverCard(entry: section.entries[itemIndex])),
-                ),
-              ),
-            ]),
-          ),
+        for (var i = 0; i < content.length; i++)
+          _buildContentSection(context, i, content[i], layout),
       ],
+    );
+  }
+
+  /// 单个内容分区：标题 + 「查看更多」（行尾焦点节点）+ 横向卡片行。
+  Widget _buildContentSection(
+    BuildContext context,
+    int sectionIndex,
+    ({DiscoverCategory category, List<DiscoverEntry> entries}) section,
+    FocusSectionLayout? layout,
+  ) {
+    final sectionId = 'sec_$sectionIndex';
+    final hasFocus = layout != null && section.entries.isNotEmpty;
+    final moreNode = hasFocus
+        ? context.getFocusNode('discover', layout.indexOf(sectionId, section.entries.length))
+        : null;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 22),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          child: Row(
+            children: [
+              Expanded(child: Text(section.category.label, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800))),
+              TextButton(
+                // TV：行内上键第一次聚焦到本行「查看更多」；节点由 TvFocusManager 管理。
+                focusNode: moreNode,
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => DiscoverCategoryScreen(category: section.category))),
+                style: ButtonStyle(
+                  overlayColor: WidgetStateProperty.resolveWith((states) =>
+                      states.contains(WidgetState.focused)
+                          ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.22)
+                          : null),
+                ),
+                child: const Text('查看更多'),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 226,
+          child: ListView.separated(
+            // TV：cacheExtent 覆盖整行（同平台行，防焦点节点未挂载）。
+            cacheExtent: 5000,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            scrollDirection: Axis.horizontal,
+            itemCount: section.entries.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 11),
+            itemBuilder: (_, itemIndex) => SizedBox(
+              width: 120,
+              child: _DiscoverCard(
+                entry: section.entries[itemIndex],
+                focusNode: hasFocus
+                    ? context.getFocusNode('discover', layout.indexOf(sectionId, itemIndex))
+                    : null,
+              ),
+            ),
+          ),
+        ),
+      ]),
     );
   }
 }
@@ -256,8 +375,11 @@ class _DiscoverGrid extends StatelessWidget {
 }
 
 class _DiscoverCard extends StatelessWidget {
-  const _DiscoverCard({required this.entry});
+  const _DiscoverCard({required this.entry, this.focusNode});
   final DiscoverEntry entry;
+
+  /// TV 集中焦点管理注入的节点（null = 自建节点，走 Flutter 默认遍历）。
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -265,6 +387,7 @@ class _DiscoverCard extends StatelessWidget {
       onActivate: () => Navigator.of(context).push(MaterialPageRoute<void>(
         builder: (_) => ExternalMediaDetailScreen(entry: entry),
       )),
+      focusNode: focusNode,
       borderRadius: 12,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
@@ -479,15 +602,49 @@ class _DiscoverCategoryScreenState extends ConsumerState<DiscoverCategoryScreen>
         child: async.when(
           loading: () => const _DiscoverLoading(),
           error: (_, __) => const _DiscoverEmpty(source: ReviewSource.tmdb, failed: true),
-          data: (items) => GridView.builder(
-            controller: _controller,
-            physics: const AlwaysScrollableScrollPhysics(),
-            clipBehavior: Clip.none,
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 150, childAspectRatio: 0.56, mainAxisSpacing: 18, crossAxisSpacing: 12),
-            itemCount: items.length,
-            itemBuilder: (_, index) => _DiscoverCard(entry: items[index]),
-          ),
+          data: (items) {
+            if (!isTvPlatform || items.isEmpty) {
+              return GridView.builder(
+                controller: _controller,
+                physics: const AlwaysScrollableScrollPhysics(),
+                clipBehavior: Clip.none,
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 150, childAspectRatio: 0.56, mainAxisSpacing: 18, crossAxisSpacing: 12),
+                itemCount: items.length,
+                itemBuilder: (_, index) => _DiscoverCard(entry: items[index]),
+              );
+            }
+            // TV：网格确定性遍历（6 列，上下/左右逐卡移动，禁止随机跳转）。
+            const columns = 6;
+            return TvFocusArea(
+              id: 'discover_category_${widget.category.id}',
+              count: items.length,
+              traversal: TraversalPolicies.grid(
+                columns: columns,
+                rowCount: (items.length / columns).ceil(),
+              ),
+              child: GridView.builder(
+                controller: _controller,
+                physics: const AlwaysScrollableScrollPhysics(),
+                clipBehavior: Clip.none,
+                // TV：cacheExtent 预构建，确保网格焦点节点挂载。
+                cacheExtent: 3000,
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: columns,
+                  childAspectRatio: 0.56,
+                  mainAxisSpacing: 18,
+                  crossAxisSpacing: 12,
+                ),
+                itemCount: items.length,
+                itemBuilder: (_, index) => _DiscoverCard(
+                  entry: items[index],
+                  focusNode: context.getFocusNode(
+                      'discover_category_${widget.category.id}', index),
+                ),
+              ),
+            );
+          },
         ),
       ),
     );

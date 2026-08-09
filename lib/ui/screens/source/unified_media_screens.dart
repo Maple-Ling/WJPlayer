@@ -19,6 +19,7 @@ import '../../../core/providers/server_card_stats_provider.dart';
 import '../../../core/providers/server_providers.dart';
 import '../../../core/providers/watch_history_providers.dart';
 import '../../../core/services/tv_focus_manager.dart';
+import '../../../core/services/tv_key_channel.dart';
 import '../../../core/services/watch_history/watch_history_models.dart';
 import '../../../core/services/home_data_cache.dart';
 import '../../../core/sources/media_source_backend.dart';
@@ -151,28 +152,53 @@ class _UnifiedMediaHomeScreenState
     final initial = ref.read(currentServerProvider);
     if (initial != null) {
       _serverId = initial.id;
-      Future<void>.microtask(_load);
+      Future<void>.microtask(_loadWithSilentRefresh);
     }
     ref.listenManual<ServerConfig?>(currentServerProvider, (previous, next) {
       if (next != null && next.id != _serverId) {
         _serverId = next.id;
-        Future<void>.microtask(_load);
+        Future<void>.microtask(_loadWithSilentRefresh);
       }
     });
   }
 
-  Future<void> _load({bool forceRefresh = false}) async {
+  /// 缓存秒开 + 后台静默刷新（stale-while-revalidate）：
+  /// 首次进入先用本地缓存立即显示，随后后台强制重新拉取最新数据
+  /// （更新缓存与 UI）——TV 无下拉刷新、手机端不主动刷新的用户
+  /// 也能自动拿到新入库媒体，无需任何手动操作。
+  /// 静默刷新节流：app 生命周期内每 24 小时最多一次（与缓存 TTL 24h 协同：
+  /// 每天首次进入首页时后台刷新一次最新数据；缓存过期后进入自然走网络），
+  /// 几乎不产生额外扫库。静态时间戳，页面重建也不重置。
+  static DateTime? _lastSilentRefreshAt;
+  static const Duration _silentRefreshInterval = Duration(hours: 24);
+
+  Future<void> _loadWithSilentRefresh() async {
+    await _load();
+    if (!mounted) return;
+    final now = DateTime.now();
+    if (_lastSilentRefreshAt != null &&
+        now.difference(_lastSilentRefreshAt!) < _silentRefreshInterval) {
+      return; // 节流窗口内：仅秒开缓存，不重复扫库。
+    }
+    _lastSilentRefreshAt = now;
+    unawaited(_load(forceRefresh: true, silent: true));
+  }
+
+  Future<void> _load({bool forceRefresh = false, bool silent = false}) async {
     final server = ref.read(currentServerProvider);
     if (server == null ||
         (server.sourceKind != SourceKind.emby &&
             server.sourceKind != SourceKind.feiniu)) {
       return;
     }
-    setState(() {
-      _loading = true;
-      _error = null;
-      _previews.clear();
-    });
+    // 静默刷新：不显示 loading、不清空当前预览（避免闪屏/焦点漂移）。
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+        _previews.clear();
+      });
+    }
     final adapter = _adapter(server);
     try {
       // 首页数据走本地缓存（24h）：首次/过期才请求网络，之后打开秒开，
@@ -228,6 +254,9 @@ class _UnifiedMediaHomeScreenState
                   (json as List).map(_entryFromCacheJson).toList(),
               load: () => adapter.preview(library.id),
               encode: (v) => v.map(_entryToCacheJson).toList(),
+              // 下拉刷新/重试必须强制重新拉取（否则分类栏永远显示
+              // 24h 缓存：新入库媒体不显示、刷新无效）。
+              forceRefresh: forceRefresh,
             );
             return (library.id, items);
           } catch (_) {
@@ -246,6 +275,12 @@ class _UnifiedMediaHomeScreenState
       });
     } catch (error) {
       if (!mounted) return;
+      if (silent) {
+        // 静默刷新失败：保留当前已显示的数据，不弹错误页、不打断观看
+        // （下次进入/节流窗口过后自动重试）。
+        setState(() => _loading = false);
+        return;
+      }
       setState(() {
         _loading = false;
         _error = '加载影视首页失败: $error';
@@ -294,7 +329,7 @@ class _UnifiedMediaHomeScreenState
           ),
         ),
       );
-      if (mounted) await _load();
+      if (mounted) await _loadWithSilentRefresh();
     } finally {
       _navInFlight = false;
     }
@@ -672,6 +707,26 @@ class _UnifiedMediaDetailScreenState
   final Map<String, List<UnifiedMediaResource>> _resourceCache = {};
   final ScrollController _episodeController = ScrollController();
 
+  /// TV 焦点布局（build 时计算，组件方法经此取节点）。
+  FocusSectionLayout? _tvLayout;
+
+  /// TV：MENU 键打开「链接」菜单（详情页非 tab 页，抢占默认状态栏兜底）。
+  KeyEventResult _handleMenuKey(
+      LogicalKeyboardKey key, KeyEventSource source, bool isRepeat, bool isUp) {
+    if (key != LogicalKeyboardKey.contextMenu) return KeyEventResult.ignored;
+    if (isUp) return KeyEventResult.ignored;
+    final detail = _externalDetail;
+    if (detail != null) _showLinks(detail);
+    return KeyEventResult.handled;
+  }
+
+  /// 取 TV 焦点节点（layout 未就绪/手机端返回 null → 组件自建节点）。
+  FocusNode? _tvNode(String sectionId, int item) {
+    final layout = _tvLayout;
+    if (layout == null || !isTvPlatform) return null;
+    return context.getFocusNode('media_detail', layout.indexOf(sectionId, item));
+  }
+
   UnifiedMediaAdapter get _adapter => unifiedMediaAdapterFor(
         widget.server,
         embyApi: widget.server.sourceKind == SourceKind.emby
@@ -688,10 +743,13 @@ class _UnifiedMediaDetailScreenState
     super.initState();
     _core = normalizePlayerCore(ref.read(playerCoreProvider));
     Future<void>.microtask(_load);
+    // TV：MENU=链接菜单。
+    if (isTvPlatform) registerGlobalKeyHandler(_handleMenuKey);
   }
 
   @override
   void dispose() {
+    if (isTvPlatform) unregisterGlobalKeyHandler(_handleMenuKey);
     _episodeController.dispose();
     super.dispose();
   }
@@ -972,7 +1030,8 @@ class _UnifiedMediaDetailScreenState
     // HDR/DV 片源 ExoPlayer 渲染/解码不理想（DV 需 gpu-next + 软解才能正确
     // 映射 RPU，硬件 mediacodec 解 DV 会偏色）：资源加载后若仍是 ExoPlayer
     // 内核则自动切到 MPV 原生（用户手动选过内核则不干预，尊重手动选择）。
-    if (!_coreTouched && _resourceHdrOrDv && _core == 'exoPlayer') {
+    // TV 端不自动切（电视/投影对 libmpv 支持差，保持 ExoPlayer 硬解可用）。
+    if (!_coreTouched && !isTvPlatform && _resourceHdrOrDv && _core == 'exoPlayer') {
       _core = 'nativeMpv';
     }
   }
@@ -1244,7 +1303,10 @@ class _UnifiedMediaDetailScreenState
         : normalizeSearchTitle(entry.name);
     _resourceQuery = resourceQuery;
     final background = _backgroundColor ?? Theme.of(context).scaffoldBackgroundColor;
-    return Scaffold(
+    // TV：确定性焦点区域（播放/选项/季/分集/资源）。跨服务器资源异步加载
+    // 与分集变化经 ValueKey 重建区域。
+    _tvLayout = null;
+    Widget body = Scaffold(
       backgroundColor: background,
       body: AnimatedContainer(
         duration: const Duration(milliseconds: 420),
@@ -1415,13 +1477,52 @@ class _UnifiedMediaDetailScreenState
       ),
     ),
     );
+    // TV：包确定性焦点区域（播放/选项/季/分集/资源）。
+    if (!isTvPlatform) return body;
+    final crossMatches =
+        ref.watch(rankingCrossServerMatchProvider(resourceQuery));
+    final matchList = crossMatches.asData?.value ?? const <ServerMatchInfo>[];
+    var optionsCount = 4; // 内核/线路/音频/字幕
+    if (_resources.length > 1) optionsCount++;
+    final sections = <FocusSection>[
+      const FocusSection('play', 1),
+      if (optionsCount > 0) FocusSection('options', optionsCount),
+      if (detail.seasons.isNotEmpty) const FocusSection('season', 1),
+      if (_episodes.isNotEmpty) FocusSection('episodes', _episodes.length),
+      FocusSection(
+          'resources',
+          matchList.isNotEmpty ? matchList.length : _resources.length),
+    ];
+    final layout = FocusSectionLayout(sections);
+    _tvLayout = layout;
+    final revision =
+        '${_selectedSeasonId}_${_episodes.length}_${matchList.length}';
+    return TvFocusArea(
+      key: ValueKey('media_detail_$revision'),
+      id: 'media_detail',
+      count: layout.totalCount,
+      traversal: layout.traversal,
+      child: body,
+    );
   }
 
   Widget _primaryPlayButton() => Center(
         child: SizedBox(
           width: 185,
           height: 50,
-          child: FilledButton.icon(
+          child: TvFocusable(
+            // TV：播放按钮挂区域节点；搜索中禁用（不可聚焦）。
+            focusNode: _tvNode('play', 0),
+            enabled: _selectedEntry != null || _selectedCrossServerMatch != null,
+            borderRadius: 999,
+            onActivate: () {
+              if (_selectedCrossServerMatch != null) {
+                _playSelectedOrLocal();
+              } else if (_selectedEntry != null && !_loadingMedia) {
+                _play();
+              }
+            },
+            child: FilledButton.icon(
             style: FilledButton.styleFrom(
               backgroundColor: Colors.white,
               foregroundColor: Colors.black,
@@ -1442,6 +1543,7 @@ class _UnifiedMediaDetailScreenState
             ),
           ),
         ),
+      ),
       );
 
   /// 播放所选：有跨服务器选择时播放该服务器资源，否则走本地资源播放。
@@ -1484,6 +1586,8 @@ class _UnifiedMediaDetailScreenState
           style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
         ),
         PopupMenuButton<String>(
+          // TV：季选择器可聚焦（区域节点注入）。
+          focusNode: _tvNode('season', 0),
           icon: const Icon(Icons.unfold_more_rounded),
           onSelected: _selectSeason,
           itemBuilder: (_) => [
@@ -1499,6 +1603,8 @@ class _UnifiedMediaDetailScreenState
             ? const Center(child: Text('本季暂无剧集'))
             : ListView.separated(
                 controller: _episodeController,
+                // TV：cacheExtent 覆盖整行，确保分集焦点节点挂载。
+                cacheExtent: 5000,
                 scrollDirection: Axis.horizontal,
                 itemCount: _episodes.length,
                 separatorBuilder: (_, __) => const SizedBox(width: 8),
@@ -1509,7 +1615,11 @@ class _UnifiedMediaDetailScreenState
                   final epNumber = episode.indexNumber ?? (index + 1);
                   return SizedBox(
                     width: 220,
-                    child: InkWell(
+                    child: TvFocusable(
+                      onActivate: () => _selectEpisode(episode),
+                      focusNode: _tvNode('episodes', index),
+                      borderRadius: 18,
+                      child: InkWell(
                       onTap: () => _selectEpisode(episode),
                       borderRadius: BorderRadius.circular(18),
                       child: Column(
@@ -1581,6 +1691,7 @@ class _UnifiedMediaDetailScreenState
                         ],
                       ),
                     ),
+                    ),
                   );
                 },
               ),
@@ -1598,6 +1709,8 @@ class _UnifiedMediaDetailScreenState
               return SizedBox(
                 height: 155,
                 child: ListView.separated(
+                  // TV：cacheExtent 覆盖整行，确保资源卡焦点节点挂载。
+                  cacheExtent: 5000,
                   scrollDirection: Axis.horizontal,
                   itemCount: matches.length,
                   separatorBuilder: (_, __) => const SizedBox(width: 8),
@@ -1606,7 +1719,14 @@ class _UnifiedMediaDetailScreenState
                     final info = matchPlaybackInfo(match);
                     return SizedBox(
                       width: 250,
-                      child: PlaybackResourceCard(
+                      child: TvFocusable(
+                        onActivate: () => setState(() {
+                          _selectedCrossServerIndex = index;
+                          _selectedCrossServerMatch = match;
+                        }),
+                        focusNode: _tvNode('resources', index),
+                        borderRadius: 12,
+                        child: PlaybackResourceCard(
                         serverName: match.serverName,
                         isBest: index == 0,
                         // 单击选中高亮当前点选的跨服务器资源；默认高亮命中排第一的
@@ -1625,6 +1745,7 @@ class _UnifiedMediaDetailScreenState
                         // 双击 = 进入该服务器对应的媒体详情页
                         onDoubleTap: () => _openServerDetail(match),
                       ),
+                    ),
                     );
                   },
                 ),
@@ -1792,6 +1913,8 @@ class _UnifiedMediaDetailScreenState
       height: 155,
       child: ListView.separated(
         clipBehavior: Clip.none,
+        // TV：cacheExtent 覆盖整行，确保资源卡焦点节点挂载。
+        cacheExtent: 5000,
         scrollDirection: Axis.horizontal,
         itemCount: _resources.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
@@ -1803,7 +1926,17 @@ class _UnifiedMediaDetailScreenState
               ?.toString();
           return SizedBox(
             width: 250,
-            child: PlaybackResourceCard(
+            child: TvFocusable(
+              onActivate: () {
+                setState(() {
+                  _resourceIndex = index;
+                  _normalizeTracks();
+                });
+                _play();
+              },
+              focusNode: _tvNode('resources', index),
+              borderRadius: 12,
+              child: PlaybackResourceCard(
               serverName: widget.server.name,
               serverIcon: widget.server.iconUrl?.isNotEmpty == true
                   ? ClipRRect(
@@ -1829,6 +1962,7 @@ class _UnifiedMediaDetailScreenState
                 _play();
               },
             ),
+            ),
           );
         },
       ),
@@ -1841,7 +1975,10 @@ class _UnifiedMediaDetailScreenState
           scrollDirection: Axis.horizontal,
           itemCount: images.length,
           separatorBuilder: (_, __) => const SizedBox(width: 9),
-          itemBuilder: (_, index) => InkWell(
+          itemBuilder: (_, index) => TvFocusable(
+            onActivate: () => _showImage(images, index),
+            borderRadius: 18,
+            child: InkWell(
             onTap: () => _showImage(images, index),
             borderRadius: BorderRadius.circular(18),
             child: AspectRatio(
@@ -1854,6 +1991,7 @@ class _UnifiedMediaDetailScreenState
                     cacheWidth: 320),
               ),
             ),
+            ),
           ),
         ),
       );
@@ -1863,12 +2001,17 @@ class _UnifiedMediaDetailScreenState
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
           clipBehavior: Clip.none,
+          cacheExtent: 5000,
           padding: const EdgeInsets.symmetric(horizontal: 2),
           itemCount: items.length,
           separatorBuilder: (_, __) => const SizedBox(width: 10),
           itemBuilder: (_, index) {
             final item = items[index];
-            return InkWell(
+            return TvFocusable(
+              onActivate: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                  builder: (_) => ExternalMediaDetailScreen(entry: item))),
+              borderRadius: 18,
+              child: InkWell(
               onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
                   builder: (_) => ExternalMediaDetailScreen(entry: item))),
               child: SizedBox(
@@ -1893,6 +2036,7 @@ class _UnifiedMediaDetailScreenState
                   ],
                 ),
               ),
+            ),
             );
           },
         ),
@@ -1923,13 +2067,20 @@ class _UnifiedMediaDetailScreenState
     ];
     return Wrap(spacing: 12, runSpacing: 10, children: [
       for (final value in values)
-        ActionChip(
+        TvFocusable(
+          onActivate: () => launchUrl(
+            Uri.parse(value.$2),
+            mode: LaunchMode.externalApplication,
+          ),
+          borderRadius: 999,
+          child: ActionChip(
           avatar: const Icon(Icons.open_in_new_rounded, size: 17),
           label: Text(value.$1),
           onPressed: () => launchUrl(
             Uri.parse(value.$2),
             mode: LaunchMode.externalApplication,
           ),
+        ),
         ),
     ]);
   }
@@ -1966,7 +2117,10 @@ class _UnifiedMediaDetailScreenState
           scrollDirection: Axis.horizontal,
           itemCount: companies.length,
           separatorBuilder: (_, __) => const SizedBox(width: 12),
-          itemBuilder: (_, index) => ActionChip(
+          itemBuilder: (_, index) => TvFocusable(
+            onActivate: () {},
+            borderRadius: 999,
+            child: ActionChip(
             avatar: companies[index].logoUrl == null
                 ? null
                 : SizedBox(
@@ -1977,6 +2131,7 @@ class _UnifiedMediaDetailScreenState
                         fit: BoxFit.contain)),
             label: Text(companies[index].name),
             onPressed: () {},
+          ),
           ),
         ),
       );
@@ -1989,9 +2144,13 @@ class _UnifiedMediaDetailScreenState
           separatorBuilder: (_, __) => const SizedBox(width: 9),
           itemBuilder: (_, index) {
             final person = people[index];
-            return InkWell(
-              onTap:
-                  person.id.isEmpty ? null : () => _showPerson(person),
+            final onTap = person.id.isEmpty ? null : () => _showPerson(person);
+            return TvFocusable(
+              onActivate: onTap ?? () {},
+              enabled: onTap != null,
+              borderRadius: 30,
+              child: InkWell(
+              onTap: onTap,
               child: SizedBox(
                 width: 78,
                 child: Column(children: [
@@ -2017,6 +2176,7 @@ class _UnifiedMediaDetailScreenState
                       style: const TextStyle(color: Colors.black54)),
                 ]),
               ),
+            ),
             );
           },
         ),
@@ -2166,7 +2326,11 @@ class _UnifiedMediaDetailScreenState
       runSpacing: 8,
       children: [
         for (final value in values)
-          Chip(label: Text('${value.$1}  ${value.$2}')),
+          TvFocusable(
+            onActivate: () {},
+            borderRadius: 999,
+            child: Chip(label: Text('${value.$1}  ${value.$2}')),
+          ),
       ],
     );
   }
@@ -2228,12 +2392,19 @@ class _UnifiedMediaDetailScreenState
     return SizedBox(
       height: 40,
       child: ListView.separated(
+        // TV：cacheExtent 覆盖整行，确保选项焦点节点挂载。
+        cacheExtent: 5000,
         scrollDirection: Axis.horizontal,
         itemCount: options.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (_, index) {
           final option = options[index];
-          return Material(
+          return TvFocusable(
+            onActivate: option.onTap ?? () {},
+            enabled: option.onTap != null,
+            focusNode: _tvNode('options', index),
+            borderRadius: 999,
+            child: Material(
             color: Colors.transparent,
             child: InkWell(
               onTap: option.onTap,
@@ -2278,7 +2449,8 @@ class _UnifiedMediaDetailScreenState
                 ),
               ),
             ),
-          );
+          ),
+        );
         },
       ),
     );
@@ -2929,6 +3101,8 @@ class _ContinueSection extends StatelessWidget {
           SizedBox(
             height: 182, // 166 + 放大 1.04/描边留白
             child: ListView.separated(
+              // TV：cacheExtent 覆盖整行，确保视口外卡片焦点节点挂载。
+              cacheExtent: 5000,
               scrollDirection: Axis.horizontal,
               clipBehavior: Clip.none,
               padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -2937,7 +3111,9 @@ class _ContinueSection extends StatelessWidget {
               itemBuilder: (_, index) {
                 final item = items[index];
                 return TvFocusable(
-                  onActivate: () => onTap(item),
+                  // TV：整卡一焦点，点击即续播（跳过详情页）；手机端进详情页。
+                  onActivate:
+                      isTvPlatform ? () => onPlay(item) : () => onTap(item),
                   borderRadius: 12,
                   focusNode: cardNodes?[index],
                   child: SizedBox(
@@ -3071,6 +3247,8 @@ class _LibrarySection extends StatelessWidget {
             SizedBox(
               height: 236,
               child: ListView.separated(
+                // TV：cacheExtent 覆盖整行，确保视口外卡片焦点节点挂载。
+                cacheExtent: 5000,
                 scrollDirection: Axis.horizontal,
                 clipBehavior: Clip.none,
                 padding: const EdgeInsets.symmetric(horizontal: 14),

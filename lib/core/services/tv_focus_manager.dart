@@ -45,9 +45,9 @@ class FocusSection {
 ///     行尾最后一个卡片右移到「查看更多」（trailing 行），查看更多右停留。
 ///   - 下：进入下一分区，保持列位置（clamp 到下一行卡片数）；最后一行停留，
 ///     严禁水平随机跳转。
-///   - 上：两段式——行内卡片第一次上移到本行「查看更多」；
-///     在「查看更多」（或无 trailing 行内）再上移到上一分区（保持列位置）；
-///     第一行停留。
+///   - 上：直接进入上一分区（保持列位置，clamp 到上一行卡片数），
+///     第一行停留；「查看更多」不再是上键的第一跳（用户反馈调整），
+///     由行尾卡片右键到达。
 class FocusSectionLayout {
   final List<FocusSection> sections;
   late final List<int> _offsets = _buildOffsets();
@@ -113,11 +113,10 @@ class FocusSectionLayout {
             }
             return current; // 查看更多右移：停留
           case DPad.up:
-            // 两段式：行内卡片 → 本行查看更多 → 上一分区（垂直对齐）。
-            if (item < section.count && section.trailing) {
-              return indexOf(section.id, section.count);
-            }
-            if (sectionIndex == 0) return current; // 第一行停留
+            // 垂直分类切换（2026-08-09 用户反馈调整）：直接上一分区同列
+            // （clamp 到上一行卡片数），不再先跳本行「查看更多」。
+            // 「查看更多」仍可通过行尾卡片右键到达。
+            if (sectionIndex == 0) return current;
             final previous = sections[sectionIndex - 1];
             return indexOf(previous.id,
                 item.clamp(0, previous.count - 1).toInt());
@@ -444,7 +443,10 @@ class TvFocusManager extends ChangeNotifier {
     final area = _areas[areaId];
     if (area == null || index < 0 || index >= area.nodes.length) return;
     final node = area.nodes[index];
-    if (node.canRequestFocus) {
+    // 未挂载（懒加载视口外，widget 未构建）视为不可聚焦：延迟重试，
+    // 等待滚动容器 cacheExtent 构建后挂载（避免 requestFocus 静默失败
+    // 导致 canHandleDPad 变 false、方向键回退 Flutter 默认遍历乱跳）。
+    if (node.context != null && node.canRequestFocus) {
       _focusRetryCount.removeWhere((key, _) => key.startsWith('$areaId:'));
       node.requestFocus();
       return;

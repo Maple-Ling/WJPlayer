@@ -43,6 +43,7 @@ import '../../widgets/common/app_toast.dart';
 import '../../widgets/common/tv_focusable.dart';
 import '../../widgets/common/tv_focus_widgets.dart';
 import '../../../plugins/ui/plugin_management_screen.dart';
+import 'settings_config_sync.dart';
 import '../server/server_list_screen.dart';
 import '../../../core/providers/afdian_providers.dart';
 import 'wallpaper_crop_screen.dart';

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/providers/media_providers.dart';
 import '../../../core/services/system_info_service.dart';
+import '../../../core/utils/platform_utils.dart';
 import 'player_controls.dart';
 import 'popup_menu_overlay.dart';
 
@@ -122,11 +123,15 @@ class PlayerOverlay extends StatefulWidget {
     this.onExternalSubtitleRequested,
     this.onAggregationSearch,
     this.onCrossServerMatchSelected,
+    this.tvFocusIndex = -1,
   });
 
   final bool visible;
   final bool isLocked;
   final bool isPlaying;
+
+  /// TV 控制栏焦点索引（-2=进度条、0..N=按钮、-1=无）。
+  final int tvFocusIndex;
   final Duration position;
   final Duration duration;
   final double bufferedProgress;
@@ -236,10 +241,10 @@ class PlayerOverlay extends StatefulWidget {
   final ValueChanged<ServerMatchInfo>? onCrossServerMatchSelected;
 
   @override
-  State<PlayerOverlay> createState() => _PlayerOverlayState();
+  State<PlayerOverlay> createState() => PlayerOverlayState();
 }
 
-class _PlayerOverlayState extends State<PlayerOverlay> {
+class PlayerOverlayState extends State<PlayerOverlay> {
   late bool isUiVisible;
   PopupMenuId? activeMenu;
   PopupMenuId? _anchorMenu;
@@ -450,6 +455,33 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
     });
     // 二级菜单全部关闭后恢复自动隐藏计时器。
     widget.onMenuVisibilityChanged?.call(false);
+  }
+
+  /// 外部（TV 系统返回键）关闭当前二级菜单。
+  void closeMenu() => _closeMenu();
+
+  /// 外部（TV 控制栏按钮聚焦激活）：打开对应二级菜单。
+  void activateBottomAction(PlayerBottomAction action) {
+    switch (action) {
+      case PlayerBottomAction.aggregate:
+        _openMenu(PopupMenuId.aggregate);
+        break;
+      case PlayerBottomAction.core:
+        _openMenu(PopupMenuId.core);
+        break;
+      case PlayerBottomAction.line:
+        _openMenu(PopupMenuId.line);
+        break;
+      case PlayerBottomAction.audio:
+        _openMenu(PopupMenuId.audio);
+        break;
+      case PlayerBottomAction.subtitle:
+        _openMenu(PopupMenuId.subtitle);
+        break;
+      case PlayerBottomAction.episodes:
+        _openMenu(PopupMenuId.episodes);
+        break;
+    }
   }
 
   void _handleBack() {
@@ -997,15 +1029,25 @@ class _PlayerOverlayState extends State<PlayerOverlay> {
                           duration: widget.duration,
                           bufferedProgress: widget.bufferedProgress,
                           isPlaying: widget.isPlaying,
-                          bottomActions: const [
-                            PlayerBottomAction.aggregate,
-                            PlayerBottomAction.core,
-                            PlayerBottomAction.line,
-                            PlayerBottomAction.audio,
-                            PlayerBottomAction.subtitle,
-                            PlayerBottomAction.episodes,
-                          ],
+                          // TV：选集按钮移除（选集走 MENU 选集栏）。
+                          bottomActions: isTvPlatform
+                              ? const [
+                                  PlayerBottomAction.aggregate,
+                                  PlayerBottomAction.core,
+                                  PlayerBottomAction.line,
+                                  PlayerBottomAction.audio,
+                                  PlayerBottomAction.subtitle,
+                                ]
+                              : const [
+                                  PlayerBottomAction.aggregate,
+                                  PlayerBottomAction.core,
+                                  PlayerBottomAction.line,
+                                  PlayerBottomAction.audio,
+                                  PlayerBottomAction.subtitle,
+                                  PlayerBottomAction.episodes,
+                                ],
                           selectedActions: _selectedBottomActions,
+                          tvFocusIndex: widget.tvFocusIndex,
                           onProgressChanged: _handleProgressChanged,
                           onProgressChangeEnd: _handleProgressChangeEnd,
                           onPrevious: widget.onPrevious,

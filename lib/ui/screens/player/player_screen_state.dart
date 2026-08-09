@@ -47,6 +47,35 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   List<PopupEpisodeOption> _overlayEpisodes = const <PopupEpisodeOption>[];
   String? _overlayEpisodeLoadKey;
 
+  // ---- TV 遥控播放控制（2026-08-09）----
+  // 对齐 Netflix/YouTube/腾讯 TV 播放页惯例：方向键=快进快退、OK=播放暂停、
+  // 上下/MENU=呼出控制栏、返回=退出（系统 back）。TV 不做音量/亮度调节
+  // （电视/投影有物理音量键与自带亮度调节），上下键用于控制栏显隐。
+  // MENU 会经 native 通道与 Flutter 通道双触发，用时间戳去抖。
+  DateTime? _lastMenuKeyTime;
+  // 长按连续快进/拖动：锚定起始位置后按「累计时间 × 速率」确定性推进
+  // （不依赖 200ms 轮询的 position，平滑类似拖动进度条）。
+  Duration? _tvSeekAnchor;
+  int _tvSeekCount = 0;
+  bool _tvSeekForward = true;
+  Timer? _tvSeekTimer;
+  // 上键单击/长按判定：按下启动 400ms 延迟（单击 → toggleControls），
+  // 期间收到 KeyRepeat 则取消延迟并进入长按倍速；松开恢复默认速度。
+  Timer? _tvLongPressTimer;
+  bool _tvSpeedBoostActive = false;
+  // TV：二级菜单（弹幕设置/选集/音轨等）打开状态——系统返回键先关菜单
+  // 再退出播放器；菜单打开期间 UI 不自动隐藏（setControlsAutoHidePaused）。
+  final GlobalKey<PlayerOverlayState> _overlayKey =
+      GlobalKey<PlayerOverlayState>();
+  bool _overlayMenuOpen = false;
+  // TV 选集栏（底部胶囊）：MENU 键打开，左右滚动聚焦，OK 选集。
+  bool _tvEpisodeBarOpen = false;
+  int _tvEpisodeIndex = 0;
+  final ScrollController _tvEpisodeScrollController = ScrollController();
+  // TV 控制栏焦点：-2=进度条；-1=无（UI 隐藏）；0..7=按钮
+  // （0 上一集 / 1 播放暂停 / 2 下一集 / 3 聚合 / 4 内核 / 5 线路 / 6 音频 / 7 字幕）。
+  int _tvUiFocusIndex = -1;
+
   /// 内封字幕流式翻译器（无法整轨下载时边播边译，叠加层按双语排版显示）。
   StreamingSubtitleTranslator? _streamTranslator;
 
@@ -236,6 +265,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     unawaited(VideoPlayerService.beginPageSystemControls());
     unawaited(_playerService.hydrateSystemControls());
     _startAccelerometerFlipDetection();
+    // TV：注册全局遥控处理（方向键快进快退/OK 播放暂停/上下及 MENU 控制栏）。
+    // 注册晚于 app_router 的菜单键处理器 → 优先级更高，MENU 不会被路由层拦截。
+    if (isTvPlatform) {
+      registerGlobalKeyHandler(_handleTvRemoteKey);
+    }
 
     // Delay initialization when using nativeMpv to allow SurfaceView to be created
     // This ensures the AndroidView is rendered before we try to use the SurfaceView
@@ -2017,6 +2051,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    if (isTvPlatform) {
+      unregisterGlobalKeyHandler(_handleTvRemoteKey);
+      _tvSeekAnchor = null;
+      _tvSeekTimer?.cancel();
+      _tvSeekTimer = null;
+      _tvLongPressTimer?.cancel();
+      _tvLongPressTimer = null;
+    }
+    _tvEpisodeScrollController.dispose();
     // 离开播放器恢复系统息屏策略。
     WakelockPlus.disable();
     _accelSub?.cancel();
@@ -2052,6 +2095,388 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       DeviceOrientation.landscapeRight,
     ]);
     super.dispose();
+  }
+
+  /// TV 遥控播放控制（仅 TV 平台注册；对齐 Netflix/YouTube/腾讯 TV 播放页）：
+  ///   - 左/右：快退/快进 step 秒（单击单次；长按 KeyRepeat 连续推进）
+  ///   - 上键：单击=呼出控制栏；**长按=倍速播放**（手机端长按倍速的 TV 映射，
+  ///     按住加速、松开恢复默认速度）
+  ///   - 下键：呼出/收起控制栏（TV 不做音量/亮度调节——电视/投影有物理键）
+  ///   - OK（enter/select）：播放/暂停
+  ///   - MENU：呼出/收起控制栏（native+Flutter 双通道去抖）
+  ///   - 返回：不拦截，系统 back 退出播放器（dispose 自动保存进度/恢复系统控制）
+  KeyEventResult _handleTvRemoteKey(
+    LogicalKeyboardKey key,
+    KeyEventSource source,
+    bool isRepeat,
+    bool isUp,
+  ) {
+    final service = _playerService;
+    if (!service.isInitialized) return KeyEventResult.ignored;
+
+    // 选集栏打开：方向键/OK 全部交给选集导航（左/右=滚动聚焦、OK=选集、
+    // 上/下/MENU=关闭），不落到播放控制。
+    if (_tvEpisodeBarOpen) {
+      switch (key) {
+        case LogicalKeyboardKey.arrowLeft:
+          if (!isUp && !isRepeat) _moveTvEpisode(-1);
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowRight:
+          if (!isUp && !isRepeat) _moveTvEpisode(1);
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.enter:
+        case LogicalKeyboardKey.select:
+          if (!isUp && !isRepeat) _selectTvEpisode();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowUp:
+        case LogicalKeyboardKey.arrowDown:
+          if (!isUp && !isRepeat) _closeTvEpisodeBar();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.contextMenu:
+          if (!isUp) _closeTvEpisodeBar();
+          return KeyEventResult.handled;
+        default:
+          return KeyEventResult.handled;
+      }
+    }
+
+    // 控制栏聚焦模式（UI 显示时）：进度条(-2) / 按钮行(0..7)。
+    //   · 进度条聚焦：左/右=调节进度；下=下一集按钮；上=关 UI
+    //   · 按钮聚焦：左/右=按钮间移动；OK=激活；下=关 UI；上=关 UI/长按倍速
+    if (service.showControls) {
+      switch (key) {
+        case LogicalKeyboardKey.arrowLeft:
+        case LogicalKeyboardKey.arrowRight:
+          if (isUp) {
+            _tvSeekTimer?.cancel();
+            _tvSeekTimer = null;
+            _tvSeekAnchor = null;
+            return KeyEventResult.handled;
+          }
+          service.pokeControls();
+          if (_tvUiFocusIndex == -2) {
+            // 进度条聚焦：左右调节进度（复用连续快进）。
+            _handleTvSeek(key == LogicalKeyboardKey.arrowRight, isRepeat);
+          } else if (_tvUiFocusIndex >= 0 && !isRepeat) {
+            _moveTvUiFocus(key == LogicalKeyboardKey.arrowRight ? 1 : -1);
+          }
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.enter:
+        case LogicalKeyboardKey.select:
+          if (!isUp && !isRepeat && _tvUiFocusIndex >= 0) {
+            _activateTvUiFocus();
+          }
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowDown:
+          if (isUp || isRepeat) return KeyEventResult.handled;
+          if (_tvUiFocusIndex == -2) {
+            // 进度条 → 下一集按钮（再按下默认聚焦下一集）。
+            setState(() => _tvUiFocusIndex = 2);
+            service.pokeControls();
+          } else {
+            // 按钮行 → 关闭 UI 回播放控制。
+            _toggleTvControls();
+          }
+          return KeyEventResult.handled;
+        default:
+          break; // 上键/MENU 等落到主逻辑。
+      }
+    }
+
+    switch (key) {
+      case LogicalKeyboardKey.contextMenu:
+        if (isUp) return KeyEventResult.handled;
+        // native 通道与 Flutter 通道双触发去抖。
+        final now = DateTime.now();
+        if (_lastMenuKeyTime != null &&
+            now.difference(_lastMenuKeyTime!) <
+                const Duration(milliseconds: 350)) {
+          return KeyEventResult.handled;
+        }
+        _lastMenuKeyTime = now;
+        // MENU：打开/关闭底部选集胶囊栏（不再绑定控制栏显隐）。
+        if (_tvEpisodeBarOpen) {
+          _closeTvEpisodeBar();
+        } else {
+          _openTvEpisodeBar();
+        }
+        return KeyEventResult.handled;
+
+      case LogicalKeyboardKey.arrowLeft:
+      case LogicalKeyboardKey.arrowRight:
+        if (isUp) {
+          // 松开：停止拖动、清理锚点（下次按下重新锚定）。
+          _tvSeekTimer?.cancel();
+          _tvSeekTimer = null;
+          _tvSeekAnchor = null;
+          return KeyEventResult.handled;
+        }
+        // UI 隐藏时：快进快退（交互重置 UI 自动隐藏计时）。
+        service.pokeControls();
+        _handleTvSeek(key == LogicalKeyboardKey.arrowRight, isRepeat);
+        return KeyEventResult.handled;
+
+      case LogicalKeyboardKey.arrowUp:
+        if (isUp) {
+          // 松开上键：取消单击 toggle 延迟；若正处于长按倍速 → 恢复默认速度。
+          _tvLongPressTimer?.cancel();
+          _tvLongPressTimer = null;
+          if (_tvSpeedBoostActive) {
+            _tvSpeedBoostActive = false;
+            unawaited(service.setSpeed(ref.read(defaultPlaybackSpeedProvider)));
+          }
+          return KeyEventResult.handled;
+        }
+        if (isRepeat) {
+          // 长按上键：进入倍速（与手机端长按倍速语义一致）。
+          _tvLongPressTimer?.cancel();
+          _tvLongPressTimer = null;
+          if (!_tvSpeedBoostActive) {
+            _tvSpeedBoostActive = true;
+            unawaited(service.setSpeed(ref.read(longPressSpeedProvider)));
+            // 长按倍速时隐藏 UI（避免遮挡画面）。
+            if (service.showControls) service.hideControlsTemporarily();
+          }
+          return KeyEventResult.handled;
+        }
+        // 单击（按下后 400ms 内无 repeat 判定为单击）：呼出/收起控制栏。
+        // 给长按判定留窗口，避免单击先 toggle 再被长按打断。
+        _tvLongPressTimer?.cancel();
+        _tvLongPressTimer = Timer(const Duration(milliseconds: 400), () {
+          _tvLongPressTimer = null;
+          if (mounted && !_tvSpeedBoostActive) _toggleTvControls();
+        });
+        return KeyEventResult.handled;
+
+      case LogicalKeyboardKey.arrowDown:
+        // 下键：打开 UI（聚焦进度条）/ 收起控制栏。
+        if (!isUp && !isRepeat) _toggleTvControls();
+        return KeyEventResult.handled;
+
+      case LogicalKeyboardKey.enter:
+      case LogicalKeyboardKey.select:
+        if (!isUp && !isRepeat) {
+          // 交互重置 UI 自动隐藏计时。
+          service.pokeControls();
+          unawaited(service.togglePlay());
+        }
+        return KeyEventResult.handled;
+
+      default:
+        return KeyEventResult.ignored;
+    }
+  }
+
+  // ─── TV 选集栏（底部胶囊）───
+
+  /// 快进/快退（进度条聚焦与 UI 隐藏共用）：
+  ///   单击 = 跳 step 秒；长按（KeyRepeat）= 拖动效果——启动 120ms 周期
+  ///   定时器，按「锚点 + 累计时间 × 20s/s」平滑推进（不依赖 repeat 节奏，
+  ///   也不依赖轮询 position，确定性连续 seek 类似拖动进度条）。
+  void _handleTvSeek(bool forward, bool isRepeat) {
+    final service = _playerService;
+    final step = ref.read(skipForwardStepProvider);
+    if (!isRepeat) {
+      // 单击：锚定当前位置，单次跳 step 秒。
+      _tvSeekAnchor = service.position;
+      _tvSeekForward = forward;
+      unawaited(service.seekTo(
+        _tvSeekAnchor! + Duration(seconds: step * (forward ? 1 : -1)),
+      ));
+      return;
+    }
+    // 长按：若拖动已启动则忽略本 repeat（定时器接管推进）。
+    if (_tvSeekAnchor == null || _tvSeekTimer != null) return;
+    // 拖动从「单击已跳转」的位置继续（锚点 + step），避免回跳。
+    final dragAnchor =
+        _tvSeekAnchor! + Duration(seconds: step * (forward ? 1 : -1));
+    var tick = 0;
+    _tvSeekTimer = Timer.periodic(const Duration(milliseconds: 120), (t) {
+      if (_tvSeekAnchor == null) {
+        t.cancel();
+        _tvSeekTimer = null;
+        return;
+      }
+      tick++;
+      // 20s/s：每 tick（120ms）推进 2400ms，平滑连续。
+      final deltaMs = tick * 120 * 20;
+      unawaited(service.seekTo(
+        dragAnchor +
+            Duration(milliseconds: deltaMs * (forward ? 1 : -1)),
+      ));
+    });
+  }
+
+  /// 切换控制栏显隐并同步 TV 焦点：打开 → 聚焦进度条(-2)；关闭 → 无(-1)。
+  void _toggleTvControls() {
+    final wasShown = _playerService.showControls;
+    _playerService.toggleControls();
+    setState(() => _tvUiFocusIndex = wasShown ? -1 : -2);
+  }
+
+  /// 按钮行内左右移动焦点（0 上一集 / 1 播放暂停 / 2 下一集 / 3..7 操作按钮）。
+  void _moveTvUiFocus(int delta) {
+    const maxIndex = 3 + 5 - 1; // 传输 3 + 操作 5（TV 端无选集按钮）
+    setState(() {
+      _tvUiFocusIndex = (_tvUiFocusIndex + delta).clamp(0, maxIndex).toInt();
+    });
+    _playerService.pokeControls();
+  }
+
+  /// OK 激活聚焦按钮：传输按钮直接执行；操作按钮打开对应二级菜单。
+  void _activateTvUiFocus() {
+    final service = _playerService;
+    switch (_tvUiFocusIndex) {
+      case 0:
+        _playPrevious();
+        break;
+      case 1:
+        unawaited(service.togglePlay());
+        break;
+      case 2:
+        _playNext();
+        break;
+      case 3:
+        _overlayKey.currentState
+            ?.activateBottomAction(PlayerBottomAction.aggregate);
+        break;
+      case 4:
+        _overlayKey.currentState
+            ?.activateBottomAction(PlayerBottomAction.core);
+        break;
+      case 5:
+        _overlayKey.currentState
+            ?.activateBottomAction(PlayerBottomAction.line);
+        break;
+      case 6:
+        _overlayKey.currentState
+            ?.activateBottomAction(PlayerBottomAction.audio);
+        break;
+      case 7:
+        _overlayKey.currentState
+            ?.activateBottomAction(PlayerBottomAction.subtitle);
+        break;
+    }
+    service.pokeControls();
+  }
+
+  /// 打开选集栏：无选集（电影等）不打开；定位到当前集；暂停 UI 自动隐藏。
+  void _openTvEpisodeBar() {
+    final episodes =
+        _overlayEpisodesFor(ref.read(currentPlayingItemProvider));
+    if (episodes.isEmpty) return;
+    final current = _currentEpisodeNumber(ref.read(currentPlayingItemProvider));
+    final initIndex = episodes.indexWhere((e) => e.index == current);
+    setState(() {
+      _tvEpisodeBarOpen = true;
+      _tvEpisodeIndex = initIndex >= 0 ? initIndex : 0;
+    });
+    _playerService.setControlsAutoHidePaused(true);
+    if (_playerService.showControls) _playerService.hideControlsTemporarily();
+  }
+
+  /// 关闭选集栏：恢复 UI 自动隐藏计时。
+  void _closeTvEpisodeBar() {
+    if (!_tvEpisodeBarOpen) return;
+    setState(() => _tvEpisodeBarOpen = false);
+    _playerService.setControlsAutoHidePaused(false);
+    _playerService.pokeControls();
+  }
+
+  /// 左右移动胶囊聚焦（clamp），并滚动到可见。
+  void _moveTvEpisode(int delta) {
+    final episodes =
+        _overlayEpisodesFor(ref.read(currentPlayingItemProvider));
+    if (episodes.isEmpty) return;
+    final target =
+        (_tvEpisodeIndex + delta).clamp(0, episodes.length - 1).toInt();
+    if (target == _tvEpisodeIndex) return;
+    setState(() => _tvEpisodeIndex = target);
+    _ensureTvEpisodeVisible(target);
+  }
+
+  /// 横向滚动到目标胶囊（胶囊定宽 108 + 间隔 10）。
+  void _ensureTvEpisodeVisible(int index) {
+    if (!_tvEpisodeScrollController.hasClients) return;
+    final target = (index * 118.0 - 40).clamp(
+      0.0,
+      _tvEpisodeScrollController.position.maxScrollExtent,
+    );
+    _tvEpisodeScrollController.animateTo(
+      target,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  /// OK：选集当前聚焦胶囊并关闭选集栏。
+  void _selectTvEpisode() {
+    final episodes =
+        _overlayEpisodesFor(ref.read(currentPlayingItemProvider));
+    if (_tvEpisodeIndex < 0 || _tvEpisodeIndex >= episodes.length) return;
+    final ep = episodes[_tvEpisodeIndex];
+    _closeTvEpisodeBar();
+    unawaited(_switchEpisode(ep.index));
+  }
+
+  /// TV 底部选集胶囊栏（仅 TV 渲染）：横向滚动胶囊，聚焦高亮，OK 选集。
+  /// 打开时从屏幕下方滑出（高度 = 屏幕 1/5），关闭时滑出屏幕外。
+  Widget _buildTvEpisodeBar(List<PopupEpisodeOption> episodes) {
+    final scheme = Theme.of(context).colorScheme;
+    final current = _currentEpisodeNumber(ref.read(currentPlayingItemProvider));
+    final barHeight = MediaQuery.sizeOf(context).height * 0.2;
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: AnimatedSlide(
+        offset: _tvEpisodeBarOpen ? Offset.zero : const Offset(0, 1),
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        child: Container(
+          height: barHeight,
+          color: Colors.black.withValues(alpha: 0.82),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          child: ListView.separated(
+            controller: _tvEpisodeScrollController,
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: episodes.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (_, index) {
+              final ep = episodes[index];
+              final focused = index == _tvEpisodeIndex;
+              final isCurrent = ep.index == current;
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                curve: Curves.easeOutCubic,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                decoration: BoxDecoration(
+                  color: focused
+                      ? scheme.primary
+                      : isCurrent
+                          ? scheme.primary.withValues(alpha: 0.28)
+                          : Colors.white12,
+                  borderRadius: BorderRadius.circular(999),
+                  border: focused
+                      ? Border.all(color: Colors.white, width: 2)
+                      : Border.all(color: Colors.transparent, width: 2),
+                ),
+                child: Text(
+                  '第 ${ep.index} 集',
+                  style: TextStyle(
+                    color: focused ? Colors.black : Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
   }
 
   /// 多线程加载预取代理：仅在「开关开 + 已确认服主允许 + 在线 http 源」时启动，
@@ -2093,7 +2518,29 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     final overlayEpisodes = _overlayEpisodesFor(item);
     final lineName = _currentLineName(server);
 
-    return Scaffold(
+    return PopScope(
+      // TV：系统返回键优先关二级菜单（不退出播放器）；无菜单时退出播放器。
+      // 手机端不拦截（零副作用）。
+      canPop: !isTvPlatform,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        // TV：选集栏打开 → 关闭选集栏；二级菜单打开 → 关闭菜单；
+        // 均不退出播放器。
+        if (isTvPlatform && _tvEpisodeBarOpen) {
+          _closeTvEpisodeBar();
+          return;
+        }
+        if (isTvPlatform && _overlayMenuOpen) {
+          _overlayKey.currentState?.closeMenu();
+          return;
+        }
+        // 手动放行：退出播放器（dispose 自动保存进度/恢复系统控制）。
+        if (!isTvPlatform) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) Navigator.of(context).maybePop();
+        });
+      },
+      child: Scaffold(
       backgroundColor: Colors.black,
       body: LayoutBuilder(
         builder: (context, constraints) {
@@ -2107,6 +2554,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
               // SideButtons/PopupMenuOverlay + 状态栏），替换原胶囊菜单控制层。
               Positioned.fill(
                 child: PlayerOverlay(
+                  key: _overlayKey,
+                  tvFocusIndex: _tvUiFocusIndex,
                   visible: _playerService.showControls,
                   isLocked: _playerService.isLocked,
                   isPlaying: _playerService.isPlaying,
@@ -2230,6 +2679,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                     }
                   },
                   onMenuVisibilityChanged: (menuOpen) {
+                    _overlayMenuOpen = menuOpen;
                     _playerService.setControlsAutoHidePaused(menuOpen);
                   },
                   onBack: () => Navigator.maybePop(context),
@@ -2323,10 +2773,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   bottom: 92,
                   child: SourceQualityButton(onSelect: _switchSourceQuality),
                 ),
+              // TV 选集栏：MENU 键打开，底部胶囊左右滚动聚焦，OK 选集。
+              // 始终渲染（关闭时滑出屏幕外），保证滑入/滑出动画。
+              if (isTvPlatform && overlayEpisodes.isNotEmpty)
+                _buildTvEpisodeBar(overlayEpisodes),
               ],
             );
         },
       ),
+    ),
     );
   }
 

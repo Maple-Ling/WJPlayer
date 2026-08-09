@@ -69,8 +69,10 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
   }
 
   /// TV 菜单键：服务器卡片聚焦时打开三点菜单（排序中屏蔽）。
-  KeyEventResult _handleMenuKey(LogicalKeyboardKey key, KeyEventSource source) {
+  KeyEventResult _handleMenuKey(
+      LogicalKeyboardKey key, KeyEventSource source, bool isRepeat, bool isUp) {
     if (key != LogicalKeyboardKey.contextMenu) return KeyEventResult.ignored;
+    if (isUp) return KeyEventResult.ignored; // KeyUp 不处理（避免双触发）。
     if (_sorting) return KeyEventResult.handled;
     final manager = TvFocusManager.instance;
     final area = manager.activeArea;
@@ -269,25 +271,16 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
     final tvAreaReady = isTvPlatform && !_isSearching && visible.isNotEmpty;
 
     return PopScope(
-      // TV：拦截返回键——排序中退出排序；任意位置返回 → 状态栏
-      // （与记录/设置/搜索页一致）；状态栏内返回 → 退出页面回影视 tab。
+      // TV：仅排序态拦截返回键（退出排序）；其余返回放行系统默认——
+      // 逐级后退（编辑/添加页 pop）/分支根返回回影视 tab（与主流 TV 一致）。
       // 手机端不拦截（零副作用）。
-      canPop: !isTvPlatform,
+      canPop: !isTvPlatform || !_sorting,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        final manager = TvFocusManager.instance;
-        if (manager.activeArea?.config.id == 'main_tabs') {
-          manager.exitArea('main_tabs');
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) context.go('/discover');
-          });
-          return;
-        }
         if (_sorting) {
           _exitSorting();
           return;
         }
-        manager.enterArea('main_tabs');
       },
       child: tvAreaReady
           ? TvFocusArea(
@@ -361,10 +354,27 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
                 focusNode: titleNode,
                 child: GestureDetector(
                   onTap: _onTitleTap,
-                  child: const Padding(
+                  child: Padding(
                     padding:
-                        EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    child: Text('服务器'),
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('服务器'),
+                        // 三击进入「显示隐藏卡片」模式时：标题左侧显示
+                        // 与隐藏卡片同款蓝点提示；三击退出后蓝点消失。
+                        if (ref.watch(revealHiddenServersProvider)) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: const BoxDecoration(
+                                color: Color(0xFF5B8DEF),
+                                shape: BoxShape.circle),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -501,6 +511,8 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
     }
     return ReorderableListView.builder(
       padding: const EdgeInsets.all(16),
+      // TV 排序模式：cacheExtent 预构建，确保排序卡片焦点节点挂载。
+      cacheExtent: 3000,
       itemCount: servers.length,
       onReorder: (oldIndex, newIndex) {
         // 基于可见列表的 id 顺序重排完整 state（隐藏/过滤项不参与索引换算，
@@ -974,6 +986,24 @@ class _ServerCard extends ConsumerWidget {
                               fontSize: compact ? 14 : 16,
                               fontWeight: FontWeight.w600)),
                     ),
+                    // 连接状态点（红/绿统一位置，加载中不显示）：
+                    // 统计拉取成功（error==null）= 绿点；失败/异常 = 红点。
+                    if (stats.hasValue || stats.hasError) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: (stats.valueOrNull?.error == null &&
+                                  !stats.hasError)
+                              ? const Color(0xFF34C759) // 绿：连接成功
+                              : const Color(0xFFE53935), // 红：连接失败
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ],
+                    // 隐藏提示蓝点：右移一点（在状态点之后），
+                    // 避免与红绿点位置冲突（红绿点固定同一位置）。
                     if (server.hidden) ...[
                       const SizedBox(width: 6),
                       Container(

@@ -1615,6 +1615,13 @@ class VideoPlayerService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// UI 显示时重置自动隐藏计时（TV 遥控操作/焦点移动调用）：
+  /// 10s 内任何交互都重新计算，无操作才自动隐藏。
+  void pokeControls() {
+    if (_autoHidePaused) return;
+    if (_showControls) _startHideControlsTimer();
+  }
+
   /// 锁定/解锁屏幕。锁定/解锁后都短暂显示对应按钮再自动隐藏，避免解锁键长驻左上角破坏沉浸感。
   void toggleLock() {
     _isLocked = !_isLocked;

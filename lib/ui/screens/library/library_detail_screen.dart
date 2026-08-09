@@ -8,6 +8,7 @@ import '../../../core/widgets/app_shimmer.dart';
 import '../../utils/media_helpers.dart';
 import '../../widgets/common/library_filter_bar.dart';
 import '../../widgets/common/media_widgets.dart';
+import '../../widgets/common/tv_focusable.dart';
 
 /// 媒体库详情页
 class LibraryDetailScreen extends ConsumerStatefulWidget {
@@ -141,6 +142,8 @@ class _LibraryDetailScreenState extends ConsumerState<LibraryDetailScreen> {
               return SliverPadding(
                 padding: const EdgeInsets.all(16),
                 sliver: SliverGrid(
+                  // TV：cacheExtent 预构建，确保网格焦点节点挂载。
+                  cacheExtent: 3000,
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 3,
                     childAspectRatio: 0.55,
@@ -150,12 +153,18 @@ class _LibraryDetailScreenState extends ConsumerState<LibraryDetailScreen> {
                   delegate: SliverChildBuilderDelegate(
                     (context, index) {
                       final item = items[index];
-                      return MediaPoster(
-                        item: item,
-                        width: double.infinity,
-                        height: double.infinity,
-                        onTap: () => context.push(mediaRouteForItem(item)),
-                        heroTag: 'library_${item.id}',
+                      return TvFocusable(
+                        onActivate: () =>
+                            context.push(mediaRouteForItem(item)),
+                        borderRadius: 12,
+                        child: MediaPoster(
+                          item: item,
+                          width: double.infinity,
+                          height: double.infinity,
+                          onTap: () =>
+                              context.push(mediaRouteForItem(item)),
+                          heroTag: 'library_${item.id}',
+                        ),
                       ).appEntrance(index: index);
                     },
                     childCount: items.length,

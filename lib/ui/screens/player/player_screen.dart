@@ -49,6 +49,7 @@ import '../../../core/utils/playback_error_text.dart';
 import '../../../core/utils/playback_url_resolver.dart';
 import '../../../core/utils/track_preference.dart';
 import '../../../core/utils/platform_utils.dart';
+import '../../../core/services/tv_key_channel.dart';
 import '../../../core/widgets/player_settings_panel.dart';
 import '../../../core/widgets/player_capsule_menu.dart';
 import '../../../core/theme/app_motion.dart';

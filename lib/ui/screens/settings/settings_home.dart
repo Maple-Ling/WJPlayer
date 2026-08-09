@@ -3,29 +3,17 @@ part of 'settings_screen.dart';
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
-  /// TV 设置卡片数（固定 6 张：界面/播放/弹幕/检查更新/备份与恢复/关于）。
-  static const int _cardCount = 6;
+  /// TV 设置卡片数（固定 7 张：界面/播放/弹幕/检查更新/备份与恢复/配置同步/关于）。
+  static const int _cardCount = 7;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    // TV：设置页注册焦点区域（卡片线性导航，边界/返回 → 状态栏）。
+    // TV：设置页注册焦点区域（卡片线性导航，方向键边界 → 状态栏）；
+    // 返回键放行系统默认（逐级后退/分支根返回回影视 tab，主流 TV 语义）。
     final tvAreaReady = isTvPlatform;
     return PopScope(
-      // TV：任意位置按返回键 → 回到状态栏；手机端不拦截（零副作用）。
-      canPop: !isTvPlatform,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        final manager = TvFocusManager.instance;
-        if (manager.activeArea?.config.id == 'main_tabs') {
-          manager.exitArea('main_tabs');
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (context.mounted) context.go('/discover');
-          });
-          return;
-        }
-        manager.enterArea('main_tabs');
-      },
+      canPop: true, // 不拦截返回：手机/电视一致走系统返回。
       child: tvAreaReady
           ? TvFocusArea(
               id: 'settings',
@@ -92,7 +80,11 @@ class SettingsScreen extends ConsumerWidget {
               _SettingsCard(focusNode: node(4), icon: Icons.restore_page_rounded, title: '备份与恢复', subtitle: '备份或恢复设置', onTap: () => _showBackupRestore(ctx)),
             ]),
             _SettingsGroup(children: [
-              _SettingsCard(focusNode: node(5), icon: Icons.info_rounded, title: '关于', subtitle: '版本、开源许可与致谢', onTap: () => _showAbout(ctx), showDivider: false),
+              // TV：接收二维码（手机扫码推送）；手机：扫码同步到电视。
+              _SettingsCard(focusNode: node(5), icon: Icons.sync_rounded, title: '配置同步', subtitle: '局域网传输服务器与弹幕配置', onTap: () => _showConfigSync(ctx), showDivider: false),
+            ]),
+            _SettingsGroup(children: [
+              _SettingsCard(focusNode: node(6), icon: Icons.info_rounded, title: '关于', subtitle: '版本、开源许可与致谢', onTap: () => _showAbout(ctx), showDivider: false),
             ]),
           ],
         ),
@@ -205,6 +197,14 @@ class SettingsScreen extends ConsumerWidget {
 
   void _showBackupRestore(BuildContext context) =>
       _openSubPage(context, const BackupRestoreScreen());
+
+  /// 配置同步：TV 接收二维码（手机扫码推送）；手机扫码同步到电视。
+  void _showConfigSync(BuildContext context) => _openSubPage(
+        context,
+        isTvPlatform
+            ? const ConfigSyncReceiverScreen()
+            : const ConfigSyncSenderScreen(),
+      );
 
   void _showPlugins(BuildContext context) =>
       _openSubPage(context, const PluginManagementScreen());

@@ -437,6 +437,7 @@ class _TransparentCircleButton extends StatelessWidget {
     this.size = 36,
     this.iconSize = 19,
     this.background,
+    this.focused = false,
   });
 
   final IconData icon;
@@ -445,6 +446,9 @@ class _TransparentCircleButton extends StatelessWidget {
   final double size;
   final double iconSize;
   final Color? background;
+
+  /// TV 聚焦态：白色圆环描边。
+  final bool focused;
 
   @override
   Widget build(BuildContext context) {
@@ -460,6 +464,16 @@ class _TransparentCircleButton extends StatelessWidget {
           decoration: BoxDecoration(
             color: background,
             shape: BoxShape.circle,
+            border: focused
+                ? Border.all(color: Colors.white, width: 2.5)
+                : null,
+            boxShadow: focused
+                ? [
+                    BoxShadow(
+                        color: Colors.white.withValues(alpha: 0.35),
+                        blurRadius: 10)
+                  ]
+                : null,
           ),
           child: PlayerShadowIcon(
             icon: icon,
@@ -577,6 +591,7 @@ class BottomBar extends StatelessWidget {
     this.onPlayPause,
     this.onNext,
     this.onAction,
+    this.tvFocusIndex = -1,
   });
 
   final String title;
@@ -598,6 +613,9 @@ class BottomBar extends StatelessWidget {
   final VoidCallback? onPlayPause;
   final VoidCallback? onNext;
   final ValueChanged<PlayerBottomAction>? onAction;
+
+  /// TV 控制栏焦点：-2=进度条；0..N=按钮（传输 3 + 底部操作）；-1=无。
+  final int tvFocusIndex;
 
   double get progress {
     if (duration.inMilliseconds <= 0) return 0;
@@ -686,7 +704,7 @@ class BottomBar extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  _buildProgress(context),
+                  _buildProgress(context, focused: tvFocusIndex == -2),
                   const SizedBox(height: 6),
                   _buildControls(),
                 ],
@@ -698,7 +716,7 @@ class BottomBar extends StatelessWidget {
     );
   }
 
-  Widget _buildProgress(BuildContext context) {
+  Widget _buildProgress(BuildContext context, {required bool focused}) {
     final enabled = onProgressChanged != null || onProgressChangeEnd != null;
     final target = dragTargetPosition;
     final progressRow = Row(
@@ -718,13 +736,14 @@ class BottomBar extends StatelessWidget {
         Expanded(
           child: SliderTheme(
             data: SliderTheme.of(context).copyWith(
-              trackHeight: 4,
-              activeTrackColor: playerUiPink,
+              trackHeight: focused ? 6 : 4,
+              activeTrackColor: focused ? Colors.white : playerUiPink,
               inactiveTrackColor: Colors.white.withOpacity(0.2),
               secondaryActiveTrackColor: Colors.white.withOpacity(0.35),
               thumbColor: Colors.white,
               overlayColor: Colors.white.withOpacity(0.12),
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6.5),
+              thumbShape: RoundSliderThumbShape(
+                  enabledThumbRadius: focused ? 9 : 6.5),
               overlayShape: const RoundSliderOverlayShape(overlayRadius: 13),
             ),
             child: Slider(
@@ -786,6 +805,7 @@ class BottomBar extends StatelessWidget {
               icon: Icons.skip_previous_rounded,
               tooltip: '上一集',
               onTap: onPrevious,
+              focused: tvFocusIndex == 0,
             ),
             const SizedBox(width: 8),
             _TransportButton(
@@ -796,12 +816,14 @@ class BottomBar extends StatelessWidget {
               size: 38,
               iconSize: 23,
               onTap: onPlayPause,
+              focused: tvFocusIndex == 1,
             ),
             const SizedBox(width: 8),
             _TransportButton(
               icon: Icons.skip_next_rounded,
               tooltip: '下一集',
               onTap: onNext,
+              focused: tvFocusIndex == 2,
             ),
           ],
         ),
@@ -816,11 +838,12 @@ class BottomBar extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  for (final action in bottomActions)
+                  for (var i = 0; i < bottomActions.length; i++)
                     _BottomActionButton(
-                      action: action,
-                      selected: selectedActions.contains(action),
-                      onTap: () => onAction?.call(action),
+                      action: bottomActions[i],
+                      selected: selectedActions.contains(bottomActions[i]),
+                      onTap: () => onAction?.call(bottomActions[i]),
+                      focused: tvFocusIndex == 3 + i,
                     ),
                 ],
               ),
@@ -868,6 +891,7 @@ class _TransportButton extends StatelessWidget {
     required this.onTap,
     this.size = 36,
     this.iconSize = 22,
+    this.focused = false,
   });
 
   final IconData icon;
@@ -875,6 +899,9 @@ class _TransportButton extends StatelessWidget {
   final VoidCallback? onTap;
   final double size;
   final double iconSize;
+
+  /// TV 聚焦态：白色圆环描边。
+  final bool focused;
 
   @override
   Widget build(BuildContext context) {
@@ -887,9 +914,27 @@ class _TransportButton extends StatelessWidget {
           width: size,
           height: size,
           child: Center(
-            child: PlayerShadowIcon(
-              icon: icon,
-              size: iconSize,
+            child: Container(
+              width: size,
+              height: size,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: focused
+                    ? Border.all(color: Colors.white, width: 2.5)
+                    : null,
+                boxShadow: focused
+                    ? [
+                        BoxShadow(
+                            color: Colors.white.withValues(alpha: 0.35),
+                            blurRadius: 10)
+                      ]
+                    : null,
+              ),
+              child: PlayerShadowIcon(
+                icon: icon,
+                size: iconSize,
+              ),
             ),
           ),
         ),
@@ -903,11 +948,15 @@ class _BottomActionButton extends StatelessWidget {
     required this.action,
     required this.selected,
     required this.onTap,
+    this.focused = false,
   });
 
   final PlayerBottomAction action;
   final bool selected;
   final VoidCallback onTap;
+
+  /// TV 聚焦态：白色描边。
+  final bool focused;
 
   String get label {
     switch (action) {
@@ -959,6 +1008,9 @@ class _BottomActionButton extends StatelessWidget {
                 ? playerUiBlue.withOpacity(0.35)
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(10),
+            border: focused
+                ? Border.all(color: Colors.white, width: 2)
+                : null,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
