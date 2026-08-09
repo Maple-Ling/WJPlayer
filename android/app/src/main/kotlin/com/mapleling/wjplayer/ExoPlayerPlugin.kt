@@ -302,14 +302,12 @@ class ExoPlayerPlugin(
                     // （c2./omx.* = 平台硬解可用；候选为空却能播放 = 走了 FFmpeg 软解，
                     // 高码率 HEVC 卡顿即可归因软解）。
                     .setMediaCodecSelector(object : MediaCodecSelector {
-                        private val delegate = MediaCodecSelector.DEFAULT
-
                         override fun getDecoderInfos(
                             mimeType: String,
                             requiresSecureDecoder: Boolean,
                             requiresTunnelingDecoder: Boolean
                         ): List<MediaCodecInfo> {
-                            val infos = delegate.getDecoderInfos(
+                            val infos = MediaCodecSelector.DEFAULT.getDecoderInfos(
                                 mimeType, requiresSecureDecoder, requiresTunnelingDecoder
                             )
                             android.util.Log.i(
@@ -319,9 +317,6 @@ class ExoPlayerPlugin(
                             )
                             return infos
                         }
-
-                        override fun getPassthroughDecoderInfo(): MediaCodecInfo? =
-                            delegate.getPassthroughDecoderInfo()
                     })
 
                 android.util.Log.i("ExoPlayerPlugin", "Creating ExoPlayer with Media3 renderers (hardware decode preferred, ffmpeg fallback)")
