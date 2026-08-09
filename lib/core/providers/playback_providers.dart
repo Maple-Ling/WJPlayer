@@ -725,8 +725,12 @@ final dolbyAutoGpuNextSwProvider =
 final exoLibassProvider =
     StateNotifierProvider<PreferenceNotifier<bool>, bool>((ref) {
   return PreferenceNotifier<bool>(
-    defaultValue: true,
-    readValue: (prefs) => prefs.getBool('wjplayer_exo_libass') ?? true,
+    // 默认关闭 EXO 原生 ASS 渲染管线（2026-08-09 卡顿修复）：
+    // ass-media 管线启用后视频帧全部经 DefaultVideoFrameProcessor(GL) 处理，
+    // HEVC 高码率下 GPU 负担巨大 → 卡成 PPT。关闭后 ASS 字幕走 convertAssToSrt
+    // 转换（样式简化但流畅）；需要原生 ASS 效果请用 MPV 内核（libass 内置）。
+    defaultValue: false,
+    readValue: (prefs) => prefs.getBool('wjplayer_exo_libass') ?? false,
     writeValue: (prefs, value) async {
       await prefs.setBool('wjplayer_exo_libass', value);
     },

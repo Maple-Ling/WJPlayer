@@ -289,7 +289,8 @@ class PlayerSettingsScreen extends ConsumerWidget {
             TdSwitchTile(
               title: const Text('EXO 启用 ASS 原生渲染'),
               subtitle: const Text(
-                  '关闭时将 ASS 转为 SRT 兼容播放；开启后优先使用 Media3/libass 管线保留 ASS 效果'),
+                  '默认关闭：开启后视频帧全部经 GL 管线处理，HEVC 高码率可能严重卡顿；'
+                  '关闭时 ASS 字幕自动转 SRT 播放。需要原生 ASS 效果建议用 MPV 内核'),
               value: exoLibass,
               onChanged: (value) =>
                   ref.read(exoLibassProvider.notifier).state = value,
