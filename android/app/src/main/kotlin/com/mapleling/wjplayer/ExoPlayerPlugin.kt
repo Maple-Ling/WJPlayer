@@ -26,6 +26,8 @@ import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import io.github.peerless2012.ass.media.kt.buildWithAssSupport
 import io.github.peerless2012.ass.media.type.AssRenderType
@@ -296,6 +298,31 @@ class ExoPlayerPlugin(
                 val renderersFactory = DefaultRenderersFactory(context)
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
                     .setEnableDecoderFallback(true)
+                    // 播放诊断日志：打印 MediaCodec 层为该视频编码枚举出的候选解码器
+                    // （c2./omx.* = 平台硬解可用；候选为空却能播放 = 走了 FFmpeg 软解，
+                    // 高码率 HEVC 卡顿即可归因软解）。
+                    .setMediaCodecSelector(object : MediaCodecSelector {
+                        private val delegate = MediaCodecSelector.DEFAULT
+
+                        override fun getDecoderInfos(
+                            mimeType: String,
+                            requiresSecureDecoder: Boolean,
+                            requiresTunnelingDecoder: Boolean
+                        ): List<MediaCodecInfo> {
+                            val infos = delegate.getDecoderInfos(
+                                mimeType, requiresSecureDecoder, requiresTunnelingDecoder
+                            )
+                            android.util.Log.i(
+                                "ExoPlayerPlugin",
+                                "MediaCodec candidates for $mimeType: " +
+                                    infos.joinToString(", ") { it.name } + " (count=${infos.size})"
+                            )
+                            return infos
+                        }
+
+                        override fun getPassthroughDecoderInfo(): MediaCodecInfo? =
+                            delegate.getPassthroughDecoderInfo()
+                    })
 
                 android.util.Log.i("ExoPlayerPlugin", "Creating ExoPlayer with Media3 renderers (hardware decode preferred, ffmpeg fallback)")
 
@@ -356,25 +383,6 @@ class ExoPlayerPlugin(
                         .build()
                 }
                 exoPlayer.setVideoSurface(surface)
-
-                // 播放诊断日志：实际使用的视频解码器（AnalyticsListener 回调，
-                // decoderName 如 c2.android.hevc.decoder=硬解 / ffmpeg=软解）。
-                // 用于排查 HEVC 等卡顿是否因 MediaCodec 硬解失败 fallback 软解。
-                exoPlayer.addAnalyticsListener(object :
-                    androidx.media3.common.AnalyticsListener {
-                    override fun onVideoDecoderInitialized(
-                        eventTime: androidx.media3.common.AnalyticsListener.EventTime,
-                        decoderName: String,
-                        initializedTimestampMs: Long,
-                        initializationDurationMs: Long
-                    ) {
-                        android.util.Log.i(
-                            "ExoPlayerPlugin",
-                            "Video decoder: $decoderName" +
-                                " (hardware=${decoderName.startsWith("c2.") || decoderName.startsWith("omx.")})"
-                        )
-                    }
-                })
 
                 val eventChannel = EventChannel(
                     binaryMessenger,
@@ -904,9 +912,8 @@ class ExoPlayerPlugin(
                 )
                 emitCurrentVideoSize()
             }
-            // 播放诊断日志：视频规格（编码/分辨率/帧率）。实际解码器名由
-            // AnalyticsListener.onVideoDecoderInitialized 输出（硬解 c2./omx.*、
-            // 软解 ffmpeg），用于排查 HEVC 卡顿是否软解导致。
+            // 播放诊断日志：视频规格（编码/分辨率/帧率）。硬解候选由
+            // MediaCodecSelector 日志输出（c2./omx.*=硬解可用；候选空=软解）。
             val fmt = exoPlayer.videoFormat
             android.util.Log.i(
                 "ExoPlayerPlugin",
