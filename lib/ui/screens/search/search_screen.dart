@@ -62,13 +62,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               // 0=搜索框、1=聚合开关：
               //   上：聚合→搜索框；搜索框→状态栏；下：任意→状态栏；
               //   右：搜索框→聚合；左：聚合→搜索框。
-              traversal: (current, direction) {
+              traversal: (current, direction, nodes) {
                 switch (direction) {
                   case DPad.up:
                     return current == 1 ? 0 : -1;
                   case DPad.down:
-                    return -1;
-                  case DPad.left:
+                    return -1;                  case DPad.left:
                     return current == 1 ? 0 : current;
                   case DPad.right:
                     return current == 0 ? 1 : current;

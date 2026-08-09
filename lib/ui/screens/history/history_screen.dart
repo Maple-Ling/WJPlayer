@@ -210,7 +210,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     //   · 左/右：卡片→搜索按钮→（搜索右停留）；搜索左→卡片；卡片左停留
     //   · 工具行：上→状态栏（-1，onBoundary）、下→第一张卡
     //   · 最后一张卡下 → 状态栏（-1，onBoundary）
-    return (current, direction) {
+    return (current, direction, nodes) {
       if (current == 0) {
         switch (direction) {
           case DPad.down:

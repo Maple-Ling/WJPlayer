@@ -162,7 +162,7 @@ class _ServerEditorFormState extends ConsumerState<ServerEditorForm> {
   /// 线路卡内任意位置右 → -1（onBoundary 聚焦删除按钮）。
   TraversalFn _formTraversal(int lineCount) {
     final saveIndex = _leadCount + lineCount * _lineSpan;
-    return (current, direction) {
+    return (current, direction, nodes) {
       switch (direction) {
         case DPad.up:
           return current > 0 ? current - 1 : current;

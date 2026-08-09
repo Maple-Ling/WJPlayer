@@ -19,7 +19,7 @@ class SettingsScreen extends ConsumerWidget {
               id: 'settings',
               count: _cardCount,
               // 单列线性：顶部上键/底部「关于」下键 → 状态栏（onBoundary）。
-              traversal: (current, direction) {
+              traversal: (current, direction, nodes) {
                 switch (direction) {
                   case DPad.up:
                     return current > 0 ? current - 1 : -1;

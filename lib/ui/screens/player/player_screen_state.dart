@@ -2679,13 +2679,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     final lineName = _currentLineName(server);
 
     return PopScope(
-      // TV：系统返回键优先关二级菜单（不退出播放器）；无菜单时退出播放器。
-      // 手机端不拦截（零副作用）。
-      canPop: !isTvPlatform,
+      // TV 返回键语义：选集栏/二级菜单打开时 canPop=false（拦截，返回键
+      // 关闭覆盖层）；其余情况 canPop=true 放行系统返回（正常退出播放器，
+      // dispose 自动保存进度/恢复系统控制）。旧实现 TV 恒 canPop=false +
+      // maybePop() 被 PopScope 拦截 → 返回键/顶部返回按钮全部失效。
+      canPop: isTvPlatform
+          ? !(_tvEpisodeBarOpen || _overlayMenuOpen)
+          : true,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        // TV：选集栏打开 → 关闭选集栏；二级菜单打开 → 关闭菜单；
-        // 均不退出播放器。
+        // canPop=false 分支（TV 覆盖层打开）：返回键关闭覆盖层，不退出。
         if (isTvPlatform && _tvEpisodeBarOpen) {
           _closeTvEpisodeBar();
           return;
@@ -2694,11 +2697,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           _overlayKey.currentState?.closeMenu();
           return;
         }
-        // 手动放行：退出播放器（dispose 自动保存进度/恢复系统控制）。
-        if (!isTvPlatform) return;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) Navigator.of(context).maybePop();
-        });
       },
       child: Scaffold(
       backgroundColor: Colors.black,
@@ -5458,7 +5456,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   /// 集封面缩略图 URL：横幅 Thumb 优先（选集胶囊横向排版更贴合），
   /// 无则 Primary；两者皆无返回 null（胶囊不显示图片）。
   String? _episodeThumbUrl(Episode episode) {
-    final api = ref.read(apiClientProvider);
+    final api = ref.read(apiClientProvider).image;
     if (episode.thumbImageTag != null) {
       return api.getImageUrl(
         itemId: episode.id,

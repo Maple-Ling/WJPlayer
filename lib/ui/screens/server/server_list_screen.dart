@@ -161,7 +161,7 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
   /// 卡片：单排上下线性（左右停留）、双排 2 列上下左右；首卡上→工具行加号、
   /// 末卡下→状态栏。
   TraversalFn _serversTraversal(int cardCount) {
-    return (current, direction) {
+    return (current, direction, nodes) {
       if (current < _toolCount) {
         switch (direction) {
           case DPad.left:
@@ -200,7 +200,7 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
   }
 
   /// 排序模式：方向键一律返回 -1，由 onBoundary 转 _moveSortingCard（焦点不动）。
-  TraversalFn _sortingTraversal() => (current, direction) => -1;
+  TraversalFn _sortingTraversal() => (current, direction, nodes) => -1;
 
   /// 连点三次顶部“服务器”标题：切换隐藏服务器显示/隐藏（纯功能，无提示）。
   void _onTitleTap() {
