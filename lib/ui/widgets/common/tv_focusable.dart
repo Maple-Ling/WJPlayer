@@ -122,7 +122,7 @@ class _TvFocusableState extends State<TvFocusable> {
     final isFocused = _focused && widget.enabled;
 
     return FocusableActionDetector(
-      focusNode: _focusNode,
+      focusNode: _node,
       enabled: widget.enabled,
       autofocus: widget.autofocus,
       actions: <Type, Action<Intent>>{

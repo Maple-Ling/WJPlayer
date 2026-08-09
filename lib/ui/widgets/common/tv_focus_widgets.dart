@@ -28,7 +28,8 @@
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show LogicalKeyboardKey, KeyDownEvent;
+import 'package:flutter/services.dart'
+    show LogicalKeyboardKey, KeyDownEvent, KeyRepeatEvent;
 import 'package:flutter/widgets.dart'
     show FocusNode, TraversalDirection, WidgetsBinding;
 
@@ -173,8 +174,8 @@ class TvInputField extends StatefulWidget {
     this.borderRadius = 14,
   });
 
-  /// 区域焦点节点（聚焦态：仅高亮，不进入输入）。
-  final FocusNode focusNode;
+  /// 区域焦点节点（聚焦态：仅高亮，不进入输入）。TV 端必须非空。
+  final FocusNode? focusNode;
 
   /// 构建内部编辑器（接收内部编辑节点，交给 TextField 的 focusNode）。
   final Widget Function(BuildContext context, FocusNode editorNode)
@@ -195,7 +196,7 @@ class _TvInputFieldState extends State<TvInputField> {
   void initState() {
     super.initState();
     if (isTvPlatform) {
-      widget.focusNode.addListener(_onOuterChange);
+      widget.focusNode?.addListener(_onOuterChange);
       _editorNode.addListener(_onEditorChange);
     }
   }
@@ -204,15 +205,15 @@ class _TvInputFieldState extends State<TvInputField> {
   void didUpdateWidget(TvInputField oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (isTvPlatform && oldWidget.focusNode != widget.focusNode) {
-      oldWidget.focusNode.removeListener(_onOuterChange);
-      widget.focusNode.addListener(_onOuterChange);
+      oldWidget.focusNode?.removeListener(_onOuterChange);
+      widget.focusNode?.addListener(_onOuterChange);
     }
   }
 
   @override
   void dispose() {
     if (isTvPlatform) {
-      widget.focusNode.removeListener(_onOuterChange);
+      widget.focusNode?.removeListener(_onOuterChange);
       _editorNode.removeListener(_onEditorChange);
     }
     _editorNode.dispose();
@@ -221,11 +222,11 @@ class _TvInputFieldState extends State<TvInputField> {
 
   void _onOuterChange() {
     if (!mounted) return;
-    final has = widget.focusNode.hasFocus;
+    final has = widget.focusNode?.hasFocus ?? false;
     if (has != _focused) setState(() => _focused = has);
     if (has) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !widget.focusNode.hasFocus) return;
+        if (!mounted || !(widget.focusNode?.hasFocus ?? false)) return;
         Scrollable.ensureVisible(
           context,
           duration: const Duration(milliseconds: 180),
@@ -434,7 +435,7 @@ class TvKeyboardListener extends StatelessWidget {
 
         // 长按 OK/Enter（按键重复事件）：通知当前焦点区域处理
         // （如历史页长按 OK 进入多选删除）。
-        if (event.repeat &&
+        if (event is KeyRepeatEvent &&
             (key == LogicalKeyboardKey.enter ||
                 key == LogicalKeyboardKey.select)) {
           final manager = TvFocusManager.instance;

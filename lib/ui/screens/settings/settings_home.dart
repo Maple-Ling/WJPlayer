@@ -54,7 +54,7 @@ class SettingsScreen extends ConsumerWidget {
   }
 
   Widget _buildList(BuildContext ctx, WidgetRef ref) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final isDark = Theme.of(ctx).brightness == Brightness.dark;
     final useTv = isTvPlatform &&
         TvFocusManager.instance.getArea('settings') != null;
     FocusNode? node(int i) => useTv ? ctx.getFocusNode('settings', i) : null;
@@ -68,7 +68,7 @@ class SettingsScreen extends ConsumerWidget {
             20,
             20,
             20,
-            24 + MediaQuery.of(context).padding.bottom,
+            24 + MediaQuery.of(ctx).padding.bottom,
           ),
           children: [
             const Padding(
@@ -83,16 +83,16 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
             _SettingsGroup(children: [
-              _SettingsCard(focusNode: node(0), icon: Icons.dashboard_customize_rounded, title: '界面', subtitle: '布局、语言与启动页', onTap: () => _showGeneralSettings(context)),
-              _SettingsCard(focusNode: node(1), icon: Icons.play_circle_fill_rounded, title: '播放', subtitle: '内核、手势与播放行为', onTap: () => _showPlayerSettings(context)),
-              _SettingsCard(focusNode: node(2), icon: Icons.chat_bubble_rounded, title: '弹幕', subtitle: '外观、屏蔽词与延迟', onTap: () => _showDanmakuSettings(context), showDivider: false),
+              _SettingsCard(focusNode: node(0), icon: Icons.dashboard_customize_rounded, title: '界面', subtitle: '布局、语言与启动页', onTap: () => _showGeneralSettings(ctx)),
+              _SettingsCard(focusNode: node(1), icon: Icons.play_circle_fill_rounded, title: '播放', subtitle: '内核、手势与播放行为', onTap: () => _showPlayerSettings(ctx)),
+              _SettingsCard(focusNode: node(2), icon: Icons.chat_bubble_rounded, title: '弹幕', subtitle: '外观、屏蔽词与延迟', onTap: () => _showDanmakuSettings(ctx), showDivider: false),
             ]),
             _SettingsGroup(children: [
-              _SettingsCard(focusNode: node(3), icon: Icons.system_update_rounded, title: '检查更新', subtitle: '当前 $kCurrentAppVersion · 每 24 小时自动检查', onTap: () => _checkUpdate(context, ref), showDivider: false),
-              _SettingsCard(focusNode: node(4), icon: Icons.restore_page_rounded, title: '备份与恢复', subtitle: '备份或恢复设置', onTap: () => _showBackupRestore(context)),
+              _SettingsCard(focusNode: node(3), icon: Icons.system_update_rounded, title: '检查更新', subtitle: '当前 $kCurrentAppVersion · 每 24 小时自动检查', onTap: () => _checkUpdate(ctx, ref), showDivider: false),
+              _SettingsCard(focusNode: node(4), icon: Icons.restore_page_rounded, title: '备份与恢复', subtitle: '备份或恢复设置', onTap: () => _showBackupRestore(ctx)),
             ]),
             _SettingsGroup(children: [
-              _SettingsCard(focusNode: node(5), icon: Icons.info_rounded, title: '关于', subtitle: '版本、开源许可与致谢', onTap: () => _showAbout(context), showDivider: false),
+              _SettingsCard(focusNode: node(5), icon: Icons.info_rounded, title: '关于', subtitle: '版本、开源许可与致谢', onTap: () => _showAbout(ctx), showDivider: false),
             ]),
           ],
         ),

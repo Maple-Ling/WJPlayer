@@ -3049,7 +3049,7 @@ class _LibrarySection extends StatelessWidget {
                 // TV：上键第一次聚焦到本行「查看更多」；节点由 TvFocusManager 管理。
                 focusNode: moreNode,
                 onPressed: onOpenLibrary,
-                style: TextButton.styleFrom(
+                style: ButtonStyle(
                   overlayColor: WidgetStateProperty.resolveWith((states) =>
                       states.contains(WidgetState.focused)
                           ? Theme.of(context)

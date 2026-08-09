@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'
+    show KeyEventResult, LogicalKeyboardKey;
 import 'package:flutter_reorderable_grid_view/widgets/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -1050,7 +1052,6 @@ class _MenuTile extends StatelessWidget {
         onTap: onTap,
         // TV 上不显示 ListTile 自身的按压水波纹（由 TvFocusable 描边指示）。
         splashColor: Colors.transparent,
-        highlightColor: Colors.transparent,
       ),
     );
   }

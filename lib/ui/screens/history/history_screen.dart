@@ -157,7 +157,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
           ref.read(watchHistoryRefreshProvider.notifier).state++;
           await ref.read(allWatchHistoryProvider.future);
         },
-        child: history.when(
+        child: ref.watch(allWatchHistoryProvider).when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (_, __) => const _HistoryEmpty(text: '记录加载失败，下拉重试'),
           data: (data) => data.isEmpty
