@@ -19,6 +19,83 @@ enum DPad { up, down, left, right }
 
 typedef TraversalFn = int Function(int current, DPad direction);
 
+/// 详情页等长页面的焦点分区。
+class FocusSection {
+  final String id;
+  final int count;
+
+  const FocusSection(this.id, this.count) : assert(count > 0);
+}
+
+/// 将多个横向分区压平为一个焦点区域，并保持上下分区、左右项目导航。
+class FocusSectionLayout {
+  final List<FocusSection> sections;
+  late final List<int> _offsets = _buildOffsets();
+
+  FocusSectionLayout(Iterable<FocusSection> sections)
+      : sections = List<FocusSection>.unmodifiable(sections);
+
+  List<int> _buildOffsets() {
+    var offset = 0;
+    final result = <int>[];
+    for (final section in sections) {
+      result.add(offset);
+      offset += section.count;
+    }
+    return result;
+  }
+
+  int get totalCount => sections.isEmpty
+      ? 0
+      : _offsets.last + sections.last.count;
+
+  int indexOf(String sectionId, int itemIndex) {
+    final sectionIndex = sections.indexWhere((item) => item.id == sectionId);
+    if (sectionIndex < 0) return 0;
+    return _offsets[sectionIndex] +
+        itemIndex.clamp(0, sections[sectionIndex].count - 1).toInt();
+  }
+
+  ({String sectionId, int itemIndex}) locationOf(int index) {
+    for (var i = sections.length - 1; i >= 0; i--) {
+      if (index >= _offsets[i]) {
+        return (
+          sectionId: sections[i].id,
+          itemIndex: (index - _offsets[i])
+              .clamp(0, sections[i].count - 1)
+              .toInt(),
+        );
+      }
+    }
+    return (sectionId: sections.first.id, itemIndex: 0);
+  }
+
+  TraversalFn get traversal => (current, direction) {
+        final location = locationOf(current);
+        final sectionIndex = sections
+            .indexWhere((section) => section.id == location.sectionId);
+        final section = sections[sectionIndex];
+        switch (direction) {
+          case DPad.left:
+            return indexOf(
+                section.id, location.itemIndex - 1);
+          case DPad.right:
+            return indexOf(
+                section.id, location.itemIndex + 1);
+          case DPad.up:
+            if (sectionIndex == 0) return current;
+            final previous = sections[sectionIndex - 1];
+            return indexOf(previous.id,
+                location.itemIndex.clamp(0, previous.count - 1).toInt());
+          case DPad.down:
+            if (sectionIndex == sections.length - 1) return current;
+            final next = sections[sectionIndex + 1];
+            return indexOf(next.id,
+                location.itemIndex.clamp(0, next.count - 1).toInt());
+        }
+      };
+}
+
 /// 单个可聚焦元素的焦点区域配置。
 /// [count] 必须在整个区域生命周期内稳定；如需动态变化，请用 [Key] 重建。
 class FocusAreaConfig {
@@ -26,12 +103,16 @@ class FocusAreaConfig {
   final int count;
   final TraversalFn traversal;
   final ValueChanged<int>? onFocusChanged;
+  final bool releaseOnUp;
+  final bool ignoreDown;
 
   const FocusAreaConfig({
     required this.id,
     required this.count,
     required this.traversal,
     this.onFocusChanged,
+    this.releaseOnUp = false,
+    this.ignoreDown = false,
   }) : assert(count > 0);
 }
 
@@ -215,14 +296,17 @@ class TvFocusManager extends ChangeNotifier {
     final area = activeArea;
     if (area == null || !hasManagedFocus) return;
 
-    if (direction == DPad.up) {
-      // 上键：释放焦点，返回 Flutter 默认焦点树
+    if (direction == DPad.up && area.config.releaseOnUp) {
+      // 底部状态栏上键退出，焦点交还 Flutter 默认焦点树。
       _activeAreaId = null;
       area.nodes[area.focusIndex].unfocus();
       return;
     }
 
-    if (direction == DPad.down) return; // 下键舍弃
+    if (direction == DPad.down && area.config.ignoreDown) {
+      // 底部状态栏没有下方目标，下键保持当前焦点。
+      return;
+    }
 
     final next = area.nextIndex(direction);
     if (next == area.focusIndex) return;

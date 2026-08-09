@@ -28,11 +28,13 @@ class _CollapsibleOverviewState extends State<CollapsibleOverview> {
       ),
       Align(
         alignment: Alignment.center,
-        child: TextButton.icon(
-          onPressed: () => setState(() => _expanded = !_expanded),
-          icon: Icon(_expanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded),
-          label: Text(_expanded ? '收起' : '查看更多'),
-          style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+        child: ExcludeFocus(
+          child: TextButton.icon(
+            onPressed: () => setState(() => _expanded = !_expanded),
+            icon: Icon(_expanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded),
+            label: Text(_expanded ? '收起' : '查看更多'),
+            style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+          ),
         ),
       ),
     ]);

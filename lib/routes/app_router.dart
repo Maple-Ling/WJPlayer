@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show
     KeyEventResult,
-    KeyEventSource,
     LogicalKeyboardKey,
     SystemNavigator;
 import 'package:flutter_animate/flutter_animate.dart';
@@ -10,6 +9,7 @@ import 'package:go_router/go_router.dart';
 import '../core/providers/app_providers.dart';
 import '../core/providers/media_providers.dart';
 import '../core/services/tv_focus_manager.dart';
+import '../core/services/tv_key_channel.dart';
 import '../core/theme/app_colors.dart';
 import '../core/theme/app_motion.dart';
 import '../core/utils/platform_utils.dart';
@@ -600,6 +600,8 @@ class _FloatingTabBarState extends ConsumerState<_FloatingTabBar> {
         id: 'main_tabs',
         count: _tabOrder.length,
         traversal: TraversalPolicies.linear(_tabOrder.length),
+        releaseOnUp: true,
+        ignoreDown: true,
       ),
     );
     TvFocusManager.instance.addListener(_onFocusChanged);

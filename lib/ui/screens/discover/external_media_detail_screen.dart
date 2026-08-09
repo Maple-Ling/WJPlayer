@@ -16,6 +16,7 @@ import '../../widgets/common/collapsible_overview.dart';
 import '../../widgets/common/media_widgets.dart';
 import '../../widgets/common/adaptive_poster_blend.dart';
 import '../../widgets/common/playback_resource_card.dart';
+import '../../widgets/common/tv_focusable.dart';
 import '../../widgets/common/app_toast.dart';
 
 class ExternalMediaDetailScreen extends ConsumerStatefulWidget {
@@ -178,11 +179,11 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
               if (detail.recommendations.isNotEmpty) ...[
                 const SizedBox(height: 20), _sectionTitle('相似推荐'), const SizedBox(height: 16), _recommendations(detail.recommendations),
               ],
-              const SizedBox(height: 20), _sectionTitle('媒体信息'), const SizedBox(height: 14), _mediaInfo(detail),
               const SizedBox(height: 20), _sectionTitle('链接'), const SizedBox(height: 14), _links(detail),
               if (detail.companies.isNotEmpty) ...[
                 const SizedBox(height: 20), _sectionTitle('工作室'), const SizedBox(height: 14), _companies(detail.companies),
               ],
+              const SizedBox(height: 20), _sectionTitle('媒体信息'), const SizedBox(height: 14), _mediaInfo(detail),
             ]),
           ),
         ]),
@@ -205,11 +206,17 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
     final selected = list.isEmpty
         ? null
         : list[_selectedServerIndex.clamp(0, list.length - 1)];
-    return Center(child: SizedBox(width: 185, height: 50, child: FilledButton.icon(
-      style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black, shape: const StadiumBorder(), elevation: 0),
-      onPressed: selected == null ? null : () => _openMatch(selected, directPlay: true),
-      icon: const Icon(Icons.play_arrow_rounded, size: 23),
-      label: Text(selected == null ? '搜索中' : '播放', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+    return Center(child: SizedBox(width: 185, height: 50, child: TvFocusable(
+      autofocus: true,
+      enabled: selected != null,
+      borderRadius: 999,
+      onActivate: selected == null ? () {} : () => _openMatch(selected, directPlay: true),
+      child: FilledButton.icon(
+        style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black, shape: const StadiumBorder(), elevation: 0),
+        onPressed: selected == null ? null : () => _openMatch(selected, directPlay: true),
+        icon: const Icon(Icons.play_arrow_rounded, size: 23),
+        label: Text(selected == null ? '搜索中' : '播放', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+      ),
     )));
   }
 
@@ -221,15 +228,17 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
       const SizedBox(width: 6),
       Text('第 $_season 季', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
       const SizedBox(width: 6),
-      PopupMenuButton<int>(
-        icon: const Icon(Icons.unfold_more_rounded, size: 20),
-        tooltip: '切换分季',
-        onSelected: (value) => setState(() {
-          _season = value;
-          _episode = null;
-          _episodeRangeStart = 1;
-        }),
-        itemBuilder: (_) => [for (final season in seasons) PopupMenuItem(value: season.number, child: Text(season.name))],
+      ExcludeFocus(
+        child: PopupMenuButton<int>(
+          icon: const Icon(Icons.unfold_more_rounded, size: 20),
+          tooltip: '切换分季',
+          onSelected: (value) => setState(() {
+            _season = value;
+            _episode = null;
+            _episodeRangeStart = 1;
+          }),
+          itemBuilder: (_) => [for (final season in seasons) PopupMenuItem(value: season.number, child: Text(season.name))],
+        ),
       ),
     ]);
   }
@@ -356,25 +365,33 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
                 final info = matchPlaybackInfo(match);
                 return SizedBox(
                   width: 250,
-                  child: PlaybackResourceCard(
-                    serverName: match.serverName,
-                    isBest: index == 0,
-                    isSelected: _latestMatches.isNotEmpty &&
-                        _selectedServerIndex == index,
-                    resolution: info.resolution,
-                    dynamicRange: info.dynamicRange,
-                    codec: info.codec,
-                    frameRate: info.frameRate,
-                    size: info.size,
-                    bitrate: info.bitrate,
-                    onTap: () {
-                      setState(() {
-                        _latestMatches = matches;
-                        _selectedServerIndex = index;
-                        _hasSelectedServer = true;
-                      });
-                    },
-                    onDoubleTap: () => _openMatch(match, directPlay: false),
+                  child: TvFocusable(
+                    onActivate: () => setState(() {
+                      _latestMatches = matches;
+                      _selectedServerIndex = index;
+                      _hasSelectedServer = true;
+                    }),
+                    borderRadius: 12,
+                    child: PlaybackResourceCard(
+                      serverName: match.serverName,
+                      isBest: index == 0,
+                      isSelected: _latestMatches.isNotEmpty &&
+                          _selectedServerIndex == index,
+                      resolution: info.resolution,
+                      dynamicRange: info.dynamicRange,
+                      codec: info.codec,
+                      frameRate: info.frameRate,
+                      size: info.size,
+                      bitrate: info.bitrate,
+                      onTap: () {
+                        setState(() {
+                          _latestMatches = matches;
+                          _selectedServerIndex = index;
+                          _hasSelectedServer = true;
+                        });
+                      },
+                      onDoubleTap: () => _openMatch(match, directPlay: false),
+                    ),
                   ),
                 );
               },
@@ -382,11 +399,11 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
           ),
   );
 
-  Widget _people(List<ExternalPerson> people) => SizedBox(height: 105, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: people.length, separatorBuilder: (_, __) => const SizedBox(width: 9), itemBuilder: (_, index) { final person = people[index]; return InkWell(onTap: () => _showPerson(person), child: SizedBox(width: 78, child: Column(children: [ClipOval(child: SizedBox(width: 58, height: 58, child: MediaImage(imageUrl: person.profileUrl, fit: BoxFit.cover, cacheWidth: 120))), const SizedBox(height: 8), Text(person.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)), Text(person.character ?? person.originalName ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.black54))]))); }));
+  Widget _people(List<ExternalPerson> people) => SizedBox(height: 105, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: people.length, separatorBuilder: (_, __) => const SizedBox(width: 9), itemBuilder: (_, index) { final person = people[index]; return SizedBox(width: 78, child: TvFocusable(onActivate: () => _showPerson(person), borderRadius: 30, child: InkWell(onTap: () => _showPerson(person), child: Column(children: [ClipOval(child: SizedBox(width: 58, height: 58, child: MediaImage(imageUrl: person.profileUrl, fit: BoxFit.cover, cacheWidth: 120))), const SizedBox(height: 8), Text(person.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)), Text(person.character ?? person.originalName ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.black54))])))); }));
 
-  Widget _gallery(List<String> images) => SizedBox(height: 150, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: images.length, separatorBuilder: (_, __) => const SizedBox(width: 9), itemBuilder: (_, index) => InkWell(onTap: () => _showImage(images, index), child: AspectRatio(aspectRatio: 16 / 9, child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaImage(imageUrl: images[index], fit: BoxFit.cover, cacheWidth: 320))))));
+  Widget _gallery(List<String> images) => SizedBox(height: 150, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: images.length, separatorBuilder: (_, __) => const SizedBox(width: 9), itemBuilder: (_, index) => TvFocusable(onActivate: () => _showImage(images, index), borderRadius: 18, child: InkWell(onTap: () => _showImage(images, index), child: AspectRatio(aspectRatio: 16 / 9, child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaImage(imageUrl: images[index], fit: BoxFit.cover, cacheWidth: 320)))))));
 
-  Widget _recommendations(List<DiscoverEntry> items) => SizedBox(height: 180, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: items.length, separatorBuilder: (_, __) => const SizedBox(width: 8), itemBuilder: (_, index) { final item = items[index]; return InkWell(onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ExternalMediaDetailScreen(entry: item))), child: SizedBox(width: 100, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaImage(imageUrl: item.posterUrl, fit: BoxFit.cover, cacheWidth: 200))), const SizedBox(height: 8), Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)), Text(item.year ?? '', style: const TextStyle(color: Colors.black54))]))); }));
+  Widget _recommendations(List<DiscoverEntry> items) => SizedBox(height: 180, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: items.length, separatorBuilder: (_, __) => const SizedBox(width: 8), itemBuilder: (_, index) { final item = items[index]; return TvFocusable(onActivate: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ExternalMediaDetailScreen(entry: item))), borderRadius: 18, child: InkWell(onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ExternalMediaDetailScreen(entry: item))), child: SizedBox(width: 100, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaImage(imageUrl: item.posterUrl, fit: BoxFit.cover, cacheWidth: 200))), const SizedBox(height: 8), Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)), Text(item.year ?? '', style: const TextStyle(color: Colors.black54))])))); }));
 
   Widget _mediaInfo(ExternalMediaDetail detail) {
     final values = <(String, String)>[
@@ -406,7 +423,11 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
       runSpacing: 8,
       children: [
         for (final value in values)
-          Chip(label: Text('${value.$1}  ${value.$2}')),
+          TvFocusable(
+            onActivate: () {},
+            borderRadius: 999,
+            child: Chip(label: Text('${value.$1}  ${value.$2}')),
+          ),
       ],
     );
   }
@@ -435,18 +456,25 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
     ];
     return Wrap(spacing: 12, runSpacing: 10, children: [
       for (final value in values)
-        ActionChip(
-          avatar: const Icon(Icons.open_in_new_rounded, size: 17),
-          label: Text(value.$1),
-          onPressed: () => launchUrl(
+        TvFocusable(
+          onActivate: () => launchUrl(
             Uri.parse(value.$2),
             mode: LaunchMode.externalApplication,
+          ),
+          borderRadius: 999,
+          child: ActionChip(
+            avatar: const Icon(Icons.open_in_new_rounded, size: 17),
+            label: Text(value.$1),
+            onPressed: () => launchUrl(
+              Uri.parse(value.$2),
+              mode: LaunchMode.externalApplication,
+            ),
           ),
         ),
     ]);
   }
 
-  Widget _companies(List<ExternalCompany> companies) => SizedBox(height: 54, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: companies.length, separatorBuilder: (_, __) => const SizedBox(width: 12), itemBuilder: (_, index) => ActionChip(avatar: companies[index].logoUrl == null ? null : SizedBox(width: 28, height: 20, child: MediaImage(imageUrl: companies[index].logoUrl, fit: BoxFit.contain)), label: Text(companies[index].name), onPressed: () {})));
+  Widget _companies(List<ExternalCompany> companies) => SizedBox(height: 54, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: companies.length, separatorBuilder: (_, __) => const SizedBox(width: 12), itemBuilder: (_, index) => TvFocusable(onActivate: () {}, borderRadius: 999, child: ActionChip(avatar: companies[index].logoUrl == null ? null : SizedBox(width: 28, height: 20, child: MediaImage(imageUrl: companies[index].logoUrl, fit: BoxFit.contain)), label: Text(companies[index].name), onPressed: () {}))));
 
   Widget _sectionTitle(String title, {Widget? trailing}) => Row(children: [Text(title, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900)), const Spacer(), if (trailing != null) trailing]);
 

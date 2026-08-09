@@ -66,6 +66,16 @@ class _TvFocusableState extends State<TvFocusable> {
       setState(() => _focused = hasFocus);
       widget.onFocusChanged?.call(hasFocus);
     }
+    if (hasFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_focusNode.hasFocus) return;
+        Scrollable.ensureVisible(
+          context,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+        );
+      });
+    }
   }
 
   @override
