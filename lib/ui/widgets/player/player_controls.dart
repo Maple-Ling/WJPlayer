@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import '../../../core/services/system_info_service.dart';
+import '../../../core/utils/platform_utils.dart';
 
 const Color playerUiBlue = Color(0xFF4A7BD0);
 const Color playerUiPink = Color(0xFFE94560);
@@ -102,6 +103,8 @@ class TopBar extends StatelessWidget {
     required this.hardwareDecoding,
     this.onBack,
     this.onAction,
+    this.tvFocusIndex = -1,
+    this.tvFocusNodes,
   });
 
   final Widget? logo;
@@ -127,6 +130,12 @@ class TopBar extends StatelessWidget {
   final bool hardwareDecoding;
   final VoidCallback? onBack;
   final ValueChanged<PlayerTopAction>? onAction;
+
+  /// TV 顶部控制区焦点：-1=无；0=返回；1..=顶部操作按钮。
+  final int tvFocusIndex;
+
+  /// TV 顶部区按钮焦点节点：index 0=返回，1+i=topActions[i]（由播放器持有）。
+  final List<FocusNode>? tvFocusNodes;
 
   IconData get _batteryIcon {
     if (batteryCharging) return Icons.battery_charging_full_rounded;
@@ -271,6 +280,10 @@ class TopBar extends StatelessWidget {
           iconSize: 20,
           background: Colors.black.withOpacity(0.4),
           onTap: onBack,
+          focusNode: tvFocusNodes != null && tvFocusNodes!.isNotEmpty
+              ? tvFocusNodes![0]
+              : null,
+          focused: tvFocusIndex == 0,
         ),
         const SizedBox(width: 10),
         _buildLogo(),
@@ -284,14 +297,21 @@ class TopBar extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  for (final action in topActions)
+                  for (var i = 0; i < topActions.length; i++)
                     _TopActionButton(
-                      action: action,
-                      selected: selectedActions.contains(action) ||
-                          (action == PlayerTopAction.anime4k && anime4kEnabled) ||
-                          (action == PlayerTopAction.hardwareDecoding &&
+                      action: topActions[i],
+                      selected: selectedActions.contains(topActions[i]) ||
+                          (topActions[i] == PlayerTopAction.anime4k &&
+                              anime4kEnabled) ||
+                          (topActions[i] ==
+                                  PlayerTopAction.hardwareDecoding &&
                               hardwareDecoding),
-                      onTap: () => onAction?.call(action),
+                      onTap: () => onAction?.call(topActions[i]),
+                      focusNode: tvFocusNodes != null &&
+                              tvFocusNodes!.length > 1 + i
+                          ? tvFocusNodes![1 + i]
+                          : null,
+                      focused: tvFocusIndex == 1 + i,
                     ),
                 ],
               ),
@@ -438,6 +458,7 @@ class _TransparentCircleButton extends StatelessWidget {
     this.iconSize = 19,
     this.background,
     this.focused = false,
+    this.focusNode,
   });
 
   final IconData icon;
@@ -450,34 +471,48 @@ class _TransparentCircleButton extends StatelessWidget {
   /// TV 聚焦态：白色圆环描边。
   final bool focused;
 
+  /// TV 遥控聚焦节点（播放器持有；null = 不可遥控聚焦）。
+  final FocusNode? focusNode;
+
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Container(
-          width: size,
-          height: size,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: background,
-            shape: BoxShape.circle,
-            border: focused
-                ? Border.all(color: Colors.white, width: 2.5)
-                : null,
-            boxShadow: focused
-                ? [
-                    BoxShadow(
-                        color: Colors.white.withValues(alpha: 0.35),
-                        blurRadius: 10)
-                  ]
-                : null,
-          ),
-          child: PlayerShadowIcon(
-            icon: icon,
-            size: iconSize,
+    return FocusableActionDetector(
+      focusNode: focusNode,
+      actions: {
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (_) {
+            onTap?.call();
+            return null;
+          },
+        ),
+      },
+      child: Tooltip(
+        message: tooltip,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: Container(
+            width: size,
+            height: size,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: background,
+              shape: BoxShape.circle,
+              border: focused
+                  ? Border.all(color: Colors.white, width: 2.5)
+                  : null,
+              boxShadow: focused
+                  ? [
+                      BoxShadow(
+                          color: Colors.white.withValues(alpha: 0.35),
+                          blurRadius: 10)
+                    ]
+                  : null,
+            ),
+            child: PlayerShadowIcon(
+              icon: icon,
+              size: iconSize,
+            ),
           ),
         ),
       ),
@@ -490,11 +525,19 @@ class _TopActionButton extends StatelessWidget {
     required this.action,
     required this.selected,
     required this.onTap,
+    this.focusNode,
+    this.focused = false,
   });
 
   final PlayerTopAction action;
   final bool selected;
   final VoidCallback onTap;
+
+  /// TV 遥控聚焦节点（播放器持有；null = 不可遥控聚焦）。
+  final FocusNode? focusNode;
+
+  /// TV 聚焦态：蓝色描边高亮。
+  final bool focused;
 
   String get label {
     switch (action) {
@@ -536,23 +579,37 @@ class _TopActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: label,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Container(
-          width: 36,
-          height: 36,
-          margin: const EdgeInsets.symmetric(horizontal: 2),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: selected
-                ? playerUiBlue.withOpacity(0.35)
-                : Colors.transparent,
-            shape: BoxShape.circle,
+    return FocusableActionDetector(
+      focusNode: focusNode,
+      actions: {
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (_) {
+            onTap();
+            return null;
+          },
+        ),
+      },
+      child: Tooltip(
+        message: label,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: Container(
+            width: 36,
+            height: 36,
+            margin: const EdgeInsets.symmetric(horizontal: 2),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: selected
+                  ? playerUiBlue.withOpacity(0.35)
+                  : Colors.transparent,
+              shape: BoxShape.circle,
+              border: focused
+                  ? Border.all(color: Colors.white, width: 2)
+                  : null,
+            ),
+            child: PlayerShadowIcon(icon: icon, size: 19),
           ),
-          child: PlayerShadowIcon(icon: icon, size: 19),
         ),
       ),
     );
@@ -592,6 +649,7 @@ class BottomBar extends StatelessWidget {
     this.onNext,
     this.onAction,
     this.tvFocusIndex = -1,
+    this.tvFocusNodes,
   });
 
   final String title;
@@ -616,6 +674,10 @@ class BottomBar extends StatelessWidget {
 
   /// TV 控制栏焦点：-2=进度条；0..N=按钮（传输 3 + 底部操作）；-1=无。
   final int tvFocusIndex;
+
+  /// TV 底部区按钮焦点节点：index 0=进度条、1..3=传输、4..=底部操作
+  /// （由播放器持有）。
+  final List<FocusNode>? tvFocusNodes;
 
   double get progress {
     if (duration.inMilliseconds <= 0) return 0;
@@ -734,25 +796,32 @@ class BottomBar extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              trackHeight: focused ? 6 : 4,
-              activeTrackColor: focused ? Colors.white : playerUiPink,
-              inactiveTrackColor: Colors.white.withOpacity(0.2),
-              secondaryActiveTrackColor: Colors.white.withOpacity(0.35),
-              thumbColor: Colors.white,
-              overlayColor: Colors.white.withOpacity(0.12),
-              thumbShape: RoundSliderThumbShape(
-                  enabledThumbRadius: focused ? 9 : 6.5),
-              overlayShape: const RoundSliderOverlayShape(overlayRadius: 13),
-            ),
-            child: Slider(
-              value: progressOverride ?? progress,
-              secondaryTrackValue: bufferedProgress.clamp(0.0, 1.0),
-              min: 0,
-              max: 1,
-              onChanged: enabled ? onProgressChanged : null,
-              onChangeEnd: enabled ? onProgressChangeEnd : null,
+          child: FocusableActionDetector(
+            // 进度条焦点节点：区域切换聚焦到进度条时 Slider 高亮
+            // （tvFocusIndex==-2 驱动）并由播放器统一聚焦。
+            focusNode: tvFocusNodes != null && tvFocusNodes!.isNotEmpty
+                ? tvFocusNodes![0]
+                : null,
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: focused ? 6 : 4,
+                activeTrackColor: focused ? Colors.white : playerUiPink,
+                inactiveTrackColor: Colors.white.withOpacity(0.2),
+                secondaryActiveTrackColor: Colors.white.withOpacity(0.35),
+                thumbColor: Colors.white,
+                overlayColor: Colors.white.withOpacity(0.12),
+                thumbShape: RoundSliderThumbShape(
+                    enabledThumbRadius: focused ? 9 : 6.5),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 13),
+              ),
+              child: Slider(
+                value: progressOverride ?? progress,
+                secondaryTrackValue: bufferedProgress.clamp(0.0, 1.0),
+                min: 0,
+                max: 1,
+                onChanged: enabled ? onProgressChanged : null,
+                onChangeEnd: enabled ? onProgressChangeEnd : null,
+              ),
             ),
           ),
         ),
@@ -806,6 +875,9 @@ class BottomBar extends StatelessWidget {
               tooltip: '上一集',
               onTap: onPrevious,
               focused: tvFocusIndex == 0,
+              focusNode: tvFocusNodes != null && tvFocusNodes!.length > 1
+                  ? tvFocusNodes![1]
+                  : null,
             ),
             const SizedBox(width: 8),
             _TransportButton(
@@ -817,6 +889,9 @@ class BottomBar extends StatelessWidget {
               iconSize: 23,
               onTap: onPlayPause,
               focused: tvFocusIndex == 1,
+              focusNode: tvFocusNodes != null && tvFocusNodes!.length > 2
+                  ? tvFocusNodes![2]
+                  : null,
             ),
             const SizedBox(width: 8),
             _TransportButton(
@@ -824,6 +899,9 @@ class BottomBar extends StatelessWidget {
               tooltip: '下一集',
               onTap: onNext,
               focused: tvFocusIndex == 2,
+              focusNode: tvFocusNodes != null && tvFocusNodes!.length > 3
+                  ? tvFocusNodes![3]
+                  : null,
             ),
           ],
         ),
@@ -844,6 +922,10 @@ class BottomBar extends StatelessWidget {
                       selected: selectedActions.contains(bottomActions[i]),
                       onTap: () => onAction?.call(bottomActions[i]),
                       focused: tvFocusIndex == 3 + i,
+                      focusNode: tvFocusNodes != null &&
+                              tvFocusNodes!.length > 4 + i
+                          ? tvFocusNodes![4 + i]
+                          : null,
                     ),
                 ],
               ),
@@ -892,6 +974,7 @@ class _TransportButton extends StatelessWidget {
     this.size = 36,
     this.iconSize = 22,
     this.focused = false,
+    this.focusNode,
   });
 
   final IconData icon;
@@ -903,37 +986,51 @@ class _TransportButton extends StatelessWidget {
   /// TV 聚焦态：白色圆环描边。
   final bool focused;
 
+  /// TV 遥控聚焦节点（播放器持有；null = 不可遥控聚焦）。
+  final FocusNode? focusNode;
+
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: SizedBox(
-          width: size,
-          height: size,
-          child: Center(
-            child: Container(
-              width: size,
-              height: size,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: focused
-                    ? Border.all(color: Colors.white, width: 2.5)
-                    : null,
-                boxShadow: focused
-                    ? [
-                        BoxShadow(
-                            color: Colors.white.withValues(alpha: 0.35),
-                            blurRadius: 10)
-                      ]
-                    : null,
-              ),
-              child: PlayerShadowIcon(
-                icon: icon,
-                size: iconSize,
+    return FocusableActionDetector(
+      focusNode: focusNode,
+      actions: {
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (_) {
+            onTap?.call();
+            return null;
+          },
+        ),
+      },
+      child: Tooltip(
+        message: tooltip,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: SizedBox(
+            width: size,
+            height: size,
+            child: Center(
+              child: Container(
+                width: size,
+                height: size,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: focused
+                      ? Border.all(color: Colors.white, width: 2.5)
+                      : null,
+                  boxShadow: focused
+                      ? [
+                          BoxShadow(
+                              color: Colors.white.withValues(alpha: 0.35),
+                              blurRadius: 10)
+                        ]
+                      : null,
+                ),
+                child: PlayerShadowIcon(
+                  icon: icon,
+                  size: iconSize,
+                ),
               ),
             ),
           ),
@@ -949,6 +1046,7 @@ class _BottomActionButton extends StatelessWidget {
     required this.selected,
     required this.onTap,
     this.focused = false,
+    this.focusNode,
   });
 
   final PlayerBottomAction action;
@@ -957,6 +1055,9 @@ class _BottomActionButton extends StatelessWidget {
 
   /// TV 聚焦态：白色描边。
   final bool focused;
+
+  /// TV 遥控聚焦节点（播放器持有；null = 不可遥控聚焦）。
+  final FocusNode? focusNode;
 
   String get label {
     switch (action) {
@@ -994,24 +1095,34 @@ class _BottomActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: label,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Container(
-          constraints: const BoxConstraints(minWidth: 44),
-          margin: const EdgeInsets.symmetric(horizontal: 1),
-          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
-          decoration: BoxDecoration(
-            color: selected
-                ? playerUiBlue.withOpacity(0.35)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
-            border: focused
-                ? Border.all(color: Colors.white, width: 2)
-                : null,
-          ),
+    return FocusableActionDetector(
+      focusNode: focusNode,
+      actions: {
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (_) {
+            onTap();
+            return null;
+          },
+        ),
+      },
+      child: Tooltip(
+        message: label,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: Container(
+            constraints: const BoxConstraints(minWidth: 44),
+            margin: const EdgeInsets.symmetric(horizontal: 1),
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+            decoration: BoxDecoration(
+              color: selected
+                  ? playerUiBlue.withOpacity(0.35)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+              border: focused
+                  ? Border.all(color: Colors.white, width: 2)
+                  : null,
+            ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -1027,6 +1138,7 @@ class _BottomActionButton extends StatelessWidget {
               ),
             ],
           ),
+        ),
         ),
       ),
     );

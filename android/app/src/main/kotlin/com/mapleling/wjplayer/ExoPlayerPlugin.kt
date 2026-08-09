@@ -885,6 +885,29 @@ class ExoPlayerPlugin(
                 )
                 emitCurrentVideoSize()
             }
+            // 播放诊断日志：实际使用的视频解码器（硬解 = c2./omx.*；软解 = ffmpeg）
+            // + 视频规格（编码/分辨率/帧率）。用于排查 HEVC 等卡顿是否软解导致。
+            val fmt = exoPlayer.videoFormat
+            android.util.Log.i(
+                "ExoPlayerPlugin",
+                "Video: codec=${exoPlayer.videoCodec ?: "unknown"} " +
+                    "mime=${fmt?.sampleMimeType ?: "unknown"} " +
+                    "codecs=${fmt?.codecs ?: "unknown"} " +
+                    "${videoSize.width}x${videoSize.height} " +
+                    "${fmt?.frameRate ?: 0}fps"
+            )
+        }
+
+        @OptIn(UnstableApi::class)
+        override fun onVideoInputFormatChanged(format: Format) {
+            android.util.Log.i(
+                "ExoPlayerPlugin",
+                "VideoInputFormat: mime=${format.sampleMimeType} " +
+                    "codecs=${format.codecs} " +
+                    "${format.width}x${format.height} " +
+                    "frameRate=${format.frameRate} " +
+                    "bitrate=${format.bitrate}"
+            )
         }
 
         private fun emitCurrentVideoSize() {

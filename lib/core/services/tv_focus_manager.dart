@@ -15,9 +15,15 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/widgets.dart' show FocusNode, WidgetsBinding;
 
+import '../../ui/widgets/common/tv_focusable.dart' show ensureVisibleSmartly;
+
 enum DPad { up, down, left, right }
 
-typedef TraversalFn = int Function(int current, DPad direction);
+/// 遍历函数：返回目标索引（-1 = 离开本区域）。
+/// [nodes] 为区域全部焦点节点，供按屏幕视觉位置导航（上下排对齐）使用；
+/// 线性/网格策略忽略该参数。
+typedef TraversalFn =
+    int Function(int current, DPad direction, List<FocusNode> nodes);
 
 /// 全局路由观察器：TV 页面在 push/pop 时接管/交还焦点区域
 /// （挂在 GoRouter.observers 上，供 RouteAware 页面订阅）。
@@ -43,11 +49,13 @@ class FocusSection {
 /// 方向键语义（TV 确定性导航）：
 ///   - 左/右：在当前行内逐卡片移动（一次一个）；行首左停留；
 ///     行尾最后一个卡片右移到「查看更多」（trailing 行），查看更多右停留。
-///   - 下：进入下一分区，保持列位置（clamp 到下一行卡片数）；最后一行停留，
-///     严禁水平随机跳转。
-///   - 上：直接进入上一分区（保持列位置，clamp 到上一行卡片数），
-///     第一行停留；「查看更多」不再是上键的第一跳（用户反馈调整），
-///     由行尾卡片右键到达。
+///   - 下/上：进入相邻分区，**按屏幕视觉位置对齐**——在目标行内找「屏幕
+///     x 中心与当前焦点最接近」的卡片（不继承上一排的数据编号）。横排已
+///     横向滚动时仍按屏幕位置锚定（当前屏幕最左侧 = 该排第一个位置）；
+///     目标行较短、无对应列时自然落到该行最后一个存在的卡片。
+///   - 「查看更多」**不参与普通上下导航**：上下切换时不会被选为目标；
+///     仅当前焦点在本行**最右侧（行尾）卡片**时按上键进入本行查看更多；
+///     焦点在查看更多时按上/下键退出到本行行尾卡片。
 class FocusSectionLayout {
   final List<FocusSection> sections;
   late final List<int> _offsets = _buildOffsets();
@@ -92,7 +100,7 @@ class FocusSectionLayout {
     return (sectionId: sections.first.id, itemIndex: 0);
   }
 
-  TraversalFn get traversal => (current, direction) {
+  TraversalFn get traversal => (current, direction, nodes) {
         final location = locationOf(current);
         final sectionIndex = sections
             .indexWhere((section) => section.id == location.sectionId);
@@ -113,21 +121,69 @@ class FocusSectionLayout {
             }
             return current; // 查看更多右移：停留
           case DPad.up:
-            // 垂直分类切换（2026-08-09 用户反馈调整）：直接上一分区同列
-            // （clamp 到上一行卡片数），不再先跳本行「查看更多」。
-            // 「查看更多」仍可通过行尾卡片右键到达。
+            // 查看更多不参与普通上下导航：
+            // - 焦点在查看更多 → 退出到本行行尾卡片；
+            // - 本行最右侧（行尾）卡片按上 → 进入本行查看更多；
+            // - 其余位置 → 上一排按屏幕位置对齐。
+            if (item == section.count) {
+              return indexOf(section.id, section.count - 1);
+            }
+            if (section.trailing && item == section.count - 1) {
+              return indexOf(section.id, section.count);
+            }
             if (sectionIndex == 0) return current;
-            final previous = sections[sectionIndex - 1];
-            return indexOf(previous.id,
-                item.clamp(0, previous.count - 1).toInt());
+            return _visualRowTarget(nodes, sectionIndex - 1, current);
           case DPad.down:
-            // 确定性垂直切换：下一分区，保持列位置；最后一行停留。
+            // 焦点在查看更多 → 退出到本行行尾卡片；其余 → 下一排按屏幕位置。
+            if (item == section.count) {
+              return indexOf(section.id, section.count - 1);
+            }
             if (sectionIndex == sections.length - 1) return current;
-            final next = sections[sectionIndex + 1];
-            return indexOf(next.id,
-                item.clamp(0, next.count - 1).toInt());
+            return _visualRowTarget(nodes, sectionIndex + 1, current);
         }
       };
+
+  /// 屏幕视觉位置导航：在目标行内找「屏幕 x 中心与当前焦点最接近」的卡片。
+  /// - 横排滚动后不继承数据编号，仍按屏幕 x 锚定（屏幕最左侧 = 位置 0）；
+  /// - 目标行较短（无对应列）时，x 最接近者即该行最后一个存在的卡片；
+  /// - **只遍历本行卡片（end = start + count），查看更多不参与普通上下导航**；
+  /// - 整行未挂载（视口外 cacheExtent 未构建）时回退该行最后一个已挂载
+  ///   卡片，_requestFocus 会对未挂载目标延迟重试。
+  int _visualRowTarget(
+      List<FocusNode> nodes, int targetSectionIndex, int currentIndex) {
+    final target = sections[targetSectionIndex];
+    final start = _offsets[targetSectionIndex];
+    // 只遍历本行卡片；「查看更多」是行尾独立目标，不参与上下切换。
+    final end = start + target.count;
+    final currentX = _screenCenterX(nodes, currentIndex);
+    var best = start;
+    var bestDist = double.infinity;
+    var lastMounted = -1;
+    for (var i = start; i < end && i < nodes.length; i++) {
+      final ctx = nodes[i].context;
+      if (ctx == null) continue;
+      lastMounted = i;
+      final x = _screenCenterX(nodes, i);
+      if (x.isNaN) continue;
+      final dist = (x - currentX).abs();
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = i;
+      }
+    }
+    if (bestDist.isFinite) return best;
+    return lastMounted >= start ? lastMounted : start;
+  }
+
+  /// 节点屏幕 x 中心（未挂载/无尺寸返回 NaN）。
+  static double _screenCenterX(List<FocusNode> nodes, int index) {
+    if (index < 0 || index >= nodes.length) return double.nan;
+    final ctx = nodes[index].context;
+    if (ctx == null) return double.nan;
+    final box = ctx.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return double.nan;
+    return box.localToGlobal(Offset.zero).dx + box.size.width / 2;
+  }
 }
 
 /// 单个可聚焦元素的焦点区域配置。
@@ -179,7 +235,7 @@ class FocusArea {
         );
 
   int nextIndex(DPad direction) {
-    final next = config.traversal(focusIndex, direction);
+    final next = config.traversal(focusIndex, direction, nodes);
     // -1 表示"离开本区域"（区域边界），由 moveDPad 交给 onBoundary 处理。
     if (next < 0) return -1;
     return next.clamp(0, config.count - 1).toInt();
@@ -193,7 +249,7 @@ class FocusArea {
 class TraversalPolicies {
   static TraversalFn linear(int count) {
     assert(count > 0);
-    return (current, direction) {
+    return (current, direction, _) {
       switch (direction) {
         case DPad.left:
         case DPad.up:
@@ -207,7 +263,7 @@ class TraversalPolicies {
 
   static TraversalFn grid({required int columns, required int rowCount}) {
     assert(columns > 0 && rowCount > 0);
-    return (current, direction) {
+    return (current, direction, _) {
       final row = current ~/ columns;
       final col = current % columns;
       switch (direction) {
@@ -264,10 +320,11 @@ class TvFocusManager extends ChangeNotifier {
     _currentPageFirstCardIndex = firstCardIndex;
   }
 
-  /// D-pad 接管条件：活动区域存在，且当前焦点节点真的持有 Flutter 系统焦点。
-  bool get canHandleDPad =>
-      _activeAreaId != null &&
-      activeArea?.nodes[activeArea!.focusIndex]?.hasFocus == true;
+  /// D-pad 接管条件：活动区域存在即接管（**不依赖节点是否已持有系统焦点**）——
+  /// 覆盖层（状态栏）打开后方向键只操作当前显示层；节点未挂载/未聚焦时由
+  /// [_requestFocus] 持续重试聚焦，避免方向键回退 Flutter 默认遍历
+  /// 控制后台页面/乱跳。
+  bool get canHandleDPad => hasManagedFocus;
 
   FocusArea? getArea(String areaId) => _areas[areaId];
   FocusArea? getAreaById(String areaId) => getArea(areaId);
@@ -329,6 +386,16 @@ class TvFocusManager extends ChangeNotifier {
   void switchArea(String areaId, {int? initialIndex}) {
     final area = _areas[areaId];
     if (area == null) return;
+    // 区域切换（覆盖层/状态栏进出）：先释放旧活跃区域节点焦点——后台页面
+    // 立即失去焦点，方向键只操作当前显示层，避免"状态栏打开后方向键还
+    // 控制后台页面"。
+    final previousAreaId = _activeAreaId;
+    if (previousAreaId != null && previousAreaId != areaId) {
+      final previous = _areas[previousAreaId];
+      if (previous != null) {
+        previous.nodes[previous.focusIndex]?.unfocus();
+      }
+    }
     final target = (initialIndex ?? _lastFocusIndex[areaId] ?? 0)
         .clamp(0, area.config.count - 1)
         .toInt();
@@ -449,6 +516,13 @@ class TvFocusManager extends ChangeNotifier {
     if (node.context != null && node.canRequestFocus) {
       _focusRetryCount.removeWhere((key, _) => key.startsWith('$areaId:'));
       node.requestFocus();
+      // 聚焦后按可见性最小滚动：覆盖 TextButton 等无自带滚动逻辑的节点
+      // （如「查看更多」——从行尾进入时若标题行已滚出视口，自动滚回可见）；
+      // 卡片已有 TvFocusable 的智能滚动，此处幂等无副作用。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final ctx = node.context;
+        if (ctx != null && node.hasFocus) ensureVisibleSmartly(ctx);
+      });
       return;
     }
     final retryKey = '$areaId:$index';

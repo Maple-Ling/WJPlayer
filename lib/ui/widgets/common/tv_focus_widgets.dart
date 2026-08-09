@@ -37,6 +37,7 @@ import 'package:flutter/widgets.dart'
 import '../../../core/services/tv_focus_manager.dart';
 import '../../../core/services/tv_key_channel.dart';
 import '../../../core/utils/platform_utils.dart';
+import 'tv_focusable.dart';
 
 // ─── 焦点区域容器 ───
 
@@ -109,8 +110,14 @@ class _TvFocusAreaState extends State<TvFocusArea> {
       if (manager.activeArea?.config.id == widget.id) return;
       if (manager.hasManagedFocus) {
         final active = manager.activeArea;
+        // 状态栏（覆盖层）活跃中：无论其节点是否已聚焦都不抢占——状态栏
+        // 展开有渲染时序（collapsed 只渲染搜索按钮，其余节点短暂未挂载），
+        // 后台此时抢焦点会导致"状态栏打开后方向键控制后台页面"。
+        if (active?.config.id == 'main_tabs') return;
+        // 其它区域：仅在其节点真正持有系统焦点（正在使用）时不抢占；
+        // 无焦点（被 push 覆盖/聚焦失败）时本区域可接管。
         if (active != null && active.nodes[active.focusIndex].hasFocus) {
-          return; // 底部栏等其他区域正在使用，不抢占。
+          return;
         }
       }
       final route = ModalRoute.of(context);
@@ -228,11 +235,7 @@ class _TvInputFieldState extends State<TvInputField> {
     if (has) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !(widget.focusNode?.hasFocus ?? false)) return;
-        Scrollable.ensureVisible(
-          context,
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOutCubic,
-        );
+        ensureVisibleSmartly(context);
       });
     }
   }

@@ -2,6 +2,51 @@ import 'package:flutter/material.dart';
 
 import '../../../core/utils/platform_utils.dart';
 
+/// 智能滚动到可见：目标已完全可见 → 不滚动；超出视口才最小滚动
+/// （左缘超出一滚到视口起始，右缘超出滚到恰好完整可见=视口末尾）。
+///
+/// 为什么：`Scrollable.ensureVisible` 默认 alignment=0.0 会把目标强制滚到
+/// 视口最左——连续按方向键时每聚焦一张卡片行就猛向左滚、焦点从屏幕中间
+/// 瞬间"跳"到最左（180ms 动画还互相打断），表现为左右键乱跳。按可见性
+/// 判断后：行内移动平滑（焦点逐卡右移），到边缘才滚动且焦点停在屏幕
+/// 右缘/左缘（Netflix 式），上下切换后焦点落点也稳定。
+void ensureVisibleSmartly(
+  BuildContext context, {
+  Duration duration = const Duration(milliseconds: 180),
+  Curve curve = Curves.easeOutCubic,
+}) {
+  final renderObject = context.findRenderObject();
+  if (renderObject is! RenderBox || !renderObject.hasSize) return;
+  final viewport = RenderAbstractViewport.maybeOf(renderObject);
+  if (viewport == null) return;
+  final position = Scrollable.maybeOf(context)?.position;
+  if (position == null) return;
+  // 目标滚到视口起始所需的绝对滚动位置 → 目标左缘当前在视口中的位置。
+  final left = viewport.getOffsetToReveal(renderObject, 0.0).offset -
+      position.pixels;
+  final right = left + renderObject.size.width;
+  if (left >= -1 && right <= position.viewportDimension + 1) return; // 已可见
+  if (left < 0) {
+    // 左侧超出：滚到视口起始，目标恰好完整可见。
+    Scrollable.ensureVisible(
+      context,
+      duration: duration,
+      curve: curve,
+      alignment: 0.0,
+      alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+    );
+  } else {
+    // 右侧超出：滚到视口末尾，目标右缘对齐视口右缘（最小滚动）。
+    Scrollable.ensureVisible(
+      context,
+      duration: duration,
+      curve: curve,
+      alignment: 1.0,
+      alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+    );
+  }
+}
+
 /// TV 遥控器可聚焦卡片包装。
 ///
 /// 背景：Flutter 在 Android 上默认把触摸组件（InkWell/GestureDetector）的
@@ -92,11 +137,7 @@ class _TvFocusableState extends State<TvFocusable> {
     if (hasFocus) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_node.hasFocus) return;
-        Scrollable.ensureVisible(
-          context,
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOutCubic,
-        );
+        ensureVisibleSmartly(context);
       });
     }
   }

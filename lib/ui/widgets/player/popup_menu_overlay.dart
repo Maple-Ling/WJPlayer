@@ -8,6 +8,7 @@ import '../../../core/providers/media_providers.dart';
 import '../../../core/providers/playback_providers.dart';
 import '../../../core/providers/unified_resource_provider.dart';
 import '../../../core/sources/unified_media_adapter.dart';
+import '../../../core/utils/platform_utils.dart';
 import '../../../core/utils/track_preference.dart';
 import '../common/danmaku_search_widget.dart';
 import '../common/playback_resource_card.dart';
@@ -15,6 +16,74 @@ import '../common/playback_resource_card.dart';
 const Color popupMenuBlue = Color(0xFF4A7BD0);
 const Color popupMenuSelectedBlue = Color(0x664A7BD0);
 const Color popupMenuSurface = Color(0xEB0C1016);
+
+/// TV 菜单项遥控聚焦包装：可聚焦 + 聚焦白色描边高亮。
+/// 手机端零副作用（原样返回 child，不注册焦点）。
+class TvMenuFocusable extends StatefulWidget {
+  const TvMenuFocusable({
+    super.key,
+    required this.onActivate,
+    required this.child,
+    this.borderRadius = 9,
+  });
+
+  /// OK/确认键触发（子组件把点击/切换动作传到这里）。
+  final VoidCallback? onActivate;
+  final Widget child;
+  final double borderRadius;
+
+  @override
+  State<TvMenuFocusable> createState() => _TvMenuFocusableState();
+}
+
+class _TvMenuFocusableState extends State<TvMenuFocusable> {
+  final FocusNode _node = FocusNode();
+  bool _focused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (isTvPlatform) _node.addListener(_onFocusChange);
+  }
+
+  @override
+  void dispose() {
+    if (isTvPlatform) _node.removeListener(_onFocusChange);
+    _node.dispose();
+    super.dispose();
+  }
+
+  void _onFocusChange() {
+    if (!mounted) return;
+    final has = _node.hasFocus;
+    if (has != _focused) setState(() => _focused = has);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isTvPlatform) return widget.child;
+    return FocusableActionDetector(
+      focusNode: _node,
+      actions: {
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (_) {
+            widget.onActivate?.call();
+            return null;
+          },
+        ),
+      },
+      child: Container(
+        foregroundDecoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(widget.borderRadius),
+          border: _focused
+              ? Border.all(color: Colors.white, width: 2)
+              : null,
+        ),
+        child: widget.child,
+      ),
+    );
+  }
+}
 
 /// 播放器二级/三级菜单 ID。
 enum PopupMenuId {
@@ -62,12 +131,16 @@ class PopupEpisodeOption {
     required this.name,
     required this.path,
     this.selected = false,
+    this.thumbUrl,
   });
 
   final int index;
   final String name;
   final String path;
   final bool selected;
+
+  /// 集封面图（选集胶囊缩略图；null = 无图不显示）。
+  final String? thumbUrl;
 }
 
 class PopupLineOption {
@@ -222,31 +295,35 @@ class PopupMenuSwitch extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => onChanged(!value),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        width: 30,
-        height: 16,
-        padding: const EdgeInsets.all(2),
-        decoration: BoxDecoration(
-          color: value
-              ? popupMenuBlue
-              : Colors.white.withOpacity(0.2),
-          borderRadius: BorderRadius.circular(9),
-        ),
-        child: AnimatedAlign(
+    return TvMenuFocusable(
+      onActivate: () => onChanged(!value),
+      borderRadius: 9,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => onChanged(!value),
+        child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
-          alignment: value
-              ? Alignment.centerRight
-              : Alignment.centerLeft,
-          child: Container(
-            width: 12,
-            height: 12,
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
+          width: 30,
+          height: 16,
+          padding: const EdgeInsets.all(2),
+          decoration: BoxDecoration(
+            color: value
+                ? popupMenuBlue
+                : Colors.white.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(9),
+          ),
+          child: AnimatedAlign(
+            duration: const Duration(milliseconds: 180),
+            alignment: value
+                ? Alignment.centerRight
+                : Alignment.centerLeft,
+            child: Container(
+              width: 12,
+              height: 12,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
             ),
           ),
         ),
@@ -297,40 +374,43 @@ class PopupMenuPill extends StatelessWidget {
       );
     }
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      onLongPress: onLongPress,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 4),
-        padding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 9,
-        ),
-        decoration: BoxDecoration(
-          color: selected
-              ? popupMenuSelectedBlue
-              : Colors.white.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(9),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
+    return TvMenuFocusable(
+      onActivate: onTap,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        onLongPress: onLongPress,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 4),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 9,
+          ),
+          decoration: BoxDecoration(
+            color: selected
+                ? popupMenuSelectedBlue
+                : Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(9),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                  ),
                 ),
               ),
-            ),
-            if (end != null) ...[
-              const SizedBox(width: 10),
-              end,
+              if (end != null) ...[
+                const SizedBox(width: 10),
+                end,
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -451,20 +531,24 @@ class PopupMiniButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        decoration: BoxDecoration(
-          color: popupMenuBlue.withOpacity(0.35),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Text(
-          label,
-          style: const TextStyle(
-            color: Color(0xFF9DBDF5),
-            fontSize: 11,
+    return TvMenuFocusable(
+      onActivate: onTap,
+      borderRadius: 6,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          decoration: BoxDecoration(
+            color: popupMenuBlue.withOpacity(0.35),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF9DBDF5),
+              fontSize: 11,
+            ),
           ),
         ),
       ),
@@ -1755,10 +1839,12 @@ class _PopupEpisodePage extends StatelessWidget {
         final episode = episodes[index];
         final selected =
             episode.selected || selectedEpisode == episode.index;
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => onEpisodeSelected(episode.index),
-          child: Padding(
+        return TvMenuFocusable(
+          onActivate: () => onEpisodeSelected(episode.index),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => onEpisodeSelected(episode.index),
+            child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 7),
             child: Row(
               children: [
@@ -1798,10 +1884,11 @@ class _PopupEpisodePage extends StatelessWidget {
               ],
             ),
           ),
-        );
-      },
-    );
-  }
+        ),
+      );
+    },
+  );
+}
 }
 
 

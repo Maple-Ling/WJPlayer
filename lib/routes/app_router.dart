@@ -406,6 +406,7 @@ class _MainShellState extends ConsumerState<MainShell> {
   // 浮动 TabBar 的透明度，避免每个滚动事件 setState 整个 shell（含 navigationShell）。
   final ValueNotifier<bool> _tabCollapsed = ValueNotifier<bool>(false);
   DateTime? _lastBackPress;
+  DateTime? _lastMenuAt;
 
   // 菜单键处理器：进入/退出状态栏。
   //   · 所有支持底部状态栏的页面（影视/记录/服务器/搜索/设置/服务器媒体页）
@@ -418,14 +419,32 @@ class _MainShellState extends ConsumerState<MainShell> {
     if (key != LogicalKeyboardKey.contextMenu) return KeyEventResult.ignored;
     if (isUp) return KeyEventResult.ignored; // KeyUp 不处理（避免双触发）。
     if (!_supportsFloatingTabBar) return KeyEventResult.ignored;
+    // 双通道去抖：原生 MethodChannel 与 Flutter KeyEvent 通道可能同时到达
+    // 同一次 MENU（部分设备/模拟器把 KEYCODE_MENU 同时发给两层），350ms 内
+    // 合并为一次，避免状态栏"闪进闪出"表现为菜单键无响应。
+    final now = DateTime.now();
+    if (_lastMenuAt != null &&
+        now.difference(_lastMenuAt!) < const Duration(milliseconds: 350)) {
+      _lastMenuAt = now;
+      return KeyEventResult.handled;
+    }
+    _lastMenuAt = now;
     final manager = TvFocusManager.instance;
     if (manager.activeArea?.config.id == 'main_tabs') {
       manager.exitArea('main_tabs');
+    } else if (_tabCollapsed.value) {
+      // 进入状态栏且处于收缩状态：先自动展开，等展开渲染完成（collapsed
+      // 只渲染搜索按钮，其余 tab 节点未挂载）下一帧再切入焦点——立即
+      // enterArea 会聚焦未挂载节点失败，方向键短暂控制后台页面。
+      _tabCollapsed.value = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (TvFocusManager.instance.activeArea?.config.id == 'main_tabs') {
+          return;
+        }
+        TvFocusManager.instance.enterArea('main_tabs');
+      });
     } else {
-      // 进入状态栏：处于收缩/折叠状态时先自动展开，再切入焦点。
-      if (_tabCollapsed.value) {
-        _tabCollapsed.value = false;
-      }
       manager.enterArea('main_tabs');
     }
     return KeyEventResult.handled;

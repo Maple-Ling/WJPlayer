@@ -74,7 +74,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   final ScrollController _tvEpisodeScrollController = ScrollController();
   // TV 控制栏焦点：-2=进度条；-1=无（UI 隐藏）；0..7=按钮
   // （0 上一集 / 1 播放暂停 / 2 下一集 / 3 聚合 / 4 内核 / 5 线路 / 6 音频 / 7 字幕）。
-  int _tvUiFocusIndex = -1;
+  int _tvUiFocusRegion = 0;
+
+  /// 区域内焦点索引（bottom：0=进度条、1..3=传输、4..=操作；
+  /// top：0=返回、1..=顶部操作）。
+  int _tvUiFocusItem = 0;
+
+  /// 底部区按钮焦点节点（0=进度条、1..3=传输、4..=操作）。
+  late final List<FocusNode> _tvBottomNodes =
+      List.generate(9, (i) => FocusNode(debugLabel: 'tv_bottom[$i]'));
+
+  /// 顶部区按钮焦点节点（0=返回、1..=顶部操作）。
+  late final List<FocusNode> _tvTopNodes =
+      List.generate(8, (i) => FocusNode(debugLabel: 'tv_top[$i]'));
 
   /// 内封字幕流式翻译器（无法整轨下载时边播边译，叠加层按双语排版显示）。
   StreamingSubtitleTranslator? _streamTranslator;
@@ -2087,6 +2099,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       _tvSeekTimer = null;
       _tvLongPressTimer?.cancel();
       _tvLongPressTimer = null;
+      for (final node in _tvBottomNodes) {
+        node.dispose();
+      }
+      for (final node in _tvTopNodes) {
+        node.dispose();
+      }
     }
     _tvEpisodeScrollController.dispose();
     // 离开播放器恢复系统息屏策略。
@@ -2169,10 +2187,34 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       }
     }
 
-    // 控制栏聚焦模式（UI 显示时）：进度条(-2) / 按钮行(0..7)。
-    //   · 进度条聚焦：左/右=调节进度；下=下一集按钮；上=关 UI
-    //   · 按钮聚焦：左/右=按钮间移动；OK=激活；下=关 UI；上=关 UI/长按倍速
+    // 控制栏聚焦模式（UI 显示、无二级菜单时）：
+    //   · 底部区：0=进度条（左右=调节）、1..3=传输、4..=操作按钮
+    //   · 顶部区：0=返回、1..=顶部操作按钮
+    //   · 上键：底部区 → 顶部区；下键：顶部区 → 底部区（双向切换）
+    //   · 左右：区域内移动；OK：激活；底部按钮行下键：关闭 UI
+    //   · 二级/三级菜单打开时方向键/OK 交还 Flutter 默认遍历（菜单项聚焦）
     if (service.showControls) {
+      // 菜单打开：方向键/OK 交给 Flutter 默认遍历（菜单项可聚焦、上下移动、
+      // OK 激活）；MENU/返回关闭菜单并恢复按钮焦点。
+      if (_overlayMenuOpen) {
+        switch (key) {
+          case LogicalKeyboardKey.contextMenu:
+            if (!isUp) {
+              _overlayKey.currentState?.closeMenu();
+              _restoreTvControlsFocus();
+            }
+            return KeyEventResult.handled;
+          case LogicalKeyboardKey.arrowLeft:
+          case LogicalKeyboardKey.arrowRight:
+          case LogicalKeyboardKey.arrowUp:
+          case LogicalKeyboardKey.arrowDown:
+          case LogicalKeyboardKey.enter:
+          case LogicalKeyboardKey.select:
+            return KeyEventResult.ignored; // Flutter 默认遍历操作菜单。
+          default:
+            return KeyEventResult.ignored;
+        }
+      }
       switch (key) {
         case LogicalKeyboardKey.arrowLeft:
         case LogicalKeyboardKey.arrowRight:
@@ -2183,32 +2225,51 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             return KeyEventResult.handled;
           }
           service.pokeControls();
-          if (_tvUiFocusIndex == -2) {
-            // 进度条聚焦：左右调节进度（复用连续快进）。
+          if (_tvUiFocusRegion == 0 && _tvUiFocusItem == 0) {
+            // 底部进度条聚焦：左右调节进度（复用连续快进）。
             _handleTvSeek(key == LogicalKeyboardKey.arrowRight, isRepeat);
-          } else if (_tvUiFocusIndex >= 0 && !isRepeat) {
+          } else if (_tvUiFocusRegion >= 0 && !isRepeat) {
             _moveTvUiFocus(key == LogicalKeyboardKey.arrowRight ? 1 : -1);
           }
           return KeyEventResult.handled;
         case LogicalKeyboardKey.enter:
         case LogicalKeyboardKey.select:
-          if (!isUp && !isRepeat && _tvUiFocusIndex >= 0) {
+          if (!isUp && !isRepeat && _tvUiFocusRegion >= 0) {
             _activateTvUiFocus();
+          }
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowUp:
+          // 底部区 → 顶部区（双向切换；顶部区按上停留）。
+          if (isUp || isRepeat) return KeyEventResult.handled;
+          if (_tvUiFocusRegion == 0) {
+            setState(() {
+              _tvUiFocusRegion = 1;
+              _tvUiFocusItem = _tvUiFocusItem.clamp(0, _tvTopMaxIndex());
+            });
+            _requestTvControlsFocus();
           }
           return KeyEventResult.handled;
         case LogicalKeyboardKey.arrowDown:
           if (isUp || isRepeat) return KeyEventResult.handled;
-          if (_tvUiFocusIndex == -2) {
-            // 进度条 → 下一集按钮（再按下默认聚焦下一集）。
-            setState(() => _tvUiFocusIndex = 2);
-            service.pokeControls();
+          if (_tvUiFocusRegion == 1) {
+            // 顶部区 → 底部区。
+            setState(() {
+              _tvUiFocusRegion = 0;
+              _tvUiFocusItem = _tvUiFocusItem.clamp(0, _tvBottomMaxIndex());
+            });
+            _requestTvControlsFocus();
+          } else if (_tvUiFocusItem == 0) {
+            // 底部进度条 → 下一集按钮（再按下默认聚焦下一集）。
+            setState(() => _tvUiFocusItem = 3);
+            _requestTvControlsFocus();
           } else {
-            // 按钮行 → 关闭 UI 回播放控制。
+            // 底部按钮行 → 关闭 UI 回播放控制。
             _toggleTvControls();
           }
+          service.pokeControls();
           return KeyEventResult.handled;
         default:
-          break; // 上键/MENU 等落到主逻辑。
+          break; // MENU 等落到主逻辑。
       }
     }
 
@@ -2336,55 +2397,80 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     });
   }
 
-  /// 切换控制栏显隐并同步 TV 焦点：打开 → 聚焦进度条(-2)；关闭 → 无(-1)。
+  /// 切换控制栏显隐并同步 TV 焦点：打开 → 聚焦底部进度条；关闭 → 无焦点。
   void _toggleTvControls() {
     final wasShown = _playerService.showControls;
     _playerService.toggleControls();
-    setState(() => _tvUiFocusIndex = wasShown ? -1 : -2);
+    setState(() {
+      if (wasShown) {
+        _tvUiFocusRegion = -1;
+      } else {
+        _tvUiFocusRegion = 0;
+        _tvUiFocusItem = 0; // 进度条
+      }
+    });
+    _requestTvControlsFocus();
   }
 
-  /// 按钮行内左右移动焦点（0 上一集 / 1 播放暂停 / 2 下一集 / 3..7 操作按钮）。
+  /// 底部区/顶部区可聚焦项上限。
+  int _tvBottomMaxIndex() => 3 + 5; // 进度条0 + 传输3 + 操作5（TV 端无选集按钮）
+  int _tvTopMaxIndex() => 1 + 7 - 1; // 返回 + 顶部操作（最多 7 个）
+
+  /// 区域内左右移动焦点。
   void _moveTvUiFocus(int delta) {
-    const maxIndex = 3 + 5 - 1; // 传输 3 + 操作 5（TV 端无选集按钮）
+    final maxIndex = _tvUiFocusRegion == 1 ? _tvTopMaxIndex() : _tvBottomMaxIndex();
     setState(() {
-      _tvUiFocusIndex = (_tvUiFocusIndex + delta).clamp(0, maxIndex).toInt();
+      _tvUiFocusItem =
+          (_tvUiFocusItem + delta).clamp(0, maxIndex).toInt();
     });
+    _requestTvControlsFocus();
     _playerService.pokeControls();
   }
 
-  /// OK 激活聚焦按钮：传输按钮直接执行；操作按钮打开对应二级菜单。
+  /// 聚焦当前区域/项对应的按钮节点（postFrame，等按钮挂载/重建）。
+  void _requestTvControlsFocus() {
+    if (_tvUiFocusRegion < 0) return;
+    final nodes =
+        _tvUiFocusRegion == 1 ? _tvTopNodes : _tvBottomNodes;
+    final item = _tvUiFocusItem.clamp(0, nodes.length - 1).toInt();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (item < nodes.length && nodes[item].context != null) {
+        nodes[item].requestFocus();
+      }
+    });
+  }
+
+  /// 菜单关闭后恢复原按钮焦点。
+  void _restoreTvControlsFocus() {
+    _requestTvControlsFocus();
+  }
+
+  /// OK 激活聚焦项：顶部（返回/顶部操作）；底部（传输/操作按钮）。
   void _activateTvUiFocus() {
     final service = _playerService;
-    switch (_tvUiFocusIndex) {
-      case 0:
-        _playPrevious();
-        break;
-      case 1:
-        unawaited(service.togglePlay());
-        break;
-      case 2:
-        _playNext();
-        break;
-      case 3:
-        _overlayKey.currentState
-            ?.activateBottomAction(PlayerBottomAction.aggregate);
-        break;
-      case 4:
-        _overlayKey.currentState
-            ?.activateBottomAction(PlayerBottomAction.core);
-        break;
-      case 5:
-        _overlayKey.currentState
-            ?.activateBottomAction(PlayerBottomAction.line);
-        break;
-      case 6:
-        _overlayKey.currentState
-            ?.activateBottomAction(PlayerBottomAction.audio);
-        break;
-      case 7:
-        _overlayKey.currentState
-            ?.activateBottomAction(PlayerBottomAction.subtitle);
-        break;
+    final overlay = _overlayKey.currentState;
+    if (_tvUiFocusRegion == 1) {
+      // 顶部区：0=返回；1..=顶部操作（打开菜单/切换开关）。
+      overlay?.activateTopFocus(_tvUiFocusItem);
+    } else if (_tvUiFocusItem == 0) {
+      // 进度条聚焦：OK 无操作（左右调节）。
+    } else {
+      // 底部区：1 上一集 / 2 播放暂停 / 3 下一集 / 4..=操作按钮。
+      switch (_tvUiFocusItem) {
+        case 1:
+          _playPrevious();
+          break;
+        case 2:
+          unawaited(service.togglePlay());
+          break;
+        case 3:
+          _playNext();
+          break;
+        default:
+          overlay?.activateBottomFocus(_tvUiFocusItem);
+          break;
+      }
     }
     service.pokeControls();
   }
@@ -2424,10 +2510,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _ensureTvEpisodeVisible(target);
   }
 
-  /// 横向滚动到目标胶囊（胶囊定宽 108 + 间隔 10）。
+  /// 横向滚动到目标胶囊（胶囊定宽 216 + 间隔 10）。
   void _ensureTvEpisodeVisible(int index) {
     if (!_tvEpisodeScrollController.hasClients) return;
-    final target = (index * 118.0 - 40).clamp(
+    final target = (index * 226.0 - 40).clamp(
       0.0,
       _tvEpisodeScrollController.position.maxScrollExtent,
     );
@@ -2479,26 +2565,71 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
               return AnimatedContainer(
                 duration: const Duration(milliseconds: 150),
                 curve: Curves.easeOutCubic,
+                // 长方形胶囊：定宽 + 圆角矩形（非圆形）。
+                width: 216,
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 decoration: BoxDecoration(
                   color: focused
                       ? scheme.primary
                       : isCurrent
                           ? scheme.primary.withValues(alpha: 0.28)
                           : Colors.white12,
-                  borderRadius: BorderRadius.circular(999),
+                  borderRadius: BorderRadius.circular(14),
                   border: focused
                       ? Border.all(color: Colors.white, width: 2)
                       : Border.all(color: Colors.transparent, width: 2),
                 ),
-                child: Text(
-                  '第 ${ep.index} 集',
-                  style: TextStyle(
-                    color: focused ? Colors.black : Colors.white,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 14,
-                  ),
+                child: Row(
+                  children: [
+                    // 集封面缩略图（Thumb 横幅优先；无图不占位）。
+                    if (ep.thumbUrl != null) ...[
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: SizedBox(
+                          width: 64,
+                          height: 36,
+                          child: MediaImage(
+                            imageUrl: ep.thumbUrl!,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                    ],
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '第 ${ep.index} 集',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: focused ? Colors.black : Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 13,
+                            ),
+                          ),
+                          if (ep.name.isNotEmpty) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              ep.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: focused
+                                    ? Colors.black.withValues(alpha: 0.75)
+                                    : Colors.white70,
+                                fontSize: 10.5,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               );
             },
@@ -2584,7 +2715,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
               Positioned.fill(
                 child: PlayerOverlay(
                   key: _overlayKey,
-                  tvFocusIndex: _tvUiFocusIndex,
+                  // TV 控制栏焦点：底部区编码（-2=进度条、0..N=按钮）/
+                  // 顶部区（0=返回、1..=操作）；-1=另一区或无焦点。
+                  tvFocusIndex: _tvUiFocusRegion == 0
+                      ? (_tvUiFocusItem == 0 ? -2 : _tvUiFocusItem - 1)
+                      : -1,
+                  tvTopFocusIndex: _tvUiFocusRegion == 1
+                      ? _tvUiFocusItem
+                      : -1,
+                  tvFocusNodes: _tvBottomNodes,
+                  tvTopFocusNodes: _tvTopNodes,
                   visible: _playerService.showControls,
                   isLocked: _playerService.isLocked,
                   isPlaying: _playerService.isPlaying,
@@ -2710,6 +2850,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   onMenuVisibilityChanged: (menuOpen) {
                     _overlayMenuOpen = menuOpen;
                     _playerService.setControlsAutoHidePaused(menuOpen);
+                    // 菜单关闭：恢复原按钮焦点（菜单打开时焦点交给菜单项）。
+                    if (!menuOpen && isTvPlatform && mounted) {
+                      _restoreTvControlsFocus();
+                    }
                   },
                   onBack: () => Navigator.maybePop(context),
                   onPrevious: _playPrevious,
@@ -5281,6 +5425,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 name: episode.name,
                 path: episode.id,
                 selected: episode.id == item?.id,
+                // 集封面缩略图：优先横幅 Thumb，无则 Primary；无图 null。
+                thumbUrl: _episodeThumbUrl(episode),
               ),
           ].where((episode) => episode.index > 0).toList();
         });
@@ -5302,10 +5448,35 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             name: source.playlist[i].name,
             path: source.playlist[i].id,
             selected: source.playlist[i].id == source.entry.id,
+            thumbUrl: source.playlist[i].thumbUrl,
           ),
       ];
     }
     return _overlayEpisodes;
+  }
+
+  /// 集封面缩略图 URL：横幅 Thumb 优先（选集胶囊横向排版更贴合），
+  /// 无则 Primary；两者皆无返回 null（胶囊不显示图片）。
+  String? _episodeThumbUrl(Episode episode) {
+    final api = ref.read(apiClientProvider);
+    if (episode.thumbImageTag != null) {
+      return api.getImageUrl(
+        itemId: episode.id,
+        imageTag: episode.thumbImageTag,
+        imageType: 'Thumb',
+        maxWidth: 320,
+        maxHeight: 180,
+      );
+    }
+    if (episode.primaryImageTag != null) {
+      return api.getImageUrl(
+        itemId: episode.id,
+        imageTag: episode.primaryImageTag,
+        maxWidth: 320,
+        maxHeight: 180,
+      );
+    }
+    return null;
   }
 
   String _aggregateSourceKey(MediaItem? item, MediaSource? source) {

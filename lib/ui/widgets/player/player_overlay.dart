@@ -124,6 +124,9 @@ class PlayerOverlay extends StatefulWidget {
     this.onAggregationSearch,
     this.onCrossServerMatchSelected,
     this.tvFocusIndex = -1,
+    this.tvTopFocusIndex = -1,
+    this.tvFocusNodes,
+    this.tvTopFocusNodes,
   });
 
   final bool visible;
@@ -132,6 +135,15 @@ class PlayerOverlay extends StatefulWidget {
 
   /// TV 控制栏焦点索引（-2=进度条、0..N=按钮、-1=无）。
   final int tvFocusIndex;
+
+  /// TV 顶部控制区焦点索引（0=返回、1..=顶部操作；-1=无）。
+  final int tvTopFocusIndex;
+
+  /// TV 底部区按钮焦点节点（0=进度条、1..3=传输、4..=操作；由播放器持有）。
+  final List<FocusNode>? tvFocusNodes;
+
+  /// TV 顶部区按钮焦点节点（0=返回、1..=操作；由播放器持有）。
+  final List<FocusNode>? tvTopFocusNodes;
   final Duration position;
   final Duration duration;
   final double bufferedProgress;
@@ -248,6 +260,9 @@ class PlayerOverlayState extends State<PlayerOverlay> {
   late bool isUiVisible;
   PopupMenuId? activeMenu;
   PopupMenuId? _anchorMenu;
+
+  /// TV 菜单焦点容器节点（菜单打开 autofocus，方向键进入菜单项）。
+  final FocusNode _menuFocusNode = FocusNode();
 
   late bool _danmakuEnabled;
   late bool _danmakuDeduplication;
@@ -402,6 +417,7 @@ class PlayerOverlayState extends State<PlayerOverlay> {
     _removeSystemInfoListener?.call();
     _clockTimer?.cancel();
     _toastTimer?.cancel();
+    _menuFocusNode.dispose();
     super.dispose();
   }
 
@@ -481,6 +497,78 @@ class PlayerOverlayState extends State<PlayerOverlay> {
       case PlayerBottomAction.episodes:
         _openMenu(PopupMenuId.episodes);
         break;
+    }
+  }
+
+  /// 外部（TV 顶部控制区按钮聚焦激活）：切换开关或打开对应菜单。
+  void activateTopAction(PlayerTopAction action) {
+    switch (action) {
+      case PlayerTopAction.anime4k:
+        widget.onAnime4k?.call();
+        break;
+      case PlayerTopAction.hardwareDecoding:
+        widget.onHardwareDecoding?.call();
+        break;
+      case PlayerTopAction.danmaku:
+        _openMenu(PopupMenuId.danmaku);
+        break;
+      case PlayerTopAction.speed:
+        _openMenu(PopupMenuId.speed);
+        break;
+      case PlayerTopAction.skipOpeningEnding:
+        _openMenu(PopupMenuId.skip);
+        break;
+      case PlayerTopAction.aspectRatio:
+        _openMenu(PopupMenuId.aspect);
+        break;
+      case PlayerTopAction.mediaInfo:
+        _openMenu(PopupMenuId.info);
+        break;
+    }
+  }
+
+  /// 是否有二级/三级菜单打开（TV 焦点菜单模式判定）。
+  bool get isMenuOpen => activeMenu != null;
+
+  /// TV 底部区按焦点索引激活：1..3=传输、4..=操作按钮（0=进度条无操作）。
+  void activateBottomFocus(int item) {
+    switch (item) {
+      case 1:
+        widget.onPrevious?.call();
+        break;
+      case 2:
+        widget.onPlayPause?.call();
+        break;
+      case 3:
+        widget.onNext?.call();
+        break;
+      default:
+        const actions = <PlayerBottomAction>[
+          PlayerBottomAction.aggregate,
+          PlayerBottomAction.core,
+          PlayerBottomAction.line,
+          PlayerBottomAction.audio,
+          PlayerBottomAction.subtitle,
+          PlayerBottomAction.episodes,
+        ];
+        final idx = item - 4;
+        if (idx >= 0 && idx < actions.length) {
+          activateBottomAction(actions[idx]);
+        }
+        break;
+    }
+  }
+
+  /// TV 顶部区按焦点索引激活：0=返回、1..=顶部操作按钮。
+  void activateTopFocus(int item) {
+    if (item <= 0) {
+      _handleBack();
+      return;
+    }
+    final idx = item - 1;
+    final actions = _topActions;
+    if (idx >= 0 && idx < actions.length) {
+      activateTopAction(actions[idx]);
     }
   }
 
@@ -977,6 +1065,8 @@ class PlayerOverlayState extends State<PlayerOverlay> {
                           anime4kEnabled: widget.initialAnime4kEnabled,
                           hardwareDecoding: widget.initialHardwareDecoding,
                           onBack: _handleBack,
+                          tvFocusIndex: widget.tvTopFocusIndex,
+                          tvFocusNodes: widget.tvTopFocusNodes,
                           onAction: (action) {
                             switch (action) {
                               case PlayerTopAction.anime4k:
@@ -1048,6 +1138,7 @@ class PlayerOverlayState extends State<PlayerOverlay> {
                                 ],
                           selectedActions: _selectedBottomActions,
                           tvFocusIndex: widget.tvFocusIndex,
+                          tvFocusNodes: widget.tvFocusNodes,
                           onProgressChanged: _handleProgressChanged,
                           onProgressChangeEnd: _handleProgressChangeEnd,
                           onPrevious: widget.onPrevious,
@@ -1112,7 +1203,13 @@ class PlayerOverlayState extends State<PlayerOverlay> {
                 ),
               if (isUiVisible && activeMenu != null)
                 Positioned.fill(
-                  child: PopupMenuOverlay(
+                  // TV：菜单打开自动进入菜单焦点（autofocus 容器节点 → 方向键
+                  // 经 Flutter 默认遍历进入第一个菜单项）；关闭后由播放器恢复
+                  // 原按钮焦点。手机端 autofocus 关闭零副作用。
+                  child: Focus(
+                    focusNode: _menuFocusNode,
+                    autofocus: isTvPlatform,
+                    child: PopupMenuOverlay(
                     activeMenu: activeMenu,
                     anchorRect: _anchorRect(context, size),
                     progressRect: _progressRect(context, size),
@@ -1208,6 +1305,7 @@ class PlayerOverlayState extends State<PlayerOverlay> {
                     onExternalSubtitleRequested: () {
                       widget.onExternalSubtitleRequested?.call();
                     },
+                  ),
                   ),
                 ),
               if (_toastMessage != null) _buildToast(size),
