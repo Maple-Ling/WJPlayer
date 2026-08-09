@@ -22,6 +22,7 @@ import '../../widgets/common/playback_resource_card.dart';
 import '../../widgets/common/tv_focus_widgets.dart';
 import '../../widgets/common/tv_focusable.dart';
 import '../../widgets/common/app_toast.dart';
+import 'package:flutter/services.dart' show LogicalKeyboardKey;
 
 class ExternalMediaDetailScreen extends ConsumerStatefulWidget {
   const ExternalMediaDetailScreen({super.key, required this.entry});
@@ -42,6 +43,10 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
 
   /// TV 焦点布局（build 时计算，组件方法经此取节点）。
   FocusSectionLayout? _tvLayout;
+
+  /// TV：季选择器菜单（PopupMenuButton 无 focusNode，经 TvFocusable+key 弹出）。
+  final GlobalKey<PopupMenuButtonState<int>> _seasonMenuKey =
+      GlobalKey<PopupMenuButtonState<int>>();
 
   /// 媒体信息行条目数（与 _mediaInfo 的 values 一致，供焦点分区 count）。
   int _mediaInfoCount(ExternalMediaDetail detail) {
@@ -324,9 +329,14 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
       const SizedBox(width: 6),
       Text('第 $_season 季', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
       const SizedBox(width: 6),
-      PopupMenuButton<int>(
-        // TV：季选择器可聚焦（去掉原 ExcludeFocus，区域节点注入）。
+      TvFocusable(
+        // TV：PopupMenuButton 无 focusNode，TvFocusable 接管聚焦，
+        // OK 经 showButtonMenu 弹出分季菜单。
+        onActivate: () => _seasonMenuKey.currentState?.showButtonMenu(),
         focusNode: _tvNode('season', 0),
+        borderRadius: 20,
+        child: PopupMenuButton<int>(
+        key: _seasonMenuKey,
         icon: const Icon(Icons.unfold_more_rounded, size: 20),
         tooltip: '切换分季',
         onSelected: (value) => setState(() {
@@ -335,6 +345,7 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
           _episodeRangeStart = 1;
         }),
         itemBuilder: (_) => [for (final season in seasons) PopupMenuItem(value: season.number, child: Text(season.name))],
+      ),
       ),
     ]);
   }

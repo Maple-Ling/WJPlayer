@@ -101,6 +101,8 @@ class _LibraryDetailScreenState extends ConsumerState<LibraryDetailScreen> {
         ],
       ),
       body: CustomScrollView(
+        // TV：cacheExtent 预构建，确保懒加载网格焦点节点挂载。
+        cacheExtent: 3000,
         controller: _scrollController,
         slivers: [
           // 使用 API 内部分页聚合，UI 保持懒构建网格，避免一次性构建全部卡片。
@@ -142,8 +144,6 @@ class _LibraryDetailScreenState extends ConsumerState<LibraryDetailScreen> {
               return SliverPadding(
                 padding: const EdgeInsets.all(16),
                 sliver: SliverGrid(
-                  // TV：cacheExtent 预构建，确保网格焦点节点挂载。
-                  cacheExtent: 3000,
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 3,
                     childAspectRatio: 0.55,

@@ -101,7 +101,7 @@ class DiscoverScreen extends ConsumerWidget {
 /// 影视来源胶囊选择器：水平居中，宽度贴合文字，绿色·指示加粗。
 /// 点开后从胶囊正下方弹出三项列表（豆瓣在上，TMDB 居中，IMDb 在下），
 /// 当前来源带勾选态，选完即收起。改用 PopupMenuButton 确保三项都可点。
-class _SourceCapsuleSelector extends StatelessWidget {
+class _SourceCapsuleSelector extends StatefulWidget {
   const _SourceCapsuleSelector({
     required this.source,
     required this.onChanged,
@@ -114,18 +114,32 @@ class _SourceCapsuleSelector extends StatelessWidget {
   final FocusNode? focusNode;
 
   @override
+  State<_SourceCapsuleSelector> createState() => _SourceCapsuleSelectorState();
+}
+
+class _SourceCapsuleSelectorState extends State<_SourceCapsuleSelector> {
+  final GlobalKey<PopupMenuButtonState<ReviewSource>> _menuKey =
+      GlobalKey<PopupMenuButtonState<ReviewSource>>();
+
+  @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return PopupMenuButton<ReviewSource>(
+    return TvFocusable(
+      // TV：PopupMenuButton 无 focusNode 参数，用 TvFocusable 接管聚焦，
+      // OK 键经 showButtonMenu 弹出来源菜单。
+      onActivate: () => _menuKey.currentState?.showButtonMenu(),
+      focusNode: widget.focusNode,
+      borderRadius: 16,
+      child: PopupMenuButton<ReviewSource>(
+      key: _menuKey,
       tooltip: '切换评分来源',
-      focusNode: focusNode,
       offset: const Offset(0, -56),
       position: PopupMenuPosition.under,
       color: scheme.surfaceContainerHighest,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       elevation: 6,
       onSelected: (value) {
-        if (value != source) onChanged(value);
+        if (value != widget.source) widget.onChanged(value);
       },
       itemBuilder: (_) => [
         for (final value in ReviewSource.values)
@@ -136,7 +150,7 @@ class _SourceCapsuleSelector extends StatelessWidget {
               children: [
                 SizedBox(
                   width: 24,
-                  child: value == source
+                  child: value == widget.source
                       ? const Icon(Icons.check_rounded,
                           size: 20, color: Color(0xFF34C759))
                       : null,
@@ -147,7 +161,7 @@ class _SourceCapsuleSelector extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight:
-                        value == source ? FontWeight.w800 : FontWeight.w600,
+                        value == widget.source ? FontWeight.w800 : FontWeight.w600,
                     color: scheme.onSurface,
                   ),
                 ),
@@ -155,7 +169,8 @@ class _SourceCapsuleSelector extends StatelessWidget {
             ),
           ),
       ],
-      child: _CapsulePill(source: source, selected: true),
+      child: _CapsulePill(source: widget.source, selected: true),
+    ),
     );
   }
 }

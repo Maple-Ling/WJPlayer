@@ -710,6 +710,10 @@ class _UnifiedMediaDetailScreenState
   /// TV 焦点布局（build 时计算，组件方法经此取节点）。
   FocusSectionLayout? _tvLayout;
 
+  /// TV：季选择器菜单（PopupMenuButton 无 focusNode，经 TvFocusable+key 弹出）。
+  final GlobalKey<PopupMenuButtonState<String>> _seasonMenuKey =
+      GlobalKey<PopupMenuButtonState<String>>();
+
   /// TV：MENU 键打开「链接」菜单（详情页非 tab 页，抢占默认状态栏兜底）。
   KeyEventResult _handleMenuKey(
       LogicalKeyboardKey key, KeyEventSource source, bool isRepeat, bool isUp) {
@@ -1585,15 +1589,21 @@ class _UnifiedMediaDetailScreenState
               '选择季',
           style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
         ),
-        PopupMenuButton<String>(
-          // TV：季选择器可聚焦（区域节点注入）。
+        TvFocusable(
+          // TV：PopupMenuButton 无 focusNode，TvFocusable 接管聚焦，
+          // OK 经 showButtonMenu 弹出分季菜单。
+          onActivate: () => _seasonMenuKey.currentState?.showButtonMenu(),
           focusNode: _tvNode('season', 0),
+          borderRadius: 20,
+          child: PopupMenuButton<String>(
+          key: _seasonMenuKey,
           icon: const Icon(Icons.unfold_more_rounded),
           onSelected: _selectSeason,
           itemBuilder: (_) => [
             for (final season in seasons)
               PopupMenuItem(value: season.id, child: Text(season.name)),
           ],
+        ),
         ),
       ]);
 

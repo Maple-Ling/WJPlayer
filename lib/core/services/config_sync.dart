@@ -15,6 +15,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'config_transfer.dart';
+
 /// 同步结果（接收/发送共用）。
 class ConfigSyncResult {
   const ConfigSyncResult({

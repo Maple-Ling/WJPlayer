@@ -470,7 +470,7 @@ class _TvKeyboardListenerState extends State<TvKeyboardListener> {
         // 长按 OK/Enter：按下计时 500ms（不依赖 KeyRepeatEvent），
         // 触发当前焦点区域的 onLongPressAt（如历史页多选/服务器页排序）。
         if (event is KeyDownEvent &&
-            !event.repeat &&
+            event is! KeyRepeatEvent &&
             (key == LogicalKeyboardKey.enter ||
                 key == LogicalKeyboardKey.select)) {
           _armLongPress(key);
@@ -536,7 +536,7 @@ class _TvKeyboardListenerState extends State<TvKeyboardListener> {
 
         return KeyEventResult.ignored;
       },
-      child: child,
+      child: widget.child,
     );
   }
 
