@@ -1,8 +1,9 @@
 // lib/ui/screens/settings/settings_config_sync.dart
-// 局域网配置同步页（part of settings_screen.dart）：
-//   · TV/接收端：启动本地 HTTP 服务 → 显示二维码（IP/端口/token）→
-//     手机扫码后全量配置（服务器+弹幕源）自动写入。
-//   · 手机/发送端：扫码（mobile_scanner）→ 收集本机配置 → 局域网推送。
+// 局域网配置同步页（import 进 settings_screen.dart）：
+//   · 接收端：启动本地 HTTP 服务 → 显示二维码（IP/端口/token）→
+//     对方扫码后全量配置（服务器+弹幕源）自动写入。（TV 与手机均可用）
+//   · 发送端：扫码（mobile_scanner）→ 收集本机配置 → 局域网推送。
+//   · 手机入口页：二选一（同步到其它设备=扫码 / 从其它设备接收=二维码）。
 
 import 'dart:async';
 
@@ -104,12 +105,12 @@ class _ConfigSyncReceiverScreenState
             mainAxisSize: MainAxisSize.min,
             children: [
               const Text(
-                '让手机把服务器与弹幕配置同步到本机',
+                '让其它设备把服务器与弹幕配置同步到本机',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 8),
               Text(
-                '手机端打开「设置 → 配置同步 → 同步到本机」扫码',
+                '对方设备打开「配置同步 → 同步到其它设备」扫此二维码',
                 style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
               ),
               const SizedBox(height: 24),
@@ -212,7 +213,7 @@ class _ConfigSyncSenderScreenState extends ConsumerState<ConfigSyncSenderScreen>
 
   Future<void> _push(String qrContent) async {
     setState(() {
-      _status = '正在同步到电视…';
+      _status = '正在同步到对方设备…';
       _result = null;
     });
     final result = await ConfigSyncService.sendToTv(
@@ -230,7 +231,7 @@ class _ConfigSyncSenderScreenState extends ConsumerState<ConfigSyncSenderScreen>
     setState(() {
       _result = result;
       _status = result.ok
-          ? '同步成功：${result.serverCount} 台服务器、${result.danmakuCount} 个弹幕源已发送到电视'
+          ? '同步成功：${result.serverCount} 台服务器、${result.danmakuCount} 个弹幕源已发送到对方设备'
           : '同步失败：${result.error ?? '未知错误'}';
       _pushing = false;
     });
@@ -240,7 +241,7 @@ class _ConfigSyncSenderScreenState extends ConsumerState<ConfigSyncSenderScreen>
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('同步到电视')),
+      appBar: AppBar(title: const Text('同步到其它设备')),
       body: Column(
         children: [
           Expanded(
@@ -318,7 +319,7 @@ class _ConfigSyncSenderScreenState extends ConsumerState<ConfigSyncSenderScreen>
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Text(
-                '扫描电视上显示的二维码，将本机服务器与弹幕配置一次性同步过去',
+                '扫描对方设备显示的二维码，将本机服务器与弹幕配置同步过去',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                     fontSize: 12, color: scheme.onSurfaceVariant),
@@ -326,6 +327,83 @@ class _ConfigSyncSenderScreenState extends ConsumerState<ConfigSyncSenderScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ─── 手机端入口：二选一（扫码发送 / 显示二维码接收）───
+
+class ConfigSyncChoiceScreen extends StatelessWidget {
+  const ConfigSyncChoiceScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      appBar: AppBar(title: const Text('配置同步')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(
+            '在手机之间或手机↔电视之间传输服务器与弹幕配置。\n'
+            '发送方扫码，接收方显示二维码。',
+            style: TextStyle(
+                fontSize: 13, color: scheme.onSurfaceVariant, height: 1.5),
+          ),
+          const SizedBox(height: 16),
+          _SyncChoiceCard(
+            icon: Icons.qr_code_scanner,
+            title: '同步到其它设备（扫码）',
+            subtitle: '扫描对方设备显示的二维码，把本机服务器与弹幕配置发送过去',
+            onTap: () => Navigator.of(context, rootNavigator: true).push(
+              MaterialPageRoute<void>(
+                  builder: (_) => const ConfigSyncSenderScreen()),
+            ),
+          ),
+          const SizedBox(height: 12),
+          _SyncChoiceCard(
+            icon: Icons.qr_code_2,
+            title: '从其它设备接收（二维码）',
+            subtitle: '本机显示二维码，让对方设备扫码把配置同步到本机',
+            onTap: () => Navigator.of(context, rootNavigator: true).push(
+              MaterialPageRoute<void>(
+                  builder: (_) => const ConfigSyncReceiverScreen()),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SyncChoiceCard extends StatelessWidget {
+  const _SyncChoiceCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        leading: Icon(icon, size: 30, color: scheme.primary),
+        title:
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+        subtitle: Text(subtitle),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: onTap,
       ),
     );
   }

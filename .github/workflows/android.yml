@@ -27,8 +27,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 单架构构建（2026-08-09）：v* = 手机正式版（仅 arm64-v8a）；
-        # test-* = TV 测试版（仅 armeabi-v7a）；rc-* 与手动触发跑双架构。
+        # 单架构构建（2026-08-09）：test-* = TV 测试版（仅 armeabi-v7a）；
+        # v* = 手机正式版（仅 arm64-v8a，TV 仍在调试暂不随正式版发布；
+        #     TV 就绪后改双架构 ["arm64-v8a","armeabi-v7a"] 一次发两个正式版）；
+        # rc-* 与手动触发跑双架构。
         abi: ${{ fromJson(
           startsWith(github.ref_name, 'test-') && '["armeabi-v7a"]' ||
           startsWith(github.ref_name, 'v') && '["arm64-v8a"]' ||
@@ -148,7 +150,9 @@ jobs:
             tmdb_encrypted=$(dart run tool/tmdb_encrypt.dart "$TMDB_API_KEY")
           fi
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            version="${GITHUB_REF_NAME}"
+            # 版本号剥掉 tag 的 v 前缀（v1.0.3 → 1.0.3）：关于页/更新比较用
+            # 干净版本号（UI 已自带 "v" 前缀），test-/rc- 前缀 tag 不受影响。
+            version="${GITHUB_REF_NAME#v}"
           else
             version="ci-${GITHUB_RUN_NUMBER}"
           fi
@@ -198,6 +202,34 @@ jobs:
           "$apksigner" verify --verbose "$apk"
           echo 'Verified APK v2/v3 release signature'
           sha256sum "$apk" | tee "$apk.sha256"
+
+      - name: Clean stale assets from tag release (same ABI)
+        # 重新发布同 tag（如 v1.0.3 修复重发）时，release 会残留旧资产
+        # （旧命名 WJPlayer-...-v1.0.3.apk）；更新检查按资产名匹配会先命中
+        # 旧包导致下载到旧版本。发布前删除本 ABI 的旧资产，只留本次新构建。
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${{ github.repository }}"
+          release_id=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            "$api/releases/tags/${{ github.ref_name }}" \
+            | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("id") or "")' 2>/dev/null || true)
+          if [[ -z "$release_id" ]]; then
+            echo "No existing release for ${{ github.ref_name }}, skip cleanup"
+            exit 0
+          fi
+          # 只删本 ABI 的旧资产（未来双架构并行时互不干扰）。
+          asset_ids=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            "$api/releases/$release_id/assets?per_page=100" \
+            | python3 -c 'import json,sys; print(" ".join(str(a["id"]) for a in json.load(sys.stdin) if "${{ matrix.abi }}" in a["name"]))' 2>/dev/null || true)
+          for id in $asset_ids; do
+            curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+              "$api/releases/$release_id/assets/$id" >/dev/null || true
+            echo "Deleted stale asset id=$id"
+          done
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

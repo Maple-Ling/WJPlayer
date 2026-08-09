@@ -13,6 +13,7 @@ import '../../../core/providers/app_providers.dart';
 import '../../../core/providers/external_media_providers.dart';
 import '../../../core/providers/discover_providers.dart';
 import '../../../core/providers/media_providers.dart';
+import '../../../core/providers/playback_prefs_store.dart';
 import '../../../core/providers/playback_providers.dart';
 import '../../../core/providers/unified_resource_provider.dart';
 import '../../../core/providers/server_card_stats_provider.dart';
@@ -968,6 +969,10 @@ class _UnifiedMediaDetailScreenState
         _normalizeTracks();
         _loadingMedia = false;
       });
+      // 恢复上次手动字幕选择（无记录才自动猜测）。
+      if (_subtitleIndex < 0 && _resource?.subtitles.isNotEmpty == true) {
+        await _restoreSubtitlePreference(entry);
+      }
       return;
     }
     final generation = ++_generation;
@@ -984,11 +989,12 @@ class _UnifiedMediaDetailScreenState
             ? 0
             : _resourceIndex.clamp(0, resources.length - 1).toInt();
         _normalizeTracks();
-        if (_subtitleIndex < 0 && _resource?.subtitles.isNotEmpty == true) {
-          _subtitleIndex = _preferredSubtitleIndex(_resource!.subtitles);
-        }
         _loadingMedia = false;
       });
+      // 恢复上次手动字幕选择（列表索引；-1=显式关闭；null=未选过→自动猜测）。
+      if (_subtitleIndex < 0 && _resource?.subtitles.isNotEmpty == true) {
+        await _restoreSubtitlePreference(entry);
+      }
       if (_scopeRecords.isNotEmpty) _updateResume(entry);
     } catch (_) {
       if (!mounted || generation != _generation) return;
@@ -998,6 +1004,37 @@ class _UnifiedMediaDetailScreenState
       });
     }
   }
+
+  /// 字幕选择的跨会话恢复/猜测（飞牛/直链源）：
+  /// 持久化 key 与播放器 syntheticItemId 同构（src:serverId:entryId），
+  /// 播放器内切换字幕同样写该 key，两端闭环。
+  Future<void> _restoreSubtitlePreference(UnifiedMediaEntry entry) async {
+    final subs = _resource?.subtitles ?? const <Map<String, dynamic>>[];
+    if (subs.isEmpty) return;
+    final remembered = (await PlaybackPrefsStore.instance
+            .read('src:${widget.server.id}:${entry.id}'))
+        .subtitleIndex;
+    if (!mounted) return;
+    if (remembered == -1) {
+      // 上次显式关闭：保持关闭，不自动猜测。
+      if (_subtitleIndex != -1) setState(() => _subtitleIndex = -1);
+      return;
+    }
+    if (remembered != null && remembered >= 0 && remembered < subs.length) {
+      if (_subtitleIndex != remembered) {
+        setState(() => _subtitleIndex = remembered);
+      }
+      return;
+    }
+    // 无记录/记录越界（换版本或资源后字幕列表变化）：自动猜测。
+    if (_subtitleIndex < 0) {
+      setState(() => _subtitleIndex = _preferredSubtitleIndex(subs));
+    }
+  }
+
+  /// 本页媒体对应的字幕偏好持久化 key（与 SourcePlayback.syntheticItemId 同构）。
+  String get _subtitlePrefsKey =>
+      'src:${widget.server.id}:${_selectedEntry?.id ?? widget.entry.id}';
 
   int _preferredSubtitleIndex(List<Map<String, dynamic>> tracks) {
     String text(Map<String, dynamic> track) => [
@@ -2810,13 +2847,20 @@ class _UnifiedMediaDetailScreenState
         ],
       );
 
-  void _showSubtitlePicker() => _showPicker(children: [
+  void _showSubtitlePicker() {
+    final prefsKey = _subtitlePrefsKey;
+    _showPicker(children: [
         RadioListTile<int>(
           value: -1,
           groupValue: _subtitleIndex,
           title: const Text('关闭字幕'),
           onChanged: (_) {
             setState(() => _subtitleIndex = -1);
+            // 跨会话持久化：显式关闭，下次进入/继续播放保持关闭。
+            if (prefsKey.isNotEmpty) {
+              unawaited(
+                  PlaybackPrefsStore.instance.writeSubtitleIndex(prefsKey, -1));
+            }
             Navigator.pop(context);
           },
         ),
@@ -2828,10 +2872,16 @@ class _UnifiedMediaDetailScreenState
             onChanged: (value) {
               if (value == null) return;
               setState(() => _subtitleIndex = value);
+              // 跨会话持久化：记住本次选中的字幕（列表索引），下次播放恢复。
+              if (prefsKey.isNotEmpty) {
+                unawaited(PlaybackPrefsStore.instance
+                    .writeSubtitleIndex(prefsKey, value));
+              }
               Navigator.pop(context);
             },
           ),
       ]);
+  }
 
   void _showImage(List<String> images, int initial) {
     showDialog<void>(

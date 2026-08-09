@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_interfaces.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/providers/media_providers.dart';
+import '../../../core/providers/playback_prefs_store.dart';
 
 /// 播放选项组件（线路/版本/音频/字幕/次字幕）
 ///
@@ -306,6 +308,9 @@ class _PlaybackOptionsState extends ConsumerState<PlaybackOptions> {
         selected: currentIndex == null,
         onTap: () {
           ref.read(subtitleTrackProvider.notifier).state = null;
+          // 跨会话持久化：显式关闭字幕，下次播放保持关闭（不自动猜测）。
+          unawaited(PlaybackPrefsStore.instance
+              .writeSubtitleIndex(widget.itemId, -1));
           setState(() => _expanded = null);
         },
       ),
@@ -324,6 +329,9 @@ class _PlaybackOptionsState extends ConsumerState<PlaybackOptions> {
           if (secondaryIndex == stream.index) {
             ref.read(secondarySubtitleTrackProvider.notifier).state = null;
           }
+          // 跨会话持久化：记住本次选中的字幕，下次播放恢复。
+          unawaited(PlaybackPrefsStore.instance
+              .writeSubtitleIndex(widget.itemId, stream.index));
           setState(() => _expanded = null);
         },
       );

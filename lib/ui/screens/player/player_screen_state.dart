@@ -802,7 +802,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   Future<void> _applySourceTrackPreferences(SourcePlayback sp) async {
     final audioIndex = sp.preferredAudioListIndex;
-    final subtitleIndex = sp.preferredSubtitleListIndex;
+    var subtitleIndex = sp.preferredSubtitleListIndex;
+    // 历史/聚合切换直进播放器未携带字幕列表索引时，恢复上次手动选择
+    // （列表索引；-1=显式关闭保持关闭，null=未手动选过不干预内核默认）。
+    if (subtitleIndex == null) {
+      subtitleIndex =
+          (await PlaybackPrefsStore.instance.read(widget.itemId)).subtitleIndex;
+    }
 
     // 所有直播放入口都等待内核真实轨道，随后同步选择状态和右下角面板。
     for (var attempt = 0; attempt < 100; attempt++) {
@@ -1079,6 +1085,29 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     if (userSelectedSubtitleIndex != null) {
       logger.i('Player', '保留用户在详情页中选择的字幕轨道: $userSelectedSubtitleIndex');
       return;
+    }
+
+    // 跨会话恢复上次手动选择的字幕（Emby/离线播放链；飞牛 source-player 走
+    // _applySourceTrackPreferences，不经此路径）：记录缺失(null)时走下方自动
+    // 猜测；-1=显式关闭保持关闭；>=0=上次选中的流索引，当前媒体源仍有该流
+    // 则直接恢复（由 _applyTrackSelections 统一应用），换版本/资源导致流
+    // 不存在时回退自动猜测。
+    if (widget.sourcePlay == null) {
+      final remembered =
+          await PlaybackPrefsStore.instance.read(widget.itemId);
+      final rememberedSubtitle = remembered.subtitleIndex;
+      if (rememberedSubtitle == -1) {
+        logger.i('Player', '恢复上次字幕选择: 显式关闭');
+        ref.read(subtitleTrackProvider.notifier).state = -1;
+        return;
+      }
+      if (rememberedSubtitle != null &&
+          rememberedSubtitle >= 0 &&
+          subtitleStreams.any((s) => s.index == rememberedSubtitle)) {
+        logger.i('Player', '恢复上次字幕选择: 流索引 $rememberedSubtitle');
+        ref.read(subtitleTrackProvider.notifier).state = rememberedSubtitle;
+        return;
+      }
     }
 
     for (final stream in subtitleStreams) {
@@ -6021,6 +6050,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       // 持久化"关闭"：内核切换/重新初始化后保持关闭（_applyTrackSelections
       // 读到 -1 会再次 deselect）。
       ref.read(subtitleTrackProvider.notifier).state = -1;
+      // 跨会话持久化：下次从任何入口播放同样保持关闭。
+      unawaited(
+          PlaybackPrefsStore.instance.writeSubtitleIndex(widget.itemId, -1));
       return;
     }
     final subtitleTracks = _playerService.tracksInfo
@@ -6032,7 +6064,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         final trackId = track['id']?.toString() ?? '';
         if (trackId.isNotEmpty) {
           await _playerService.selectSubtitleTrack(trackId);
-          await _persistSubtitleSelection(trackId);
+          await _rememberSubtitleSelection(trackId, subtitleTracks);
         }
         return;
       }
@@ -6052,7 +6084,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             final trackId = track['id']?.toString() ?? '';
             if (trackId.isNotEmpty) {
               await _playerService.selectSubtitleTrack(trackId);
-              await _persistSubtitleSelection(trackId);
+              await _rememberSubtitleSelection(trackId, subtitleTracks);
             }
             return;
           }
@@ -6062,12 +6094,31 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           final trackId = subtitleTracks[i]['id']?.toString() ?? '';
           if (trackId.isNotEmpty) {
             await _playerService.selectSubtitleTrack(trackId);
-            await _persistSubtitleSelection(trackId);
+            await _rememberSubtitleSelection(trackId, subtitleTracks);
           }
         }
         return;
       }
     }
+  }
+
+  /// 播放器内选轨成功后持久化字幕选择（跨会话，下次播放恢复）：
+  /// - 飞牛/直链（source-player）：按播放器字幕列表位置记录（该路径无 Emby
+  ///   MediaStream 可反查；tracksInfo 字幕顺序与详情页 subtitles 一致，
+  ///   _applySourceTrackPreferences 按同一列表索引选中）。
+  /// - Emby：经 [_persistSubtitleSelection] 按媒体流索引（MediaStream.index）
+  ///   记录，换版本/资源后按流身份恢复更稳。
+  Future<void> _rememberSubtitleSelection(
+      String trackId, List<Map<String, dynamic>> subtitleTracks) async {
+    if (widget.sourcePlay != null) {
+      final idx =
+          subtitleTracks.indexWhere((t) => t['id']?.toString() == trackId);
+      if (idx >= 0) {
+        await PlaybackPrefsStore.instance.writeSubtitleIndex(widget.itemId, idx);
+      }
+      return;
+    }
+    await _persistSubtitleSelection(trackId);
   }
 
   /// 播放器菜单按显示名选字幕成功后，把选择持久化到 [subtitleTrackProvider]
@@ -6113,6 +6164,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
               );
         if (tid == trackId) {
           ref.read(subtitleTrackProvider.notifier).state = stream.index;
+          // 跨会话持久化：按媒体流索引记录，下次播放恢复。
+          unawaited(PlaybackPrefsStore.instance
+              .writeSubtitleIndex(widget.itemId, stream.index));
           return;
         }
       }
@@ -6122,6 +6176,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       if (idx >= 0 && idx < subtitleStreams.length) {
         ref.read(subtitleTrackProvider.notifier).state =
             subtitleStreams[idx].index;
+        unawaited(PlaybackPrefsStore.instance
+            .writeSubtitleIndex(widget.itemId, subtitleStreams[idx].index));
       }
     } catch (_) {
       // 持久化失败不影响本次切换。

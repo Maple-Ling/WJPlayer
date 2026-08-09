@@ -198,12 +198,13 @@ class SettingsScreen extends ConsumerWidget {
   void _showBackupRestore(BuildContext context) =>
       _openSubPage(context, const BackupRestoreScreen());
 
-  /// 配置同步：TV 接收二维码（手机扫码推送）；手机扫码同步到电视。
+  /// 配置同步：TV 直接显示二维码接收（无摄像头）；手机先进选择页——
+  /// 「同步到其它设备」扫码发送 / 「从其它设备接收」显示二维码（手机↔手机）。
   void _showConfigSync(BuildContext context) => _openSubPage(
         context,
         isTvPlatform
             ? const ConfigSyncReceiverScreen()
-            : const ConfigSyncSenderScreen(),
+            : const ConfigSyncChoiceScreen(),
       );
 
   void _showPlugins(BuildContext context) =>

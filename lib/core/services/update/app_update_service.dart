@@ -89,25 +89,35 @@ class AppUpdateService {
 
   /// 检查更新。[includePrerelease] 为 true 时也考虑最新的预发布(pre)。
   /// 无更新或失败返回 null。
+  ///
+  /// 平台隔离：TV 与手机共用一个发布仓库，release 资产按文件名区分
+  /// （WJPlayerTV-* / WJPlayer-Android-*）。只认「本平台有资产」的 release——
+  /// TV 收到纯手机版 release（如手机正式版 v1.0.3 无 TV 资产）视为无更新，
+  /// 不会误报「发现新版本」；未来双正式版同 release 时两端都能识别。
   Future<UpdateInfo?> checkForUpdate({bool includePrerelease = false}) async {
     try {
-      final release = includePrerelease
-          ? await _latestIncludingPrerelease()
-          : await _latestStable();
-      if (release == null) return null;
+      final releases = await _recentReleases();
+      for (final r in releases) {
+        if (r is! Map) continue;
+        if (r['draft'] == true) continue;
+        if (!includePrerelease && r['prerelease'] == true) continue;
+        final info = _parseRelease(r);
+        if (info == null) continue;
 
-      final info = _parseRelease(release);
-      if (info == null) return null;
+        // 平台过滤：本平台无资产（另一平台的 release）→ 跳过。
+        if (info.assetForPlatform == null) continue;
 
-      // 用「原始 tag」对比「当前 APP_VERSION」，二者都保留 -buildN/-pre 信息。
-      // 不能用归一化后的 x.y.z 对比：CI 每个预发布都是 vX.Y.Z-build<run>-pre，
-      // 主版本号不变，归一化后恒等 → 预览版永远检测不到更新（本次修复点）。
-      if (compareVersions(info.tag, kCurrentAppVersion) > 0) {
-        _logger.i(_tag,
-            '发现新版本: ${info.tag}（当前 $kCurrentAppVersion），pre=${info.isPrerelease}');
-        return info;
+        // 用「原始 tag」对比「当前 APP_VERSION」，二者都保留 -buildN/-pre 信息。
+        // 不能用归一化后的 x.y.z 对比：CI 每个预发布都是 vX.Y.Z-build<run>-pre，
+        // 主版本号不变，归一化后恒等 → 预览版永远检测不到更新。
+        if (compareVersions(info.tag, kCurrentAppVersion) > 0) {
+          _logger.i(_tag,
+              '发现新版本: ${info.tag}（当前 $kCurrentAppVersion），pre=${info.isPrerelease}');
+          return info;
+        }
+        _logger.i(_tag, '已是最新: 当前 $kCurrentAppVersion, 远端 ${info.tag}');
       }
-      _logger.i(_tag, '已是最新: 当前 $kCurrentAppVersion, 远端 ${info.tag}');
+      _logger.i(_tag, '无更新: 当前 $kCurrentAppVersion');
       return null;
     } catch (e) {
       // 网络/限流等失败向上抛，调用方据此区分「检查失败」与「已是最新」
@@ -117,21 +127,13 @@ class AppUpdateService {
     }
   }
 
-  Future<Map?> _latestStable() async {
-    final resp = await _dio.get('$_base/releases/latest');
-    return resp.data is Map ? resp.data as Map : null;
-  }
-
-  Future<Map?> _latestIncludingPrerelease() async {
+  /// 最近 release 列表（GitHub 按时间倒序，含稳定版与预发布）。
+  Future<List<dynamic>> _recentReleases() async {
     final resp = await _dio.get('$_base/releases',
-        queryParameters: {'per_page': 10});
+        queryParameters: {'per_page': 30});
     final list = resp.data;
-    if (list is! List || list.isEmpty) return null;
-    // GitHub 按时间倒序返回，取第一个未草稿的（含 pre）。
-    for (final r in list) {
-      if (r is Map && r['draft'] != true) return r;
-    }
-    return null;
+    if (list is! List) return const [];
+    return list;
   }
 
   UpdateInfo? _parseRelease(Map r) {
@@ -209,10 +211,25 @@ class _VersionParts {
     final major = core != null ? int.tryParse(core.group(1)!) ?? 0 : 0;
     final minor = core != null ? int.tryParse(core.group(2)!) ?? 0 : 0;
     final patch = core != null ? int.tryParse(core.group(3)!) ?? 0 : 0;
+    // build：优先 -build<N>（CI 预览版 vX.Y.Z-build<run>-pre）；测试版
+    // tag 为 test-tv-YYYYMMDD.HHMM 无 x.y.z/-build，取 tag 中最大数字段
+    // （日期 YYYYMMDD）作 build，使测试版按日期迭代可比较先后。
+    var build = 0;
     final b = RegExp(r'-build(\d+)', caseSensitive: false).firstMatch(raw);
-    final build = b != null ? int.tryParse(b.group(1)!) ?? 0 : 0;
+    if (b != null) {
+      build = int.tryParse(b.group(1)!) ?? 0;
+    } else {
+      for (final m in RegExp(r'\d+').allMatches(raw)) {
+        final n = int.tryParse(m.group(0)!) ?? 0;
+        if (n > build) build = n;
+      }
+    }
+    final lower = raw.toLowerCase();
     final isPre = RegExp(r'-pre\b', caseSensitive: false).hasMatch(raw) ||
-        raw.toLowerCase().endsWith('-pre');
+        lower.endsWith('-pre') ||
+        // CI 约定 test-* / rc-* tag 发布为预发布（GitHub prerelease 标记）。
+        lower.startsWith('test-') ||
+        lower.startsWith('rc-');
     return _VersionParts(major, minor, patch, build, isPre);
   }
 }
