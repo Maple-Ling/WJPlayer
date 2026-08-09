@@ -612,22 +612,6 @@ class _UnifiedMediaDetailScreenState
   UnifiedMediaResource? get _resource =>
       _resources.isEmpty ? null : _resources[_resourceIndex];
 
-  Widget _focusWrap({
-    required Widget child,
-    required VoidCallback? onActivate,
-    double borderRadius = 12,
-    bool autofocus = false,
-    bool enabled = true,
-  }) {
-    return TvFocusable(
-      onActivate: onActivate ?? () {},
-      autofocus: autofocus,
-      enabled: enabled,
-      borderRadius: borderRadius,
-      child: child,
-    );
-  }
-
   @override
   void initState() {
     super.initState();
@@ -1291,6 +1275,8 @@ class _UnifiedMediaDetailScreenState
               sliver: SliverList.list(children: [
                 _primaryPlayButton(),
                 const SizedBox(height: 14),
+                _buildPlaybackOptionCapsules(),
+                const SizedBox(height: 14),
                 if (entry.overview?.isNotEmpty == true)
                   CollapsibleOverview(text: entry.overview!),
                 if (detail.seasons.isNotEmpty) ...[
@@ -1328,18 +1314,6 @@ class _UnifiedMediaDetailScreenState
                   _recommendations(_externalDetail!.recommendations),
                 ],
                 const SizedBox(height: 20),
-                if (_externalDetail != null) ...[
-                  _sectionTitle('链接'),
-                  const SizedBox(height: 14),
-                  _links(_externalDetail!),
-                ],
-                if (_externalDetail?.companies.isNotEmpty == true) ...[
-                  const SizedBox(height: 20),
-                  _sectionTitle('工作室'),
-                  const SizedBox(height: 14),
-                  _companies(_externalDetail!.companies),
-                ],
-                const SizedBox(height: 20),
                 _sectionTitle('媒体信息'),
                 const SizedBox(height: 14),
                 _mediaInfo(detail),
@@ -1351,6 +1325,18 @@ class _UnifiedMediaDetailScreenState
                   const SizedBox(height: 12),
                   _buildFileInfoCard(_resource!),
                 ],
+                if (_externalDetail != null) ...[
+                  const SizedBox(height: 20),
+                  _sectionTitle('链接'),
+                  const SizedBox(height: 14),
+                  _links(_externalDetail!),
+                ],
+                if (_externalDetail?.companies.isNotEmpty == true) ...[
+                  const SizedBox(height: 20),
+                  _sectionTitle('工作室'),
+                  const SizedBox(height: 14),
+                  _companies(_externalDetail!.companies),
+                ],
               ]),
             ),
           ],
@@ -1360,16 +1346,7 @@ class _UnifiedMediaDetailScreenState
     );
   }
 
-  Widget _primaryPlayButton() {
-    final onPressed = _selectedCrossServerMatch != null
-        ? _playSelectedOrLocal
-        : (_selectedEntry == null || _loadingMedia ? null : _play);
-    return _focusWrap(
-      autofocus: true,
-      enabled: onPressed != null,
-      borderRadius: 999,
-      onActivate: onPressed,
-      child: Center(
+  Widget _primaryPlayButton() => Center(
         child: SizedBox(
           width: 185,
           height: 50,
@@ -1381,7 +1358,9 @@ class _UnifiedMediaDetailScreenState
               elevation: 0,
             ),
             // 优先播放单击选中的跨服务器资源；无选择时播放本地资源。
-            onPressed: onPressed,
+            onPressed: _selectedCrossServerMatch != null
+                ? _playSelectedOrLocal
+                : (_selectedEntry == null || _loadingMedia ? null : _play),
             icon: const Icon(Icons.play_arrow_rounded, size: 23),
             label: Text(
               _selectedEntry == null && _selectedCrossServerMatch == null
@@ -1392,9 +1371,7 @@ class _UnifiedMediaDetailScreenState
             ),
           ),
         ),
-      ),
-    );
-  }
+      );
 
   /// 播放所选：有跨服务器选择时播放该服务器资源，否则走本地资源播放。
   void _playSelectedOrLocal() {
@@ -1435,15 +1412,13 @@ class _UnifiedMediaDetailScreenState
               '选择季',
           style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
         ),
-        ExcludeFocus(
-          child: PopupMenuButton<String>(
-            icon: const Icon(Icons.unfold_more_rounded),
-            onSelected: _selectSeason,
-            itemBuilder: (_) => [
-              for (final season in seasons)
-                PopupMenuItem(value: season.id, child: Text(season.name)),
-            ],
-          ),
+        PopupMenuButton<String>(
+          icon: const Icon(Icons.unfold_more_rounded),
+          onSelected: _selectSeason,
+          itemBuilder: (_) => [
+            for (final season in seasons)
+              PopupMenuItem(value: season.id, child: Text(season.name)),
+          ],
         ),
       ]);
 
@@ -1463,80 +1438,76 @@ class _UnifiedMediaDetailScreenState
                   final epNumber = episode.indexNumber ?? (index + 1);
                   return SizedBox(
                     width: 220,
-                    child: TvFocusable(
-                      onActivate: () => _selectEpisode(episode),
-                      borderRadius: 18,
-                      child: InkWell(
-                        onTap: () => _selectEpisode(episode),
-                        borderRadius: BorderRadius.circular(18),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            AspectRatio(
-                              aspectRatio: 16 / 9,
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(18),
-                                child: Stack(fit: StackFit.expand, children: [
-                                  MediaImage(
-                                    imageUrl:
-                                        episode.backdropUrl?.isNotEmpty == true
-                                            ? episode.backdropUrl
-                                            : episode.posterUrl,
-                                    httpHeaders: episode.imageHeaders,
-                                    fit: BoxFit.cover,
-                                  ),
-                                  if (selected)
-                                    DecoratedBox(
-                                      decoration: BoxDecoration(
-                                        border: Border.all(
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .primary,
-                                            width: 4),
-                                        borderRadius: BorderRadius.circular(18),
-                                      ),
+                    child: InkWell(
+                      onTap: () => _selectEpisode(episode),
+                      borderRadius: BorderRadius.circular(18),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          AspectRatio(
+                            aspectRatio: 16 / 9,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(18),
+                              child: Stack(fit: StackFit.expand, children: [
+                                MediaImage(
+                                  imageUrl:
+                                      episode.backdropUrl?.isNotEmpty == true
+                                          ? episode.backdropUrl
+                                          : episode.posterUrl,
+                                  httpHeaders: episode.imageHeaders,
+                                  fit: BoxFit.cover,
+                                ),
+                                if (selected)
+                                  DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .primary,
+                                          width: 4),
+                                      borderRadius: BorderRadius.circular(18),
                                     ),
-                                  // 集号角标（左下）：与 afusekt 等播放器一致
-                                  // 显示数字集号，缺失时按顺序补。
-                                  Positioned(
-                                    left: 8,
-                                    bottom: 8,
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 9, vertical: 3),
-                                      decoration: BoxDecoration(
-                                        color: Colors.black
-                                            .withValues(alpha: 0.65),
-                                        borderRadius:
-                                            BorderRadius.circular(999),
-                                      ),
-                                      child: Text(
-                                        '第 $epNumber 集',
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w700,
-                                        ),
+                                  ),
+                                // 集号角标（左下）：与 afusekt 等播放器一致
+                                // 显示数字集号，缺失时按顺序补。
+                                Positioned(
+                                  left: 8,
+                                  bottom: 8,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 9, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black
+                                          .withValues(alpha: 0.65),
+                                      borderRadius:
+                                          BorderRadius.circular(999),
+                                    ),
+                                    child: Text(
+                                      '第 $epNumber 集',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
                                       ),
                                     ),
                                   ),
-                                ]),
-                              ),
+                                ),
+                              ]),
                             ),
-                            const SizedBox(height: 12),
-                            Text(episode.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    fontSize: 13, fontWeight: FontWeight.w800)),
-                            const SizedBox(height: 5),
-                            Text(episode.overview ?? '',
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    height: 1.35, color: Colors.black54)),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(episode.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 13, fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 5),
+                          Text(episode.overview ?? '',
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  height: 1.35, color: Colors.black54)),
+                        ],
                       ),
                     ),
                   );
@@ -1564,28 +1535,24 @@ class _UnifiedMediaDetailScreenState
                     final info = matchPlaybackInfo(match);
                     return SizedBox(
                       width: 250,
-                      child: TvFocusable(
-                        onActivate: () => _openCrossServerMatch(match),
-                        borderRadius: 12,
-                        child: PlaybackResourceCard(
-                          serverName: match.serverName,
-                          isBest: index == 0,
-                          // 单击选中高亮当前点选的跨服务器资源；默认高亮命中排第一的
-                          isSelected: index == _selectedCrossServerIndex,
-                          resolution: info.resolution,
-                          dynamicRange: info.dynamicRange,
-                          codec: info.codec,
-                          frameRate: info.frameRate,
-                          size: info.size,
-                          bitrate: info.bitrate,
-                          // 单击 = 选择该服务器资源（高亮 + 记录，播放由顶部播放键触发）
-                          onTap: () => setState(() {
-                            _selectedCrossServerIndex = index;
-                            _selectedCrossServerMatch = match;
-                          }),
-                          // 双击 = 进入该服务器对应的媒体详情页
-                          onDoubleTap: () => _openServerDetail(match),
-                        ),
+                      child: PlaybackResourceCard(
+                        serverName: match.serverName,
+                        isBest: index == 0,
+                        // 单击选中高亮当前点选的跨服务器资源；默认高亮命中排第一的
+                        isSelected: index == _selectedCrossServerIndex,
+                        resolution: info.resolution,
+                        dynamicRange: info.dynamicRange,
+                        codec: info.codec,
+                        frameRate: info.frameRate,
+                        size: info.size,
+                        bitrate: info.bitrate,
+                        // 单击 = 选择该服务器资源（高亮 + 记录，播放由顶部播放键触发）
+                        onTap: () => setState(() {
+                          _selectedCrossServerIndex = index;
+                          _selectedCrossServerMatch = match;
+                        }),
+                        // 双击 = 进入该服务器对应的媒体详情页
+                        onDoubleTap: () => _openServerDetail(match),
                       ),
                     );
                   },
@@ -1764,41 +1731,31 @@ class _UnifiedMediaDetailScreenState
               ?.toString();
           return SizedBox(
             width: 250,
-            child: TvFocusable(
-              onActivate: () {
+            child: PlaybackResourceCard(
+              serverName: widget.server.name,
+              serverIcon: widget.server.iconUrl?.isNotEmpty == true
+                  ? ClipRRect(
+                      borderRadius: BorderRadius.circular(5),
+                      child: MediaImage(
+                        imageUrl: widget.server.iconUrl,
+                        fit: BoxFit.contain,
+                        useDefaultUserAgent: true,
+                      ),
+                    )
+                  : null,
+              isSelected: selected,
+              resolution: _resolution(video),
+              dynamicRange: range,
+              codec: video['codec_name']?.toString(),
+              size: resource.size,
+              bitrate: (video['bitrate'] as num?)?.toInt(),
+              onTap: () {
                 setState(() {
                   _resourceIndex = index;
                   _normalizeTracks();
                 });
                 _play();
               },
-              borderRadius: 12,
-              child: PlaybackResourceCard(
-                serverName: widget.server.name,
-                serverIcon: widget.server.iconUrl?.isNotEmpty == true
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(5),
-                        child: MediaImage(
-                          imageUrl: widget.server.iconUrl,
-                          fit: BoxFit.contain,
-                          useDefaultUserAgent: true,
-                        ),
-                      )
-                    : null,
-                isSelected: selected,
-                resolution: _resolution(video),
-                dynamicRange: range,
-                codec: video['codec_name']?.toString(),
-                size: resource.size,
-                bitrate: (video['bitrate'] as num?)?.toInt(),
-                onTap: () {
-                  setState(() {
-                    _resourceIndex = index;
-                    _normalizeTracks();
-                  });
-                  _play();
-                },
-              ),
             ),
           );
         },
@@ -1812,21 +1769,17 @@ class _UnifiedMediaDetailScreenState
           scrollDirection: Axis.horizontal,
           itemCount: images.length,
           separatorBuilder: (_, __) => const SizedBox(width: 9),
-          itemBuilder: (_, index) => TvFocusable(
-            onActivate: () => _showImage(images, index),
-            borderRadius: 18,
-            child: InkWell(
-              onTap: () => _showImage(images, index),
-              borderRadius: BorderRadius.circular(18),
-              child: AspectRatio(
-                aspectRatio: 16 / 9,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(18),
-                  child: MediaImage(
-                      imageUrl: images[index],
-                      fit: BoxFit.cover,
-                      cacheWidth: 320),
-                ),
+          itemBuilder: (_, index) => InkWell(
+            onTap: () => _showImage(images, index),
+            borderRadius: BorderRadius.circular(18),
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: MediaImage(
+                    imageUrl: images[index],
+                    fit: BoxFit.cover,
+                    cacheWidth: 320),
               ),
             ),
           ),
@@ -1841,34 +1794,29 @@ class _UnifiedMediaDetailScreenState
           separatorBuilder: (_, __) => const SizedBox(width: 8),
           itemBuilder: (_, index) {
             final item = items[index];
-            return TvFocusable(
-              onActivate: () => Navigator.of(context).push(MaterialPageRoute<void>(
+            return InkWell(
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
                   builder: (_) => ExternalMediaDetailScreen(entry: item))),
-              borderRadius: 18,
-              child: InkWell(
-                onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                    builder: (_) => ExternalMediaDetailScreen(entry: item))),
-                child: SizedBox(
-                  width: 100,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(18),
-                          child: MediaImage(
-                              imageUrl: item.posterUrl,
-                              fit: BoxFit.cover,
-                              cacheWidth: 200),
-                        ),
+              child: SizedBox(
+                width: 100,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(18),
+                        child: MediaImage(
+                            imageUrl: item.posterUrl,
+                            fit: BoxFit.cover,
+                            cacheWidth: 200),
                       ),
-                      const SizedBox(height: 8),
-                      Text(item.title,
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
-                      Text(item.year ?? '',
-                          style: const TextStyle(color: Colors.black54)),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(item.title,
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text(item.year ?? '',
+                        style: const TextStyle(color: Colors.black54)),
+                  ],
                 ),
               ),
             );
@@ -1901,19 +1849,12 @@ class _UnifiedMediaDetailScreenState
     ];
     return Wrap(spacing: 12, runSpacing: 10, children: [
       for (final value in values)
-        TvFocusable(
-          onActivate: () => launchUrl(
+        ActionChip(
+          avatar: const Icon(Icons.open_in_new_rounded, size: 17),
+          label: Text(value.$1),
+          onPressed: () => launchUrl(
             Uri.parse(value.$2),
             mode: LaunchMode.externalApplication,
-          ),
-          borderRadius: 999,
-          child: ActionChip(
-            avatar: const Icon(Icons.open_in_new_rounded, size: 17),
-            label: Text(value.$1),
-            onPressed: () => launchUrl(
-              Uri.parse(value.$2),
-              mode: LaunchMode.externalApplication,
-            ),
           ),
         ),
     ]);
@@ -1951,21 +1892,17 @@ class _UnifiedMediaDetailScreenState
           scrollDirection: Axis.horizontal,
           itemCount: companies.length,
           separatorBuilder: (_, __) => const SizedBox(width: 12),
-          itemBuilder: (_, index) => TvFocusable(
-            onActivate: () {},
-            borderRadius: 999,
-            child: ActionChip(
-              avatar: companies[index].logoUrl == null
-                  ? null
-                  : SizedBox(
-                      width: 28,
-                      height: 20,
-                      child: MediaImage(
-                          imageUrl: companies[index].logoUrl,
-                          fit: BoxFit.contain)),
-              label: Text(companies[index].name),
-              onPressed: () {},
-            ),
+          itemBuilder: (_, index) => ActionChip(
+            avatar: companies[index].logoUrl == null
+                ? null
+                : SizedBox(
+                    width: 28,
+                    height: 20,
+                    child: MediaImage(
+                        imageUrl: companies[index].logoUrl,
+                        fit: BoxFit.contain)),
+            label: Text(companies[index].name),
+            onPressed: () {},
           ),
         ),
       );
@@ -1978,38 +1915,33 @@ class _UnifiedMediaDetailScreenState
           separatorBuilder: (_, __) => const SizedBox(width: 9),
           itemBuilder: (_, index) {
             final person = people[index];
-            final enabled = person.id.isNotEmpty;
-            return SizedBox(
-              width: 78,
-              child: TvFocusable(
-                onActivate: enabled ? () => _showPerson(person) : () {},
-                enabled: enabled,
-                borderRadius: 30,
-                child: InkWell(
-                  onTap: enabled ? () => _showPerson(person) : null,
-                  child: Column(children: [
-                    ClipOval(
-                      child: SizedBox(
-                        width: 58,
-                        height: 58,
-                        child: MediaImage(
-                          imageUrl: person.profileUrl,
-                          fit: BoxFit.cover,
-                          cacheWidth: 120,
-                        ),
+            return InkWell(
+              onTap:
+                  person.id.isEmpty ? null : () => _showPerson(person),
+              child: SizedBox(
+                width: 78,
+                child: Column(children: [
+                  ClipOval(
+                    child: SizedBox(
+                      width: 58,
+                      height: 58,
+                      child: MediaImage(
+                        imageUrl: person.profileUrl,
+                        fit: BoxFit.cover,
+                        cacheWidth: 120,
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    Text(person.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w700)),
-                    Text(person.character ?? person.originalName ?? '',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Colors.black54)),
-                  ]),
-                ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(person.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w700)),
+                  Text(person.character ?? person.originalName ?? '',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.black54)),
+                ]),
               ),
             );
           },
@@ -2158,12 +2090,946 @@ class _UnifiedMediaDetailScreenState
       runSpacing: 8,
       children: [
         for (final value in values)
-          TvFocusable(
-            onActivate: () {},
-            borderRadius: 999,
-            child: Chip(label: Text('${value.$1}  ${value.$2}')),
-          ),
+          Chip(label: Text('${value.$1}  ${value.$2}')),
       ],
+    );
+  }
+
+  /// ---- 迁移自旧 B/C/D：播放选项胶囊（内核/线路/音频/字幕/版本）----
+  /// A 风格呈现：横向滚动浅色描边胶囊（不复用旧的四等分布局），
+  /// 点击弹出对应选择器；无资源/线路时对应项禁用。放置于播放键下方。
+  Widget _buildPlaybackOptionCapsules() {
+    // 实时线路：build 已 watch currentServerProvider 驱动 rebuild，此处
+    // read 即拿到最新 activeLineIndex，切线路后胶囊/选择器立即更新。
+    final liveServer =
+        ref.read(currentServerProvider) ?? widget.server;
+    final resource = _resource;
+    final audios = resource?.audios ?? const [];
+    final subtitles = resource?.subtitles ?? const [];
+    final scheme = Theme.of(context).colorScheme;
+    final options = <({
+      IconData icon,
+      String label,
+      String value,
+      VoidCallback? onTap,
+    })>[
+      if (_resources.length > 1)
+        (
+          icon: Icons.video_file_rounded,
+          label: '版本',
+          value: resource?.name ?? '默认资源',
+          onTap: _showResourcePicker,
+        ),
+      (
+        icon: Icons.memory_rounded,
+        label: '内核',
+        value: _core == 'exoPlayer' ? 'ExoPlayer' : 'MPV',
+        onTap: _showCorePicker,
+      ),
+      (
+        icon: Icons.route_rounded,
+        label: '线路',
+        value: _lineLabel(liveServer),
+        onTap: liveServer.lines.isEmpty ? null : _showLinePicker,
+      ),
+      (
+        icon: Icons.audiotrack_rounded,
+        label: '音频',
+        value: audios.isEmpty
+            ? '自动'
+            : _trackLabel(audios[_audioIndex], _audioIndex, '音轨'),
+        onTap: audios.isEmpty ? null : _showAudioPicker,
+      ),
+      (
+        icon: Icons.subtitles_rounded,
+        label: '字幕',
+        value: _subtitleIndex < 0
+            ? (subtitles.isEmpty ? '自动' : '关闭')
+            : _trackLabel(subtitles[_subtitleIndex], _subtitleIndex, '字幕'),
+        onTap: subtitles.isEmpty ? null : _showSubtitlePicker,
+      ),
+    ];
+    return SizedBox(
+      height: 40,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: options.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, index) {
+          final option = options[index];
+          return Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: option.onTap,
+              borderRadius: BorderRadius.circular(999),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                      color: scheme.outlineVariant.withValues(alpha: 0.5)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(option.icon, size: 14,
+                        color: scheme.onSurfaceVariant),
+                    const SizedBox(width: 4),
+                    Text(
+                      option.label,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(width: 3),
+                    Flexible(
+                      child: Text(
+                        option.value,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: scheme.primary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// ---- 迁移自旧 B/C/D：媒体信息分类栏（视频/音频/字幕流信息）----
+  /// A 风格呈现：圆角 12 卡片 + 字段标签化（标签胶囊），横滑分组。
+  Widget _buildStreamInfoCards() {
+    final resource = _resource;
+    if (resource == null) {
+      return const SizedBox(
+          height: 80, child: Center(child: Text('暂无媒体流信息')));
+    }
+    String value(dynamic item) => item == null ? '' : '$item';
+    final cards = <Widget>[
+      if (resource.video != null)
+        _streamInfoCard('视频', Icons.videocam_rounded, [
+          ('编码', _videoDisplay(resource.video!)),
+          ('封装', value(resource.video!['container'])),
+          ('分辨率', _resolution(resource.video!)),
+          ('SAR', value(resource.video!['sample_aspect_ratio'])),
+          ('DAR', value(
+              resource.video!['aspect_ratio'] ?? _aspectRatio(resource.video!))),
+          ('帧率', _frameRate(resource.video!)),
+          ('码率', _bitrate(resource.video!['bitrate'])),
+          ('像素', value(resource.video!['pixel_format'])),
+          ('位深', resource.video!['bit_depth'] == null
+              ? ''
+              : '${resource.video!['bit_depth']} bit'),
+          ('色彩范围', value(resource.video!['color_range'])),
+          ('色彩空间', value(resource.video!['color_space'])),
+          ('色彩矩阵', value(resource.video!['color_matrix'])),
+          ('色域/传输', value(resource.video!['color_transfer'])),
+          ('HDR', value(resource.video!['video_range_type'])),
+          ('GOP', value(resource.video!['gop_size'])),
+          ('时间基', value(resource.video!['time_base'])),
+        ]),
+      for (var i = 0; i < resource.audios.length; i++)
+        _streamInfoCard('音频 ${i + 1}', Icons.audiotrack_rounded, [
+          ('编码', value(resource.audios[i]['codec_name'])),
+          ('语言', value(resource.audios[i]['language'])),
+          ('采样率', resource.audios[i]['sample_rate'] == null
+              ? ''
+              : '${resource.audios[i]['sample_rate']} Hz'),
+          ('位深', resource.audios[i]['bit_depth'] == null
+              ? ''
+              : '${resource.audios[i]['bit_depth']} bit'),
+          ('声道', value(resource.audios[i]['channel_layout'] ??
+              resource.audios[i]['channels'])),
+          ('码率', _bitrate(resource.audios[i]['bitrate'])),
+        ]),
+      for (var i = 0; i < resource.subtitles.length; i++)
+        _streamInfoCard('字幕 ${i + 1}', Icons.subtitles_rounded, [
+          ('编码', value(resource.subtitles[i]['codec_name'])),
+          ('语言', value(resource.subtitles[i]['language'])),
+          ('标题', value(resource.subtitles[i]['title'])),
+          ('外挂', resource.subtitles[i]['is_external'] == true ? '是' : '否'),
+        ]),
+    ];
+    if (cards.isEmpty) {
+      return const SizedBox(
+          height: 80, child: Center(child: Text('暂无媒体流信息')));
+    }
+    return SizedBox(
+      height: 300,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: cards.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (_, index) => cards[index],
+      ),
+    );
+  }
+
+  /// A 风格流信息卡片：圆角 12 卡片 + 标题行 + 字段标签 Wrap。
+  Widget _streamInfoCard(
+      String title, IconData icon, List<(String, String)> rows) {
+    final visible =
+        rows.where((row) => row.$2.isNotEmpty).toList();
+    final scheme = Theme.of(context).colorScheme;
+    Widget tag(String text) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+                color: scheme.outlineVariant.withValues(alpha: 0.4)),
+          ),
+          child: Text(text,
+              style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onSurfaceVariant)),
+        );
+    return SizedBox(
+      width: 240,
+      child: Card(
+        margin: EdgeInsets.zero,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12)),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Icon(icon, size: 20),
+                const SizedBox(width: 8),
+                Text(title,
+                    style: const TextStyle(fontWeight: FontWeight.w800)),
+              ]),
+              const SizedBox(height: 10),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final row in visible) tag('${row.$1} ${row.$2}'),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// ---- 迁移自旧 B/C/D：文件信息卡（文件名/路径/大小）----
+  /// A 风格呈现：圆角 12 卡片。
+  Widget _buildFileInfoCard(UnifiedMediaResource resource) => Card(
+        margin: EdgeInsets.zero,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(children: [
+                Icon(Icons.folder_open_rounded, size: 20),
+                SizedBox(width: 8),
+                Text('视频文件',
+                    style: TextStyle(fontWeight: FontWeight.w800)),
+              ]),
+              const SizedBox(height: 10),
+              SelectableText(resource.name),
+              if (resource.path?.isNotEmpty == true) ...[
+                const SizedBox(height: 8),
+                SelectableText(resource.path!,
+                    style: Theme.of(context).textTheme.bodySmall),
+              ],
+              if ((resource.size ?? 0) > 0) ...[
+                const SizedBox(height: 8),
+                Text(formatSourceFileSize(resource.size!)),
+              ],
+            ],
+          ),
+        ),
+      );
+
+  Widget _sectionTitle(String title, {Widget? trailing}) => Row(children: [
+        Text(title, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900)),
+        if (trailing != null) trailing,
+      ]);
+
+  String _resolution(Map<String, dynamic> stream) {
+    final width = (stream['width'] as num?)?.toInt() ?? 0;
+    final height = (stream['height'] as num?)?.toInt() ?? 0;
+    return width > 0 && height > 0 ? '${width}×$height' : '';
+  }
+
+  String _bitrate(dynamic value) {
+    final bitrate = value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+    return bitrate <= 0 ? '' : '${(bitrate / 1000000).toStringAsFixed(1)} Mbps';
+  }
+
+  String _videoDisplay(Map<String, dynamic> stream) {
+    final codec = stream['codec_name']?.toString().trim().toUpperCase() ?? '';
+    final profile = stream['profile']?.toString().trim() ?? '';
+    final parts = <String>[codec, profile.toUpperCase()].where((s) => s.isNotEmpty).toList();
+    return parts.isEmpty ? '-' : parts.join(' / ');
+  }
+
+  String _trackLabel(Map<String, dynamic> track, int index, String fallback) {
+    final title = track['title']?.toString().trim() ?? '';
+    final language = track['language']?.toString().trim() ?? '';
+    final codec = track['codec_name']?.toString().trim().toUpperCase() ?? '';
+    if (title.isNotEmpty) return title;
+    final parts = [language, codec].where((part) => part.isNotEmpty).toList();
+    return parts.isEmpty ? '$fallback ${index + 1}' : parts.join(' · ');
+  }
+
+  String _aspectRatio(Map<String, dynamic> stream) {
+    final width = (stream['width'] as num?)?.toInt() ?? 0;
+    final height = (stream['height'] as num?)?.toInt() ?? 0;
+    if (width <= 0 || height <= 0) return '';
+    final ratio = width / height;
+    if ((ratio - 16 / 9).abs() < 0.02) return '16:9';
+    if ((ratio - 4 / 3).abs() < 0.02) return '4:3';
+    if ((ratio - 21 / 9).abs() < 0.02) return '21:9';
+    if ((ratio - 2.35).abs() < 0.05) return '2.35:1';
+    if ((ratio - 1.85).abs() < 0.05) return '1.85:1';
+    return ratio.toStringAsFixed(2);
+  }
+
+  String _frameRate(Map<String, dynamic> stream) {
+    final rate = (stream['real_frame_rate'] ?? stream['average_frame_rate']);
+    if (rate is! num || rate <= 0) return '';
+    final value = rate.toDouble();
+    if ((value - 23976 / 1000).abs() < 0.001) return '23.976 fps';
+    if ((value - 24000 / 1000).abs() < 0.001) return '24 fps';
+    if ((value - 25000 / 1000).abs() < 0.001) return '25 fps';
+    if ((value - 30000 / 1000).abs() < 0.001) return '30 fps';
+    if ((value - 48000 / 1000).abs() < 0.001) return '48 fps';
+    if ((value - 60000 / 1000).abs() < 0.001) return '60 fps';
+    return '${value.toStringAsFixed(2)} fps';
+  }
+
+  String _lineLabel(ServerConfig server) {
+    if (server.lines.isEmpty) return '默认线路';
+    final index = server.activeLineIndex.clamp(0, server.lines.length - 1);
+    return server.lines[index].name;
+  }
+
+  void _showPicker({required List<Widget> children}) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => SafeArea(
+        child: ListView(shrinkWrap: true, children: children),
+      ),
+    );
+  }
+
+  void _showLinePicker() {
+    final server =
+        ref.read(currentServerProvider) ?? widget.server;
+    final lines = server.lines;
+    _showPicker(children: [
+      for (var index = 0; index < lines.length; index++)
+        RadioListTile<int>(
+          value: index,
+          groupValue: server.activeLineIndex,
+          title: Text(lines[index].name),
+          subtitle: Text(lines[index].url,
+              maxLines: 1, overflow: TextOverflow.ellipsis),
+          onChanged: (value) {
+            if (value == null) return;
+            ref
+                .read(serverListProvider.notifier)
+                .setActiveLine(server.id, value);
+            final updated = ref
+                .read(serverListProvider)
+                .firstWhere((item) => item.id == server.id);
+            // 同步 currentServerProvider：详情页 build watch 到变化立即刷新
+            // 线路胶囊；播放器/跨服检索等公共链路同源读取，切换即时生效。
+            ref.read(currentServerProvider.notifier).state = updated;
+            Navigator.pop(context);
+          },
+        ),
+    ]);
+  }
+
+  void _showResourcePicker() => _showPicker(
+        children: [
+          for (var index = 0; index < _resources.length; index++)
+            RadioListTile<int>(
+              value: index,
+              groupValue: _resourceIndex,
+              title: Text(_resources[index].name),
+              subtitle: Text(_resources[index].path ?? ''),
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() {
+                  _resourceIndex = value;
+                  _audioIndex = 0;
+                  _audioTouched = false;
+                  _subtitleIndex = -1;
+                  _normalizeTracks();
+                });
+                Navigator.pop(context);
+              },
+            ),
+        ],
+      );
+
+  void _showCorePicker() => _showPicker(children: [
+        if (_resourceHdrOrDv)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 6, 16, 10),
+            child: Text(
+              '检测到 HDR/DV 片源，已推荐 MPV 内核渲染（DV 需软解 + gpu-next 才不偏色）',
+              style: TextStyle(
+                  fontSize: 12, color: Color(0xFFE8930C), height: 1.4),
+            ),
+          ),
+        RadioListTile<String>(
+          value: 'exoPlayer',
+          groupValue: _core,
+          title: const Text('ExoPlayer'),
+          subtitle: const Text('Android Media3，轻量硬解'),
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() {
+              _core = value;
+              _coreTouched = true;
+            });
+            Navigator.pop(context);
+          },
+        ),
+        RadioListTile<String>(
+          value: 'nativeMpv',
+          groupValue: _core,
+          title: const Text('MPV 原生'),
+          subtitle: const Text('全格式、多音轨与高级字幕'),
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() {
+              _core = value;
+              _coreTouched = true;
+            });
+            Navigator.pop(context);
+          },
+        ),
+      ]);
+
+  void _showAudioPicker() => _showPicker(
+        children: [
+          for (final index in _sortedAudioIndexes())
+            RadioListTile<int>(
+              value: index,
+              groupValue: _audioIndex,
+              title: Text(_trackLabel(_resource!.audios[index], index, '音轨')),
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() {
+                  _audioIndex = value;
+                  _audioTouched = true;
+                });
+                Navigator.pop(context);
+              },
+            ),
+        ],
+      );
+
+  void _showSubtitlePicker() => _showPicker(children: [
+        RadioListTile<int>(
+          value: -1,
+          groupValue: _subtitleIndex,
+          title: const Text('关闭字幕'),
+          onChanged: (_) {
+            setState(() => _subtitleIndex = -1);
+            Navigator.pop(context);
+          },
+        ),
+        for (var index = 0; index < _resource!.subtitles.length; index++)
+          RadioListTile<int>(
+            value: index,
+            groupValue: _subtitleIndex,
+            title: Text(_trackLabel(_resource!.subtitles[index], index, '字幕')),
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() => _subtitleIndex = value);
+              Navigator.pop(context);
+            },
+          ),
+      ]);
+
+  void _showImage(List<String> images, int initial) {
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black,
+      builder: (_) => Dialog.fullscreen(
+        backgroundColor: Colors.black,
+        child: Stack(children: [
+          PageView.builder(
+            controller: PageController(initialPage: initial),
+            itemCount: images.length,
+            itemBuilder: (_, index) => InteractiveViewer(
+              minScale: 1,
+              maxScale: 5,
+              child: Center(
+                child: MediaImage(imageUrl: images[index], fit: BoxFit.contain),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: IconButton(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.close_rounded, color: Colors.white, size: 30),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+class _UnifiedServerStats extends ConsumerWidget {
+  const _UnifiedServerStats({required this.current});
+  final ServerConfig current;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final stats = ref.watch(serverCardStatsProvider(current.id));
+    Widget line(IconData icon, String label, int? value) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 13),
+            const SizedBox(width: 3),
+            Text('$label ${value ?? '—'}',
+                style:
+                    const TextStyle(fontSize: 10, fontWeight: FontWeight.w600)),
+          ],
+        );
+    return Padding(
+      padding: const EdgeInsets.only(left: 8),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          stats.when(
+            data: (value) => line(Icons.movie_outlined, '电影', value.movieCount),
+            loading: () => line(Icons.movie_outlined, '电影', null),
+            error: (_, __) => line(Icons.movie_outlined, '电影', null),
+          ),
+          stats.when(
+            data: (value) => line(Icons.tv_outlined, '电视剧', value.seriesCount),
+            loading: () => line(Icons.tv_outlined, '电视剧', null),
+            error: (_, __) => line(Icons.tv_outlined, '电视剧', null),
+          ),
+          stats.when(
+            data: (value) =>
+                line(Icons.video_library_outlined, '媒体', value.episodeCount),
+            loading: () => line(Icons.video_library_outlined, '媒体', null),
+            error: (_, __) => line(Icons.video_library_outlined, '媒体', null),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ServerLineAction extends ConsumerWidget {
+  const _ServerLineAction({required this.server, required this.onChanged});
+  final ServerConfig server;
+  final Future<void> Function() onChanged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (server.lines.isEmpty) return const SizedBox.shrink();
+    return PopupMenuButton<int>(
+      tooltip: '切换线路',
+      icon: const Icon(Icons.route_rounded),
+      onSelected: (index) async {
+        ref.read(serverListProvider.notifier).setActiveLine(server.id, index);
+        final updated = ref.read(serverListProvider).firstWhere((item) => item.id == server.id);
+        ref.read(currentServerProvider.notifier).state = updated;
+        await onChanged();
+      },
+      itemBuilder: (_) => [
+        for (var i = 0; i < server.lines.length; i++)
+          CheckedPopupMenuItem<int>(value: i, checked: i == server.activeLineIndex, child: Text(server.lines[i].name)),
+      ],
+    );
+  }
+}
+
+class _UnifiedServerSwitcher extends ConsumerWidget {
+  const _UnifiedServerSwitcher({required this.current});
+  final ServerConfig current;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final servers = ref
+        .watch(serverListProvider)
+        .where((server) =>
+            // 隐藏的服务器不显示在顶部切换器里（与列表/聚合搜索的
+            // 可见性规则一致；此处恒过滤，不随三击 reveal 显示）。
+            server.hidden != true &&
+            (server.sourceKind == SourceKind.emby ||
+                server.sourceKind == SourceKind.feiniu))
+        .toList();
+    final scheme = Theme.of(context).colorScheme;
+    return PopupMenuButton<String>(
+      tooltip: '切换服务器',
+      offset: const Offset(0, -56),
+      position: PopupMenuPosition.under,
+      color: scheme.surfaceContainerHighest,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 6,
+      onSelected: (serverId) {
+        if (serverId == '__manage__') {
+          context.go('/servers');
+          return;
+        }
+        final server = servers.where((item) => item.id == serverId).firstOrNull;
+        if (server == null || server.id == current.id) return;
+        ref.read(currentServerProvider.notifier).state = server;
+        ref.read(authStateProvider.notifier).state = AuthState.authenticated;
+        context.go('/home');
+      },
+      itemBuilder: (_) => [
+        _ServerListMenuEntry(servers: servers, currentId: current.id),
+      ],
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 48, maxWidth: 220),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          // 影视源胶囊同款：绿色·指示 + 加粗文字 + 下箭头。
+          Container(
+            width: 8,
+            height: 8,
+            decoration: const BoxDecoration(
+              color: Color(0xFF34C759),
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(current.name,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontWeight: FontWeight.w800, fontSize: 16)),
+          ),
+          const SizedBox(width: 2),
+          const Icon(Icons.keyboard_arrow_down_rounded, size: 20),
+        ]),
+      ),
+    );
+  }
+}
+
+/// 服务器选择菜单项：最多显示 10 个服务器（46px×10），超出上下滚动；
+/// 选中项绿色勾选（影视源胶囊同款 0xFF34C759）；底部保留「管理服务器」入口。
+class _ServerListMenuEntry extends PopupMenuEntry<String> {
+  const _ServerListMenuEntry({required this.servers, required this.currentId});
+  final List<ServerConfig> servers;
+  final String currentId;
+
+  @override
+  double get height =>
+      (46.0 * servers.length).clamp(46.0, 460.0).toDouble() + 57;
+
+  @override
+  bool represents(String? value) => false;
+
+  @override
+  State<PopupMenuEntry<String>> createState() => _ServerListMenuEntryState();
+}
+
+class _ServerListMenuEntryState extends State<_ServerListMenuEntry> {
+  @override
+  Widget build(BuildContext context) {
+    final servers = widget.servers;
+    final currentId = widget.currentId;
+    final scheme = Theme.of(context).colorScheme;
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 460),
+        child: ListView(
+          shrinkWrap: true,
+          padding: EdgeInsets.zero,
+          children: [
+            for (final server in servers)
+              InkWell(
+                onTap: () => Navigator.pop(context, server.id),
+                child: SizedBox(
+                  height: 46,
+                  child: Row(children: [
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Text(server.name,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: server.id == currentId
+                                ? FontWeight.w800
+                                : FontWeight.w600,
+                            color: scheme.onSurface,
+                          )),
+                    ),
+                    if (server.id == currentId)
+                      const Icon(Icons.check_rounded,
+                          size: 20, color: Color(0xFF34C759)),
+                    const SizedBox(width: 14),
+                  ]),
+                ),
+              ),
+          ],
+        ),
+      ),
+      const Divider(height: 1),
+      InkWell(
+        onTap: () => Navigator.pop(context, '__manage__'),
+        child: SizedBox(
+          height: 48,
+          child: Row(children: [
+            const SizedBox(width: 14),
+            Icon(Icons.settings_rounded, size: 20, color: scheme.onSurface),
+            const SizedBox(width: 10),
+            Text('管理服务器',
+                style: TextStyle(
+                    fontSize: 15, color: scheme.onSurface)),
+          ]),
+        ),
+      ),
+    ]);
+  }
+}
+
+class _ContinueSection extends StatelessWidget {
+  const _ContinueSection({required this.items, required this.onTap, required this.onPlay});
+  final List<UnifiedContinueItem> items;
+  final ValueChanged<UnifiedContinueItem> onTap;
+  final ValueChanged<UnifiedContinueItem> onPlay;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 18, 16, 10),
+            child: Text('继续观看',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w700)),
+          ),
+          SizedBox(
+            height: 166,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              itemCount: items.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              itemBuilder: (_, index) {
+                final item = items[index];
+                return SizedBox(
+                  width: 220,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () => onTap(item),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Stack(fit: StackFit.expand, children: [
+                              GestureDetector(
+                                onTap: () => onPlay(item),
+                                child: MediaImage(
+                                  imageUrl:
+                                      item.entry.backdropUrl?.isNotEmpty == true
+                                          ? item.entry.backdropUrl
+                                          : item.entry.posterUrl,
+                                  httpHeaders: item.entry.imageHeaders,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                              Center(
+                                child: GestureDetector(
+                                  onTap: () => onPlay(item),
+                                  child: const Icon(Icons.play_circle_fill_rounded,
+                                      color: Colors.white, size: 42),
+                                ),
+                              ),
+                              Positioned(
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                child: LinearProgressIndicator(
+                                  value: item.progress,
+                                  minHeight: 4,
+                                ),
+                              ),
+                            ]),
+                          ),
+                        ),
+                        const SizedBox(height: 7),
+                        Text(item.entry.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w600)),
+                        Text('已观看 ${(item.progress * 100).round()}%',
+                            style: Theme.of(context).textTheme.bodySmall),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      );
+}
+
+class _LibrarySection extends StatelessWidget {
+  const _LibrarySection({
+    required this.library,
+    required this.preview,
+    required this.onOpenLibrary,
+    required this.onOpenEntry,
+  });
+  final UnifiedMediaLibrary library;
+  final List<UnifiedMediaEntry>? preview;
+  final VoidCallback onOpenLibrary;
+  final ValueChanged<UnifiedMediaEntry> onOpenEntry;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 18, 8, 8),
+            child: Row(children: [
+              Expanded(
+                child: Text(library.name,
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.copyWith(fontWeight: FontWeight.w700)),
+              ),
+              TextButton(onPressed: onOpenLibrary, child: const Text('查看全部')),
+            ]),
+          ),
+          if (preview == null)
+            const SizedBox(
+                height: 190, child: Center(child: CircularProgressIndicator()))
+          else if (preview!.isEmpty)
+            const SizedBox(height: 80, child: Center(child: Text('暂无内容')))
+          else
+            SizedBox(
+              height: 220,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                itemCount: preview!.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemBuilder: (_, index) => SizedBox(
+                  width: 126,
+                  child: _UnifiedMediaCard(
+                    entry: preview![index],
+                    onTap: () => onOpenEntry(preview![index]),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      );
+}
+
+class _UnifiedMediaCard extends StatelessWidget {
+  const _UnifiedMediaCard({required this.entry, required this.onTap});
+  final UnifiedMediaEntry entry;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final source = entry.mediaItem?.mediaSources?.firstOrNull;
+    final video = source?.primaryVideoStream;
+    final labels = <String>[];
+    if (video?.isDolbyVision == true) {
+      labels.add('DV');
+    } else if ((video?.videoRange ?? '').toUpperCase().contains('HDR')) {
+      labels.add('HDR');
+    }
+    final codec = (video?.codec ?? video?.videoCodec ?? '').toLowerCase();
+    if (codec.contains('hevc') || codec.contains('265')) {
+      labels.add('265/HEVC');
+    } else if (codec.contains('264') || codec.contains('avc')) {
+      labels.add('264');
+    }
+    return TvFocusable(
+      onActivate: onTap,
+      borderRadius: 10,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Stack(fit: StackFit.expand, children: [
+                MediaImage(
+                  imageUrl: entry.posterUrl,
+                  httpHeaders: entry.imageHeaders,
+                  fit: BoxFit.cover,
+                ),
+                Positioned(
+                  left: 7,
+                  top: 7,
+                  child: SelectedRatingBadge(item: entry.ratingItem),
+                ),
+                if (labels.isNotEmpty)
+                  Positioned(
+                    right: 7,
+                    bottom: 7,
+                    child: Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.76),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(labels.join(' · '),
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+              ]),
+            ),
+          ),
+          const SizedBox(height: 7),
+          Text(entry.name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13, height: 1.25)),
+        ]),
+      ),
     );
   }
 }
