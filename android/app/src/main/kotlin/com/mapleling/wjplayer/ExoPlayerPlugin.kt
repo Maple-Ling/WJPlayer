@@ -530,46 +530,56 @@ class ExoPlayerPlugin(
             out["height"] = size.height
             out["frameRate"] = fmt?.frameRate ?: 0
             try {
-                val impl = exoPlayer as? androidx.media3.exoplayer.ExoPlayerImpl
-                if (impl != null) {
-                    val renderersField =
-                        androidx.media3.exoplayer.ExoPlayerImpl::class.java
-                            .getDeclaredField("renderers")
-                    renderersField.isAccessible = true
-                    val renderers = renderersField.get(impl) as Array<*>
-                    for (r in renderers) {
-                        if (r == null) continue
-                        val renderer = r as? androidx.media3.exoplayer.Renderer ?: continue
-                        if (renderer.trackType != C.TRACK_TYPE_VIDEO) continue
-                        // decoderName（MediaCodecRenderer 私有字段，反射向上找父类）
-                        var cls: Class<*>? = r.javaClass
-                        while (cls != null) {
-                            try {
-                                val df = cls.getDeclaredField("decoderName")
-                                df.isAccessible = true
-                                out["decoderName"] = df.get(r)?.toString()
-                                break
-                            } catch (_: NoSuchFieldException) {
-                                cls = cls.superclass
-                            }
+                // ExoPlayerImpl 是 package-private 类型，不能显式引用；
+                // 用运行时类反射读取 renderers 字段。
+                val renderersField = exoPlayer.javaClass
+                    .getDeclaredField("renderers")
+                renderersField.isAccessible = true
+                val renderers = renderersField.get(exoPlayer) as Array<*>
+                for (r in renderers) {
+                    if (r == null) continue
+                    // 只诊断视频渲染器（Renderer 为 public 接口，可安全引用）
+                    val renderer = r as? androidx.media3.exoplayer.Renderer
+                        ?: continue
+                    if (renderer.trackType != C.TRACK_TYPE_VIDEO) continue
+                    // decoderName（MediaCodecRenderer 私有字段，反射向上找父类）
+                    var cls: Class<*>? = r.javaClass
+                    while (cls != null) {
+                        try {
+                            val df = cls.getDeclaredField("decoderName")
+                            df.isAccessible = true
+                            out["decoderName"] = df.get(r)?.toString()
+                            break
+                        } catch (_: NoSuchFieldException) {
+                            cls = cls.superclass
                         }
-                        // DecoderCounters（MediaCodecRenderer 私有字段）
-                        var dcClass: Class<*>? = r.javaClass
-                        while (dcClass != null) {
-                            try {
-                                val cf = dcClass.getDeclaredField("decoderCounters")
-                                cf.isAccessible = true
-                                val dc = cf.get(r) as
-                                    androidx.media3.exoplayer.DecoderCounters
-                                out["droppedFrames"] = dc.droppedOutputFrames
-                                out["renderedFrames"] = dc.renderedOutputFrames
-                                break
-                            } catch (_: NoSuchFieldException) {
-                                dcClass = dcClass.superclass
-                            }
-                        }
-                        break
                     }
+                    // DecoderCounters（MediaCodecRenderer 私有字段）：
+                    // 字段名按 Media3 实际定义（droppedBufferCount /
+                    // renderedOutputBufferCount），读取失败静默跳过。
+                    var dcClass: Class<*>? = r.javaClass
+                    while (dcClass != null) {
+                        try {
+                            val cf = dcClass.getDeclaredField("decoderCounters")
+                            cf.isAccessible = true
+                            val dc = cf.get(r)
+                            if (dc != null) {
+                                val dropF = dc.javaClass.getDeclaredField("droppedBufferCount")
+                                dropF.isAccessible = true
+                                out["droppedFrames"] = dropF.getInt(dc)
+                                val renderF =
+                                    dc.javaClass.getDeclaredField("renderedOutputBufferCount")
+                                renderF.isAccessible = true
+                                out["renderedFrames"] = renderF.getInt(dc)
+                            }
+                            break
+                        } catch (_: NoSuchFieldException) {
+                            dcClass = dcClass.superclass
+                        } catch (_: Exception) {
+                            break
+                        }
+                    }
+                    break
                 }
             } catch (_: Exception) {
                 // 反射失败不影响播放，诊断字段缺失即可。
