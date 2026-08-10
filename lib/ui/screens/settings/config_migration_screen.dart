@@ -7,6 +7,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/providers/server_providers.dart';
 import '../../../core/services/config_transfer.dart';
 import '../../../core/utils/platform_utils.dart';
+import '../../widgets/common/tv_focus_widgets.dart';
 
 /// 配置迁移入口:本机出示二维码 / 扫码从其他设备导入。
 /// 用户点名的形态——移动端扫码、TV/PC 出码;这里三端共用(桌面同样是 Material 设置)。
@@ -33,7 +34,7 @@ class ConfigMigrationScreen extends ConsumerWidget {
             ),
           ),
           Card(
-            child: ListTile(
+            child: TvListTile(
               leading: const Icon(Icons.qr_code_2, color: Color(0xFF5B8DEF)),
               title: const Text('出示二维码'),
               subtitle: Text('把本机 $count 个服务器打包成二维码,供新设备扫描'),
@@ -50,7 +51,7 @@ class ConfigMigrationScreen extends ConsumerWidget {
           if (!isDesktopPlatform) ...[
             const SizedBox(height: 8),
             Card(
-              child: ListTile(
+              child: TvListTile(
                 leading:
                     const Icon(Icons.qr_code_scanner, color: Color(0xFF5B8DEF)),
                 title: const Text('扫码导入'),

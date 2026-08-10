@@ -30,10 +30,13 @@ class PlayerSettingsScreen extends ConsumerWidget {
           ? AppColors.lightBackground
           : AppColors.darkBackground,
       appBar: AppBar(title: const Text('播放器设置')),
-      body: ListView(
+      body: TvListArea(
+        id: 'settings_player',
+        onBoundary: (_) => Navigator.of(context).pop(),
+        child: body: ListView(
         padding: const EdgeInsets.only(bottom: 120),
         children: [
-          ListTile(
+          TvListTile(
             title: const Text('播放器内核'),
             subtitle: Text(switch (playerCore) {
               'mpv' => 'MPV (media_kit)',
@@ -44,7 +47,7 @@ class PlayerSettingsScreen extends ConsumerWidget {
           ),
 
           const Divider(),
-          ListTile(
+          TvListTile(
             leading: const Icon(Icons.touch_app_outlined),
             title: const Text('交互设置'),
             subtitle: const Text('手势交互区、快进步长、双击与长按'),
@@ -69,7 +72,7 @@ class PlayerSettingsScreen extends ConsumerWidget {
               ),
             ),
           ),
-          ListTile(
+          TvListTile(
             title: const Text('默认播放速度'),
             subtitle: Text('${playbackSpeed}x'),
             onTap: () => _showSpeedSelector(context, ref),
@@ -105,14 +108,14 @@ class PlayerSettingsScreen extends ConsumerWidget {
                 ref.read(strmDirectPlayProvider.notifier).state = value,
           ),
           /*
-          ListTile(
+          TvListTile(
             title: const Text('宸茬湅鍒ゅ畾闃堝€?),
             subtitle: Text('$watchedThreshold%'),
             onTap: () => _showWatchedThresholdSelector(context, ref),
           ),
 
           */
-          ListTile(
+          TvListTile(
             title: const Text('已看判定阈值'),
             subtitle: Text('$watchedThreshold%'),
             onTap: () => _showWatchedThresholdSelector(context, ref),
@@ -137,7 +140,7 @@ class PlayerSettingsScreen extends ConsumerWidget {
                 ref.read(subtitleBackgroundProvider.notifier).state = value,
           ),
           if (isDesktopPlatform)
-            ListTile(
+            TvListTile(
               title: const Text('图形字幕渲染模式 (PGS/SUP)'),
               subtitle: Text(_pgsBlendLabel(pgsBlendMode)),
               trailing: DropdownButton<String>(
@@ -266,7 +269,7 @@ class PlayerSettingsScreen extends ConsumerWidget {
                 ),
               ),
             ),
-            ListTile(
+            TvListTile(
               title: const Text('外部 MPV 路径'),
               subtitle: Text(
                 externalMpvPath.isEmpty ? '点击选择外部 MPV 可执行文件' : externalMpvPath,
@@ -296,7 +299,8 @@ class PlayerSettingsScreen extends ConsumerWidget {
                   ref.read(exoLibassProvider.notifier).state = value,
             ),
         ],
-      ),
+      ),),
+
     );
   }
 

@@ -28,11 +28,14 @@ class InteractionSettingsScreen extends ConsumerWidget {
           ? AppColors.lightBackground
           : AppColors.darkBackground,
       appBar: AppBar(title: const Text('交互设置')),
-      body: ListView(
+      body: TvListArea(
+        id: 'settings_interaction',
+        onBoundary: (_) => Navigator.of(context).pop(),
+        child: body: ListView(
         padding: const EdgeInsets.only(bottom: 80),
         children: [
           _sectionHeader('手势交互区'),
-          ListTile(
+          TvListTile(
             leading: const Icon(Icons.swipe_vertical),
             title: const Text('左半屏竖向滑动'),
             subtitle: Text(_verticalLabels[leftAction] ?? '调节亮度'),
@@ -43,7 +46,7 @@ class InteractionSettingsScreen extends ConsumerWidget {
               provider: leftVerticalGestureProvider,
             ),
           ),
-          ListTile(
+          TvListTile(
             leading: const Icon(Icons.swipe_vertical),
             title: const Text('右半屏竖向滑动'),
             subtitle: Text(_verticalLabels[rightAction] ?? '调节音量'),
@@ -72,20 +75,21 @@ class InteractionSettingsScreen extends ConsumerWidget {
           ),
           const Divider(),
           _sectionHeader('快进与倍速'),
-          ListTile(
+          TvListTile(
             leading: const Icon(Icons.fast_forward),
             title: const Text('快进步长'),
             subtitle: Text('$skipStep秒'),
             onTap: () => _showSkipStepSelector(context, ref),
           ),
-          ListTile(
+          TvListTile(
             leading: const Icon(Icons.speed),
             title: const Text('长按快进倍速'),
             subtitle: Text('${longPressSpeed}x'),
             onTap: () => _showLongPressSpeedSelector(context, ref),
           ),
         ],
-      ),
+      ),),
+
     );
   }
 

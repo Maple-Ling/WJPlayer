@@ -15,11 +15,14 @@ class TranslationSettingsScreen extends ConsumerWidget {
           ? AppColors.lightBackground
           : AppColors.darkBackground,
       appBar: AppBar(title: const Text('字幕翻译')),
-      body: ListView(
+      body: TvListArea(
+        id: 'settings_translation',
+        onBoundary: (_) => Navigator.of(context).pop(),
+        child: body: ListView(
         padding: const EdgeInsets.only(bottom: 120),
         children: [
           const _SectionHeader('翻译引擎'),
-          ListTile(
+          TvListTile(
             title: const Text('引擎模式'),
             subtitle: Text(kind.label),
             trailing: DropdownButton<TranslationEngineKind>(
@@ -39,7 +42,7 @@ class TranslationSettingsScreen extends ConsumerWidget {
           const Divider(height: 1),
           _EngineConfigForm(kind: kind),
           const _SectionHeader('翻译输出'),
-          ListTile(
+          TvListTile(
             title: const Text('目标语言'),
             trailing: DropdownButton<String>(
               value: target == 'cht' ? 'cht' : 'zh',
@@ -55,7 +58,7 @@ class TranslationSettingsScreen extends ConsumerWidget {
               ],
             ),
           ),
-          ListTile(
+          TvListTile(
             title: const Text('双语排版'),
             subtitle: Text(_layoutLabel(layout)),
             trailing: DropdownButton<BilingualLayout>(
@@ -83,7 +86,8 @@ class TranslationSettingsScreen extends ConsumerWidget {
             const _WhisperSection(),
           ],
         ],
-      ),
+      ),),
+
     );
   }
 
@@ -589,7 +593,7 @@ class _WhisperModelTile extends StatelessWidget {
       future: manager.isDownloaded(model),
       builder: (context, snap) {
         final has = snap.data ?? false;
-        return ListTile(
+        return TvListTile(
           leading: Icon(
             selected ? Icons.radio_button_checked : Icons.radio_button_off,
             color: selected ? Theme.of(context).colorScheme.primary : null,

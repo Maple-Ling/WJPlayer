@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:tdesign_flutter/tdesign_flutter.dart';
 
+import '../utils/platform_utils.dart';
+import '../widgets/common/tv_focusable.dart';
+
 /// TDesign 风格的「开关行」，作为 Material [SwitchListTile] 的 drop-in 替代：
 /// 字段名与 SwitchListTile 对齐（secondary/title/subtitle/value/onChanged），
 /// 三端统一开关观感时，调用处只需把 `SwitchListTile` 改名为 `TdSwitchTile`。
@@ -87,8 +90,15 @@ class TdSwitchTile extends StatelessWidget {
       ),
     );
 
-    return onChanged == null
-        ? row
-        : InkWell(onTap: () => onChanged!(!value), child: row);
+    if (onChanged == null) return row;
+    // TV：整行包 TvFocusable（遥控遍历 + OK 切换），手机端 InkWell 原样。
+    if (isTvPlatform) {
+      return TvFocusable(
+        onActivate: () => onChanged!(!value),
+        borderRadius: 12,
+        child: row,
+      );
+    }
+    return InkWell(onTap: () => onChanged!(!value), child: row);
   }
 }

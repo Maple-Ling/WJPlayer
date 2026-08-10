@@ -19,7 +19,10 @@ class AggregationSettingsScreen extends ConsumerWidget {
           ? AppColors.lightBackground
           : AppColors.darkBackground,
       appBar: AppBar(title: const Text('跨服聚合')),
-      body: ListView(
+      body: TvListArea(
+        id: 'settings_aggregation',
+        onBoundary: (_) => Navigator.of(context).pop(),
+        child: body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           const Padding(
@@ -32,7 +35,7 @@ class AggregationSettingsScreen extends ConsumerWidget {
           ),
           if (servers.isEmpty)
             const Card(
-              child: ListTile(
+              child: TvListTile(
                 leading: Icon(Icons.dns_outlined),
                 title: Text('暂无 Emby 服务器'),
                 subtitle: Text('添加并登录 Emby 服务器后可在此设置'),
@@ -59,7 +62,8 @@ class AggregationSettingsScreen extends ConsumerWidget {
             ),
           ),
         ],
-      ),
+      ),),
+
     );
   }
 }

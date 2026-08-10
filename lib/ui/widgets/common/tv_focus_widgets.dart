@@ -37,6 +37,7 @@ import 'package:flutter/widgets.dart'
 import '../../../core/services/tv_focus_manager.dart';
 import '../../../core/services/tv_key_channel.dart';
 import '../../../core/utils/platform_utils.dart';
+import 'media_widgets.dart';
 import 'tv_focusable.dart';
 
 // ─── 焦点区域容器 ───
@@ -129,10 +130,26 @@ class _TvFocusAreaState extends State<TvFocusArea> {
   @override
   void didUpdateWidget(covariant TvFocusArea oldWidget) {
     super.didUpdateWidget(oldWidget);
-    assert(
-      oldWidget.id == widget.id && oldWidget.count == widget.count,
-      'TvFocusArea 的 id/count 变化时必须更换 Key，以便安全重建 FocusNode。',
+    // 手机端不注册焦点区域（initState 已跳过），重建逻辑必须同样跳过，
+    // 否则会在手机端误注册/泄漏区域并触发重复注册 assert。
+    if (!isTvPlatform) return;
+    if (oldWidget.id == widget.id && oldWidget.count == widget.count) return;
+    // count 变化（数据刷新/筛选变化）时安全重建区域：旧节点释放、按新
+    // count 重新注册并恢复激活。此前仅 assert 会导致区域节点数与新布局
+    // 不一致 → indexOf 越界/错位 → 方向键乱跳（首页分区刷新/详情页季切换）。
+    final manager = TvFocusManager.instance;
+    manager.unregisterArea(oldWidget.id);
+    manager.registerArea(
+      FocusAreaConfig(
+        id: widget.id,
+        count: widget.count,
+        traversal: widget.traversal,
+        onFocusChanged: widget.onFocusChanged,
+        onLongPressAt: widget.onLongPressAt,
+        onBoundary: widget.onBoundary,
+      ),
     );
+    _autoActivate();
   }
 
   @override
@@ -416,8 +433,224 @@ class _TvFocusCardState extends State<TvFocusCard> {
   }
 }
 
+// ─── 通用 TV 可聚焦列表项 ───
+
+/// TV 可聚焦 ListTile：遥控方向键遍历 + OK 激活（描边高亮），手机端原样
+/// ListTile（零副作用）。用于设置子页/弹层等纯 ListTile 列表的 TV 化——
+/// Flutter 在 Android TV 上默认把触摸组件（ListTile/InkWell）设为不可请求
+/// 焦点，导致遥控遍历跳过全部列表项。
+class TvListTile extends StatelessWidget {
+  const TvListTile({
+    super.key,
+    this.leading,
+    this.title,
+    this.subtitle,
+    this.trailing,
+    this.onTap,
+    this.enabled = true,
+    this.dense = false,
+    this.selected = false,
+    this.contentPadding,
+    this.borderRadius = 10,
+    this.autofocus = false,
+  });
+
+  final Widget? leading;
+  final Widget? title;
+  final Widget? subtitle;
+  final Widget? trailing;
+  final VoidCallback? onTap;
+  final bool enabled;
+  final bool dense;
+  final bool selected;
+  final EdgeInsetsGeometry? contentPadding;
+  final double borderRadius;
+  final bool autofocus;
+
+  @override
+  Widget build(BuildContext context) {
+    final tile = ListTile(
+      leading: leading,
+      title: title,
+      subtitle: subtitle,
+      trailing: trailing,
+      onTap: onTap,
+      enabled: enabled,
+      dense: dense,
+      selected: selected,
+      contentPadding: contentPadding,
+      // TV 上不显示按压水波纹（由描边指示），手机端保留。
+      splashColor: isTvPlatform ? Colors.transparent : null,
+    );
+    if (!isTvPlatform || onTap == null) return tile;
+    return TvFocusable(
+      onActivate: onTap,
+      borderRadius: borderRadius,
+      autofocus: autofocus,
+      // 处于 TvListArea 子树内时自动分配区域节点（确定性遍历）；
+      // 否则自建节点（弹层内走默认遍历）。
+      focusNode: TvListArea.takeNode(context),
+      child: tile,
+    );
+  }
+}
+
+// ─── 线性可聚焦列表容器 ───
+
+/// 为子树内按出现顺序的 [TvListTile]/[TvListArea.takeNode] 自动分配区域
+/// 节点（免手动编号），提供线性遍历 + 顶部边界回调。
+/// 仅 TV 生效；手机端零副作用。count 由子级 build 自动统计并重建。
+class TvListArea extends StatefulWidget {
+  const TvListArea({
+    super.key,
+    required this.id,
+    required this.child,
+    this.onBoundary,
+  });
+
+  /// 区域 id（同一页面唯一）。
+  final String id;
+
+  final Widget child;
+
+  /// 遍历到达顶部边界（traversal 返回 -1）时回调（底部自然停留）。
+  final ValueChanged<DPad>? onBoundary;
+
+  /// 子级取下一个焦点节点（无 TvListArea 环境返回 null → 组件自建节点）。
+  static FocusNode? takeNode(BuildContext context) {
+    final scope =
+        context.dependOnInheritedWidgetOfExactType<_TvListAreaScope>();
+    if (scope == null) return null;
+    final idx = scope.counter.take();
+    final area = TvFocusManager.instance.getArea(scope.areaId);
+    if (area == null || idx >= area.nodes.length) return null;
+    return area.nodes[idx];
+  }
+
+  @override
+  State<TvListArea> createState() => _TvListAreaState();
+}
+
+class _TvListAreaCounter {
+  int next = 0;
+  int maxUsed = -1;
+}
+
+class _TvListAreaScope extends InheritedWidget {
+  const _TvListAreaScope({
+    required this.areaId,
+    required this.counter,
+    required super.child,
+  });
+
+  final String areaId;
+  final _TvListAreaCounter counter;
+
+  @override
+  bool updateShouldNotify(_TvListAreaScope oldWidget) => false;
+}
+
+class _TvListAreaState extends State<TvListArea> {
+  final _TvListAreaCounter _counter = _TvListAreaCounter();
+  late int _count = 1;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isTvPlatform) return widget.child;
+    _counter.next = 0;
+    _counter.maxUsed = -1;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !isTvPlatform) return;
+      final needed = _counter.maxUsed + 1;
+      if (needed != _count) setState(() => _count = needed);
+    });
+    return _TvListAreaScope(
+      areaId: widget.id,
+      counter: _counter,
+      child: TvFocusArea(
+        id: widget.id,
+        count: _count,
+        traversal: TraversalPolicies.linear(_count),
+        onBoundary: widget.onBoundary,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
 // ─── 根节点键盘监听 ───
 
+/// TV 全屏剧照浏览：左右键翻页、OK/Enter/返回关闭。
+/// 手机端不使用（详情页保留 PageView 滑动/双指缩放）。
+class TvImageGallery extends StatefulWidget {
+  const TvImageGallery({super.key, required this.images, required this.initial});
+  final List<String> images;
+  final int initial;
+
+  @override
+  State<TvImageGallery> createState() => _TvImageGalleryState();
+}
+
+class _TvImageGalleryState extends State<TvImageGallery> {
+  late int _index = widget.initial;
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      autofocus: true,
+      onKeyEvent: (node, event) {
+        if (event is! KeyDownEvent || event is KeyRepeatEvent) {
+          return KeyEventResult.ignored;
+        }
+        final key = event.logicalKey;
+        if (key == LogicalKeyboardKey.arrowRight &&
+            _index < widget.images.length - 1) {
+          setState(() => _index++);
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.arrowLeft && _index > 0) {
+          setState(() => _index--);
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.enter ||
+            key == LogicalKeyboardKey.select) {
+          Navigator.of(context).pop();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: Center(
+              child: MediaImage(
+                  imageUrl: widget.images[_index], fit: BoxFit.contain),
+            ),
+          ),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Text(
+                    '${_index + 1}/${widget.images.length}',
+                    style: const TextStyle(color: Colors.white70, fontSize: 14),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded,
+                        color: Colors.white, size: 30),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 /// 包裹在 MaterialApp 的外层，作为 Flutter 侧按键事件的唯一入口。
 /// 处理方向键 → TvFocusManager.moveDPad，以及全局按键处理器。
 ///

@@ -73,6 +73,8 @@ class _ServerListScreenState extends ConsumerState<ServerListScreen> {
       LogicalKeyboardKey key, KeyEventSource source, bool isRepeat, bool isUp) {
     if (key != LogicalKeyboardKey.contextMenu) return KeyEventResult.ignored;
     if (isUp) return KeyEventResult.ignored; // KeyUp 不处理（避免双触发）。
+    // 弹层（三点菜单/对话框）打开期间：区域已挂起，不重复弹层。
+    if (TvFocusManager.instance.isSuspended) return KeyEventResult.ignored;
     if (_sorting) return KeyEventResult.handled;
     final manager = TvFocusManager.instance;
     final area = manager.activeArea;

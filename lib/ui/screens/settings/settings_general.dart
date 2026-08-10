@@ -35,17 +35,20 @@ class _GeneralSettingsScreenState extends ConsumerState<GeneralSettingsScreen> {
           ? AppColors.lightBackground
           : AppColors.darkBackground,
       appBar: AppBar(title: const Text('通用设置')),
-      body: ListView(
+      body: TvListArea(
+        id: 'settings_general',
+        onBoundary: (_) => Navigator.of(context).pop(),
+        child: body: ListView(
         padding: const EdgeInsets.only(bottom: 120),
         children: [
-          ListTile(
+          TvListTile(
             leading: const Icon(Icons.palette_outlined),
             title: const Text('外观'),
             subtitle: const Text('浅色、深色或跟随系统；壁纸与主题色'),
             trailing: const Icon(Icons.chevron_right_rounded),
             onTap: () => _showAppearanceMenu(context),
           ),
-          ListTile(
+          TvListTile(
             leading: const Icon(Icons.language_rounded),
             title: const Text('语言'),
             subtitle: Text(localizedLocaleLabel(
@@ -55,7 +58,7 @@ class _GeneralSettingsScreenState extends ConsumerState<GeneralSettingsScreen> {
             trailing: const Icon(Icons.chevron_right_rounded),
             onTap: () => _showLanguageSelector(context),
           ),
-          ListTile(
+          TvListTile(
             leading: const Icon(Icons.cleaning_services_outlined),
             title: const Text('缓存管理'),
             subtitle: cacheSizeAsync.when(
@@ -67,7 +70,8 @@ class _GeneralSettingsScreenState extends ConsumerState<GeneralSettingsScreen> {
             onTap: () => _showCacheManagement(context),
           ),
         ],
-      ),
+      ),),
+
     );
   }
 
@@ -76,7 +80,7 @@ class _GeneralSettingsScreenState extends ConsumerState<GeneralSettingsScreen> {
       context: context,
       builder: (ctx) => SafeArea(
         child: Wrap(children: [
-          ListTile(
+          TvListTile(
             leading: const Icon(Icons.brightness_6_outlined),
             title: const Text('明暗模式'),
             onTap: () {
@@ -84,7 +88,7 @@ class _GeneralSettingsScreenState extends ConsumerState<GeneralSettingsScreen> {
               _showThemeSelector(context);
             },
           ),
-          ListTile(
+          TvListTile(
             leading: const Icon(Icons.color_lens_outlined),
             title: const Text('主题颜色'),
             onTap: () {
@@ -92,7 +96,7 @@ class _GeneralSettingsScreenState extends ConsumerState<GeneralSettingsScreen> {
               _showAccentColorSelector(context);
             },
           ),
-          ListTile(
+          TvListTile(
             leading: const Icon(Icons.wallpaper_outlined),
             title: const Text('壁纸'),
             onTap: () {
@@ -141,7 +145,7 @@ class _GeneralSettingsScreenState extends ConsumerState<GeneralSettingsScreen> {
       context: context,
       builder: (ctx) => SafeArea(
         child: Wrap(children: [
-          ListTile(
+          TvListTile(
             leading: const Icon(Icons.add_photo_alternate_outlined),
             title: const Text('选择壁纸'),
             onTap: () {
@@ -150,7 +154,7 @@ class _GeneralSettingsScreenState extends ConsumerState<GeneralSettingsScreen> {
             },
           ),
           if (ref.read(customWallpaperPathProvider).isNotEmpty)
-            ListTile(
+            TvListTile(
               leading: const Icon(Icons.delete_outline),
               title: const Text('移除壁纸'),
               onTap: () {
@@ -168,7 +172,7 @@ class _GeneralSettingsScreenState extends ConsumerState<GeneralSettingsScreen> {
       context: context,
       builder: (ctx) => SafeArea(
         child: Wrap(children: [
-          ListTile(
+          TvListTile(
             leading: const Icon(Icons.image_outlined),
             title: const Text('清除图片缓存'),
             onTap: () {
@@ -176,7 +180,7 @@ class _GeneralSettingsScreenState extends ConsumerState<GeneralSettingsScreen> {
               _clearImageCache(context);
             },
           ),
-          ListTile(
+          TvListTile(
             leading: const Icon(Icons.video_library_outlined),
             title: const Text('清除视频播放缓存'),
             onTap: () {
@@ -184,7 +188,7 @@ class _GeneralSettingsScreenState extends ConsumerState<GeneralSettingsScreen> {
               _clearVideoCache(context);
             },
           ),
-          ListTile(
+          TvListTile(
             leading: const Icon(Icons.delete_sweep_outlined),
             title: const Text('清除全部缓存'),
             onTap: () {
@@ -192,7 +196,7 @@ class _GeneralSettingsScreenState extends ConsumerState<GeneralSettingsScreen> {
               _clearAllCache(context);
             },
           ),
-          ListTile(
+          TvListTile(
             leading: const Icon(Icons.tune_rounded),
             title: const Text('缓存参数'),
             onTap: () {
@@ -201,7 +205,7 @@ class _GeneralSettingsScreenState extends ConsumerState<GeneralSettingsScreen> {
                 context: context,
                 builder: (inner) => SafeArea(
                   child: Wrap(children: [
-                    ListTile(
+                    TvListTile(
                       title: const Text('图片缓存过期天数'),
                       trailing: Text('${ref.read(imageCacheExpiryDaysProvider)} 天'),
                       onTap: () {
@@ -209,7 +213,7 @@ class _GeneralSettingsScreenState extends ConsumerState<GeneralSettingsScreen> {
                         _showImageCacheExpirySelector(context);
                       },
                     ),
-                    ListTile(
+                    TvListTile(
                       title: const Text('视频播放缓存上限'),
                       trailing: Text(CacheService.formatSizeMB(ref.read(videoCacheMaxSizeMBProvider))),
                       onTap: () {

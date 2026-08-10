@@ -637,10 +637,15 @@ class PopupAggregateSearchMenu extends StatelessWidget {
         separatorBuilder: (_, __) => SizedBox(width: 10 * s),
         itemBuilder: (context, index) {
           final source = visibleSources[index];
-          return AggregateSearchCard(
-            source: source,
-            selected: source.id == selectedSource,
-            onTap: () => onSourceSelected(source.id),
+          // TV：资源卡包 TvMenuFocusable（遥控遍历 + OK 选中源）。
+          return TvMenuFocusable(
+            onActivate: () => onSourceSelected(source.id),
+            borderRadius: 14,
+            child: AggregateSearchCard(
+              source: source,
+              selected: source.id == selectedSource,
+              onTap: () => onSourceSelected(source.id),
+            ),
           );
         },
       ),
@@ -2199,23 +2204,31 @@ class PopupMenuOverlay extends ConsumerWidget {
                         itemBuilder: (_, index) {
                           final match = matches[index];
                           final info = matchPlaybackInfo(match);
-                          return SizedBox(
-                            width: 250,
-                            child: PlaybackResourceCard(
-                              serverName: match.serverName,
-                              isBest: index == 0,
-                              isSelected: index == crossSelectedIndex,
-                              resolution: info.resolution,
-                              dynamicRange: info.dynamicRange,
-                              codec: info.codec,
-                              frameRate: info.frameRate,
-                              size: info.size,
-                              bitrate: info.bitrate,
-                              // 单击 = 直接播放该服务器资源（复用详情页播放链路）。
-                              onTap: () {
-                                setState(() => crossSelectedIndex = index);
-                                onCrossServerMatchSelected?.call(match);
-                              },
+                          // TV：匹配卡包 TvMenuFocusable（遥控遍历 + OK 播放）。
+                          return TvMenuFocusable(
+                            onActivate: () {
+                              setState(() => crossSelectedIndex = index);
+                              onCrossServerMatchSelected?.call(match);
+                            },
+                            borderRadius: 14,
+                            child: SizedBox(
+                              width: 250,
+                              child: PlaybackResourceCard(
+                                serverName: match.serverName,
+                                isBest: index == 0,
+                                isSelected: index == crossSelectedIndex,
+                                resolution: info.resolution,
+                                dynamicRange: info.dynamicRange,
+                                codec: info.codec,
+                                frameRate: info.frameRate,
+                                size: info.size,
+                                bitrate: info.bitrate,
+                                // 单击 = 直接播放该服务器资源（复用详情页播放链路）。
+                                onTap: () {
+                                  setState(() => crossSelectedIndex = index);
+                                  onCrossServerMatchSelected?.call(match);
+                                },
+                              ),
                             ),
                           );
                         },

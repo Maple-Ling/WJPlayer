@@ -12,7 +12,10 @@ class BackupRestoreScreen extends ConsumerWidget {
           ? AppColors.lightBackground
           : AppColors.darkBackground,
       appBar: AppBar(title: const Text('备份与恢复')),
-      body: ListView(
+      body: TvListArea(
+        id: 'settings_backup_restore',
+        onBoundary: (_) => Navigator.of(context).pop(),
+        child: body: ListView(
         padding: const EdgeInsets.all(16).copyWith(bottom: 120),
         children: [
           // 本地备份
@@ -67,7 +70,7 @@ class BackupRestoreScreen extends ConsumerWidget {
           ),
           if (webdavConfig != null) ...[
             Card(
-              child: ListTile(
+              child: TvListTile(
                 leading: const Icon(Icons.cloud_done, color: Color(0xFF5B8DEF)),
                 title: const Text('WebDAV 已配置'),
                 subtitle: Text(webdavConfig.serverUrl),
@@ -107,7 +110,8 @@ class BackupRestoreScreen extends ConsumerWidget {
             ),
           ],
         ],
-      ),
+      ),),
+
     );
   }
 

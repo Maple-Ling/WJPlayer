@@ -64,6 +64,9 @@ void installNativeKeyBridge() {
     // 没有页面级覆盖时，MENU 在状态栏内外切换：
     // 进入记录来源区域，退出时归还来源焦点（无来源则交还 Flutter 默认焦点树）。
     final manager = TvFocusManager.instance;
+    // 模态路由/覆盖路由打开（挂起）时：状态栏不可见，绝不进入/退出——
+    // 避免 MENU 聚焦被覆盖的 tab 栏造成隐形劫持。
+    if (manager.isSuspended) return;
     if (manager.activeArea?.config.id == 'main_tabs') {
       manager.exitArea('main_tabs');
     } else {

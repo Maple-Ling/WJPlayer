@@ -14,8 +14,11 @@ import 'package:path_provider/path_provider.dart';
 import '../../../core/app_identity.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/services/server_icon_cache.dart';
+import '../../../core/services/tv_focus_manager.dart';
+import '../../../core/utils/platform_utils.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../widgets/common/media_widgets.dart';
+import '../../widgets/common/tv_focus_widgets.dart';
 
 class IconSelectScreen extends ConsumerStatefulWidget {
   final String serverId;
@@ -274,8 +277,7 @@ class _IconSelectScreenState extends ConsumerState<IconSelectScreen> {
                       builder: (context, constraints) {
                         final crossAxisCount =
                             _gridColumnCount(constraints.maxWidth);
-                        return Scrollbar(
-                          child: GridView.builder(
+                        final grid = GridView.builder(
                             padding: EdgeInsets.zero,
                             gridDelegate:
                                 SliverGridDelegateWithFixedCrossAxisCount(
@@ -284,15 +286,36 @@ class _IconSelectScreenState extends ConsumerState<IconSelectScreen> {
                               crossAxisSpacing: 12,
                               mainAxisSpacing: 12,
                             ),
+                            // TV：cacheExtent 预构建，确保网格焦点节点挂载。
+                            cacheExtent: 3000,
                             itemCount: icons.length,
                             itemBuilder: (context, index) {
                               final icon = icons[index];
                               return _NetworkIconCard(
                                 icon: icon,
                                 selected: server?.iconUrl == icon.url,
+                                // TV：节点由 'icon_grid' 区域管理。
+                                focusNode: isTvPlatform
+                                    ? TvFocusManager.instance
+                                        .getArea('icon_grid')
+                                        ?.nodes[index]
+                                    : null,
                                 onTap: () => _selectIcon(icon),
                               );
                             },
+                          );
+                        // TV：图标网格确定性遍历（列数=crossAxisCount，上下/
+                        // 左右逐卡移动，禁止随机跳转）；手机端零副作用。
+                        if (!isTvPlatform) return Scrollbar(child: grid);
+                        return Scrollbar(
+                          child: TvFocusArea(
+                            id: 'icon_grid',
+                            count: icons.length,
+                            traversal: TraversalPolicies.grid(
+                              columns: crossAxisCount,
+                              rowCount: (icons.length / crossAxisCount).ceil(),
+                            ),
+                            child: grid,
                           ),
                         );
                       },
@@ -889,11 +912,13 @@ class _NetworkIconCard extends StatelessWidget {
   final IconItem icon;
   final bool selected;
   final VoidCallback onTap;
+  final FocusNode? focusNode;
 
   const _NetworkIconCard({
     required this.icon,
     required this.selected,
     required this.onTap,
+    this.focusNode,
   });
 
   @override
@@ -903,7 +928,7 @@ class _NetworkIconCard extends StatelessWidget {
         ? theme.colorScheme.primary
         : theme.dividerColor.withValues(alpha: 0.28);
 
-    return Material(
+    final card = Material(
       color: selected
           ? theme.colorScheme.primary.withValues(alpha: 0.08)
           : theme.colorScheme.surface,
@@ -955,6 +980,14 @@ class _NetworkIconCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+    // TV：包 TvFocusable（遥控遍历 + OK 选中），手机端原样。
+    if (!isTvPlatform) return card;
+    return TvFocusable(
+      onActivate: onTap,
+      focusNode: focusNode,
+      borderRadius: 20,
+      child: card,
     );
   }
 }

@@ -11,20 +11,24 @@ class DanmakuSettingsScreen extends ConsumerWidget {
           ? AppColors.lightBackground
           : AppColors.darkBackground,
       appBar: AppBar(title: const Text('弹幕设置')),
-      body: ListView(
+      body: TvListArea(
+        id: 'settings_danmaku',
+        onBoundary: (_) => Navigator.of(context).pop(),
+        child: body: ListView(
         padding: const EdgeInsets.only(bottom: 120),
         children: [
           // 其余弹幕开关/滑块均移至播放器弹幕按钮菜单内（播放中可直接调整），
           // 设置页仅保留弹幕源管理。
           const Divider(),
-          ListTile(
+          TvListTile(
             title: const Text('自定义弹幕源'),
             subtitle: const Text('添加 danmu_api / 御坂弹幕 等自定义源'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _showCustomSourceManager(context, ref),
           ),
         ],
-      ),
+      ),),
+
     );
   }
 
@@ -103,7 +107,7 @@ class _CustomSourceManagerSheetState
                 const SizedBox(height: 8),
                 if (service.dandanplay != null)
                   Card(
-                    child: ListTile(
+                    child: TvListTile(
                       leading: const Icon(Icons.cloud, color: Colors.blue),
                       title: const Text('弹弹Play（官方）'),
                       subtitle: Text(
@@ -128,7 +132,7 @@ class _CustomSourceManagerSheetState
                     itemBuilder: (context, index) {
                       final source = customSources[index];
                       return Card(
-                        child: ListTile(
+                        child: TvListTile(
                           leading: Icon(
                             Icons.dns,
                             color: source.config.enabled

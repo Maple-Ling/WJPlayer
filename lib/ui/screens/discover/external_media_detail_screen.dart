@@ -22,7 +22,8 @@ import '../../widgets/common/playback_resource_card.dart';
 import '../../widgets/common/tv_focus_widgets.dart';
 import '../../widgets/common/tv_focusable.dart';
 import '../../widgets/common/app_toast.dart';
-import 'package:flutter/services.dart' show LogicalKeyboardKey;
+import 'package:flutter/services.dart'
+    show LogicalKeyboardKey, KeyDownEvent, KeyRepeatEvent;
 
 class ExternalMediaDetailScreen extends ConsumerStatefulWidget {
   const ExternalMediaDetailScreen({super.key, required this.entry});
@@ -78,6 +79,8 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
       LogicalKeyboardKey key, KeyEventSource source, bool isRepeat, bool isUp) {
     if (key != LogicalKeyboardKey.contextMenu) return KeyEventResult.ignored;
     if (isUp) return KeyEventResult.ignored;
+    // 弹层（链接 sheet/剧照/演员）打开期间：区域已挂起，不重复弹层。
+    if (TvFocusManager.instance.isSuspended) return KeyEventResult.ignored;
     final async = ref.read(externalMediaDetailProvider(widget.entry));
     final detail = async.asData?.value;
     if (detail != null) _showLinks(detail);
@@ -565,7 +568,9 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
     );
   }
 
-  Widget _links(ExternalMediaDetail detail) {
+  /// [sheetMode] 为 true（底部弹层内）：使用自建焦点节点而非页面区域节点
+  /// （区域节点挂载在覆盖层之下，同一 FocusNode 不能双挂载）。
+  Widget _links(ExternalMediaDetail detail, {bool sheetMode = false}) {
     final query = Uri.encodeQueryComponent('${detail.title} ${detail.year ?? ''}'.trim());
     final values = <(String, String)>[
       (
@@ -594,7 +599,7 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
             Uri.parse(values[i].$2),
             mode: LaunchMode.externalApplication,
           ),
-          focusNode: _tvNode('links', i),
+          focusNode: sheetMode ? null : _tvNode('links', i),
           borderRadius: 999,
           child: ActionChip(
             avatar: const Icon(Icons.open_in_new_rounded, size: 17),
@@ -665,7 +670,62 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
     }
   }
 
-  void _showAllResources(String query) => showModalBottomSheet<void>(context: context, isScrollControlled: true, showDragHandle: true, builder: (_) => SizedBox(height: MediaQuery.sizeOf(context).height * .75, child: Consumer(builder: (context, ref, _) => Padding(padding: const EdgeInsets.all(18), child: Column(children: [const Text('全部播放资源', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)), const SizedBox(height: 12), Expanded(child: ref.watch(rankingCrossServerMatchProvider(query)).when(loading: () => const Center(child: CircularProgressIndicator()), error: (_, __) => const Center(child: Text('搜索失败')), data: (matches) => ListView(children: [for (final match in matches) ListTile(leading: const Icon(Icons.play_circle_outline_rounded), title: Text(match.serverName), subtitle: Text(match.item.name), onTap: () { Navigator.pop(context); _openMatch(match, directPlay: true); })])))])))));
+  void _showAllResources(String query) => showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (_) => SizedBox(
+          height: MediaQuery.sizeOf(context).height * .75,
+          child: Consumer(
+            builder: (context, ref, _) => Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                children: [
+                  const Text('全部播放资源',
+                      style:
+                          TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: ref
+                        .watch(rankingCrossServerMatchProvider(query))
+                        .when(
+                          loading: () => const Center(
+                              child: CircularProgressIndicator()),
+                          error: (_, __) =>
+                              const Center(child: Text('搜索失败')),
+                          data: (matches) => ListView(
+                            // TV：弹层打开时焦点区域已挂起，条目经 Flutter
+                            // 默认遍历聚焦（TvFocusable 自建节点）。
+                            cacheExtent: 3000,
+                            children: [
+                              for (final match in matches)
+                                TvFocusable(
+                                  onActivate: () {
+                                    Navigator.pop(context);
+                                    _openMatch(match, directPlay: true);
+                                  },
+                                  borderRadius: 12,
+                                  child: ListTile(
+                                    leading: const Icon(
+                                        Icons.play_circle_outline_rounded),
+                                    title: Text(match.serverName),
+                                    subtitle: Text(match.item.name),
+                                    onTap: () {
+                                      Navigator.pop(context);
+                                      _openMatch(match, directPlay: true);
+                                    },
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
 
   void _showPerson(ExternalPerson person) {
     showModalBottomSheet<void>(
@@ -731,31 +791,40 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
                         itemCount: items.length,
                         itemBuilder: (_, index) {
                           final item = items[index];
-                          return InkWell(
-                            onTap: () => Navigator.of(context).push(
+                          return TvFocusable(
+                            onActivate: () => Navigator.of(context).push(
                               MaterialPageRoute<void>(
                                 builder: (_) =>
                                     ExternalMediaDetailScreen(entry: item),
                               ),
                             ),
-                            child: Column(
-                              children: [
-                                Expanded(
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(10),
-                                    child: MediaImage(
-                                      imageUrl: item.posterUrl,
-                                      fit: BoxFit.cover,
+                            borderRadius: 12,
+                            child: InkWell(
+                              onTap: () => Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) =>
+                                      ExternalMediaDetailScreen(entry: item),
+                                ),
+                              ),
+                              child: Column(
+                                children: [
+                                  Expanded(
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(10),
+                                      child: MediaImage(
+                                        imageUrl: item.posterUrl,
+                                        fit: BoxFit.cover,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                const SizedBox(height: 5),
-                                Text(
-                                  item.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
+                                  const SizedBox(height: 5),
+                                  Text(
+                                    item.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
                             ),
                           );
                         },
@@ -771,7 +840,51 @@ class _ExternalMediaDetailScreenState extends ConsumerState<ExternalMediaDetailS
     );
   }
 
-  void _showImage(List<String> images, int initial) => showDialog<void>(context: context, barrierColor: Colors.black, builder: (_) => Dialog.fullscreen(backgroundColor: Colors.black, child: Stack(children: [PageView.builder(controller: PageController(initialPage: initial), itemCount: images.length, itemBuilder: (_, i) => InteractiveViewer(minScale: 1, maxScale: 5, child: Center(child: MediaImage(imageUrl: images[i], fit: BoxFit.contain)))), SafeArea(child: IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close_rounded, color: Colors.white, size: 30)))])));
+  void _showImage(List<String> images, int initial) => showDialog<void>(
+        context: context,
+        barrierColor: Colors.black,
+        builder: (_) => Dialog.fullscreen(
+          backgroundColor: Colors.black,
+          child: isTvPlatform
+              // TV：全屏看图改遥控操作——左右键翻页、OK/返回关闭
+              // （PageView 滑动/双指缩放遥控不可用）。
+              ? TvImageGallery(images: images, initial: initial)
+              : Stack(
+                  children: [
+                    PageView.builder(
+                      controller: PageController(initialPage: initial),
+                      itemCount: images.length,
+                      itemBuilder: (_, i) => InteractiveViewer(
+                        minScale: 1,
+                        maxScale: 5,
+                        child: Center(
+                          child: MediaImage(
+                              imageUrl: images[i], fit: BoxFit.contain),
+                        ),
+                      ),
+                    ),
+                    SafeArea(
+                      child: IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close_rounded,
+                            color: Colors.white, size: 30),
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+      );
 
-  void _showLinks(ExternalMediaDetail detail) => showModalBottomSheet<void>(context: context, showDragHandle: true, builder: (_) => SafeArea(child: Padding(padding: const EdgeInsets.all(18), child: _links(detail))));
+  void _showLinks(ExternalMediaDetail detail) => showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        builder: (_) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            // sheet 内复用 _links 但使用自建节点（页面区域节点挂载在覆盖
+            // 层之下，同一节点不能双挂载）。
+            child: _links(detail, sheetMode: true),
+          ),
+        ),
+      );
 }

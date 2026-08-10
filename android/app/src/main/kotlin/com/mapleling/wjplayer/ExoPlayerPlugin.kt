@@ -315,11 +315,21 @@ class ExoPlayerPlugin(
                             val infos = MediaCodecSelector.DEFAULT.getDecoderInfos(
                                 mimeType, requiresSecureDecoder, requiresTunnelingDecoder
                             )
-                            android.util.Log.i(
-                                "ExoPlayerPlugin",
-                                "MediaCodec candidates for $mimeType: " +
-                                    infos.joinToString(", ") { it.name } + " (count=${infos.size})"
-                            )
+                            if (infos.isEmpty()) {
+                                // 平台硬解候选为空 → 将回退 FFmpeg 软解（高码率 HEVC
+                                // 会卡）。这是定位「播放卡顿」的关键日志：硬解候选存在
+                                // 却卡 = 渲染/合成问题；候选为空 = 软解归因。
+                                android.util.Log.w(
+                                    "ExoPlayerPlugin",
+                                    "NO MediaCodec candidates for $mimeType -> FFmpeg software decode fallback (may stutter on high bitrate)"
+                                )
+                            } else {
+                                android.util.Log.i(
+                                    "ExoPlayerPlugin",
+                                    "MediaCodec candidates for $mimeType: " +
+                                        infos.joinToString(", ") { it.name } + " (count=${infos.size})"
+                                )
+                            }
                             return infos
                         }
                     })

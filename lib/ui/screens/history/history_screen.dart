@@ -97,17 +97,20 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       },
       child: tvAreaReady
           ? TvFocusArea(
-              // 记录条数变化时用 Key 重建区域（count 稳定约束）。
-              key: ValueKey('history_${items!.length}'),
+              // 记录条数/多选态变化时用 Key 重建区域（count 稳定约束）。
+              key: ValueKey('history_${items!.length}_${_selecting}'),
               id: 'history',
-              // 0=工具行 + 每张卡 2 元素（卡片 / 搜索按钮）。
-              count: items.length * 2 + 1,
-              traversal: _historyTraversal(items.length),
+              // 0..工具行（非多选 1 个=刷新；多选 3 个=删除/全选/取消）
+              // + 每张卡 2 元素（卡片 / 搜索按钮）。
+              count: items.length * 2 + (_selecting ? 3 : 1),
+              traversal: _historyTraversal(items.length, selecting: _selecting),
               // 长按 OK（记录卡片）：进入多选并选中当前卡片；
-              // 搜索按钮（偶数索引）不触发。
+              // 搜索按钮/工具行不触发。
               onLongPressAt: (index) {
-                if (index <= 0 || index.isEven) return;
-                final record = items[(index - 1) ~/ 2];
+                final offset = _selecting ? 3 : 1;
+                if (index < offset) return;
+                if ((index - offset).isEven) return;
+                final record = items[(index - offset) ~/ 2];
                 setState(() => _selectedIds.add(record.recordId));
               },
               // 顶部上键 / 最底部下键：退出页面区域回到状态栏。
@@ -128,15 +131,24 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     List<WatchHistoryRecord>? items, {
     required bool useTvArea,
   }) {
-    // 工具行焦点节点：0 = 刷新按钮（非多选）/ 删除按钮（多选）。
+    // 工具行焦点节点：0 = 刷新按钮（非多选）/ 删除按钮（多选）；
+    // 多选时 1=全选、2=取消（均可达）。
     final toolNode = useTvArea ? ctx.getFocusNode('history', 0) : null;
+    final selectAllNode =
+        useTvArea && _selecting ? ctx.getFocusNode('history', 1) : null;
+    final cancelNode =
+        useTvArea && _selecting ? ctx.getFocusNode('history', 2) : null;
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
         title: Text(_selecting ? '已选 ${_selectedIds.length}' : '播放记录'),
         actions: [
           if (_selecting) ...[
-            TextButton(onPressed: _selectAll, child: const Text('全选')),
+            TextButton(
+              focusNode: selectAllNode,
+              onPressed: _selectAll,
+              child: const Text('全选'),
+            ),
             // TV：工具行焦点 = 删除按钮（持续按上键可达，OK 执行删除）。
             IconButton(
               focusNode: toolNode,
@@ -145,6 +157,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               icon: const Icon(Icons.delete_rounded),
             ),
             IconButton(
+              focusNode: cancelNode,
               tooltip: '取消多选',
               onPressed: () => setState(_selectedIds.clear),
               icon: const Icon(Icons.close_rounded),
@@ -207,36 +220,39 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
 
   /// 历史页方向键遍历：0=工具行（刷新/删除），1..N=记录卡片。
   /// 单列列表左右停留；顶部再上 / 底部再下返回 -1 触发区域边界（→ 状态栏）。
-  TraversalFn _historyTraversal(int recordCount) {
+  TraversalFn _historyTraversal(int recordCount, {bool selecting = false}) {
     final last = recordCount; // 卡片数
-    // 区域索引：0=工具行；每张卡 2 元素——卡片 = 1+2i、搜索按钮 = 2+2i。
+    final offset = selecting ? 3 : 1; // 工具行元素数
+    // 区域索引：0..offset-1=工具行；每张卡 2 元素——卡片 = offset+2i、
+    // 搜索按钮 = offset+1+2i。
     //   · 上下：始终切卡片（搜索按钮上/下也回到上一/下一张卡的卡片列）
     //   · 左/右：卡片→搜索按钮→（搜索右停留）；搜索左→卡片；卡片左停留
     //   · 工具行：上→状态栏（-1，onBoundary）、下→第一张卡
     //   · 最后一张卡下 → 状态栏（-1，onBoundary）
     return (current, direction, nodes) {
-      if (current == 0) {
+      if (current < offset) {
         switch (direction) {
           case DPad.down:
-            return 1;
+            return offset;
           case DPad.up:
             return -1;
           case DPad.left:
+            return current > 0 ? current - 1 : current;
           case DPad.right:
-            return current;
+            return current < offset - 1 ? current + 1 : current;
         }
       }
-      final isCard = current.isOdd;
-      final i = (current - 1) ~/ 2;
+      final isCard = ((current - offset) & 1) == 0;
+      final i = (current - offset) ~/ 2;
       switch (direction) {
         case DPad.up:
-          return i > 0 ? 1 + 2 * (i - 1) : 0;
+          return i > 0 ? offset + 2 * (i - 1) : 0;
         case DPad.down:
-          return i < last - 1 ? 1 + 2 * (i + 1) : -1;
+          return i < last - 1 ? offset + 2 * (i + 1) : -1;
         case DPad.left:
-          return isCard ? current : 1 + 2 * i;
+          return isCard ? current : offset + 2 * i;
         case DPad.right:
-          return isCard ? 2 + 2 * i : current;
+          return isCard ? offset + 1 + 2 * i : current;
       }
     };
   }

@@ -50,29 +50,69 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final isAggregate = ref.watch(aggregateSearchProvider);
     final searchResults = ref.watch(searchResultsProvider);
     final searchHistory = ref.watch(searchHistoryProvider);
-    // TV：注册焦点区域（0=搜索框、1=聚合开关），方向键边界 → 状态栏；
-    // 返回键放行系统默认（逐级后退/分支根返回回影视 tab，主流 TV 语义）。
+    final server = ref.watch(currentServerProvider);
+    // 区域 count 计算（结果模式：2 头部元素 + 结果条目）：
+    //  - 聚合：头部(2) + 每个服务器组一行（FocusSectionLayout）
+    //  - 普通/飞牛单列表：2 + 结果条数（线性）
+    //  - 历史/空态：2
+    FocusSectionLayout? aggLayout;
+    var linearCount = 2;
+    var isAggregateResults = false;
+    var isHistoryChips = false;
+    if (_showResults && isAggregate) {
+      final aggData = ref.watch(aggregateSearchResultsProvider).asData?.value ??
+          const <String, List<MediaItem>>{};
+      final feiniuGroups =
+          ref.watch(aggregateFeiniuSearchProvider(ref.watch(searchQueryProvider)))
+                  .asData?.value ??
+              const <FeiniuSearchGroup>[];
+      if (aggData.isNotEmpty || feiniuGroups.isNotEmpty) {
+        isAggregateResults = true;
+        final sections = <FocusSection>[
+          const FocusSection('head', 2),
+          for (final group in aggData.entries)
+            FocusSection('agg_${group.key}', group.value.length),
+          for (var i = 0; i < feiniuGroups.length; i++)
+            FocusSection('feiniu_$i', feiniuGroups[i].entries.length),
+        ];
+        aggLayout = FocusSectionLayout(sections);
+      }
+    } else if (_showResults && !isAggregate) {
+      final isFeiniu = server != null && server.sourceKind == SourceKind.feiniu;
+      final n = isFeiniu
+          ? (ref
+                      .watch(feiniuSearchResultsProvider((
+                    serverId: server.id,
+                    query: ref.watch(searchQueryProvider),
+                  )))
+                      .asData
+                      ?.value
+                      ?.length ??
+                  0)
+          : (searchResults.asData?.value?.length ?? 0);
+      linearCount = 2 + n;
+    } else if (!_showResults && searchHistory.isNotEmpty) {
+      // 搜索历史 chips 模式：2 头部元素 + 历史条数（线性全方向移动）。
+      isHistoryChips = true;
+      linearCount = 2 + searchHistory.length;
+    }
+
+    // TV：注册焦点区域（0=搜索框、1=聚合开关、2..=结果条目），方向键
+    // 边界 → 状态栏；返回键放行系统默认（逐级后退/分支根返回回影视 tab）。
     final tvAreaReady = isTvPlatform;
     return PopScope(
       canPop: true, // 不拦截返回：手机/电视一致走系统返回。
       child: tvAreaReady
           ? TvFocusArea(
               id: 'search',
-              count: 2,
-              // 0=搜索框、1=聚合开关：
-              //   上：聚合→搜索框；搜索框→状态栏；下：任意→状态栏；
-              //   右：搜索框→聚合；左：聚合→搜索框。
-              traversal: (current, direction, nodes) {
-                switch (direction) {
-                  case DPad.up:
-                    return current == 1 ? 0 : -1;
-                  case DPad.down:
-                    return -1;                  case DPad.left:
-                    return current == 1 ? 0 : current;
-                  case DPad.right:
-                    return current == 0 ? 1 : current;
-                }
-              },
+              count: aggLayout?.totalCount ?? linearCount,
+              // 结果条目：聚合用 FocusSectionLayout（服务器组横排 + 屏幕
+              // 视觉对齐）；单列表线性下移；头部两元素左右移动。
+              traversal: aggLayout != null
+                  ? aggLayout.traversal
+                  : isHistoryChips
+                      ? _chipsTraversal(linearCount)
+                      : _resultsTraversal(linearCount),
               onBoundary: (_) =>
                   TvFocusManager.instance.enterArea('main_tabs'),
               // Builder 保证取焦点节点时区域已注册。
@@ -82,6 +122,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   isAggregate: isAggregate,
                   searchResults: searchResults,
                   searchHistory: searchHistory,
+                  resultOffset: aggLayout == null ? 2 : null,
+                  aggLayout: aggLayout,
+                  isAggregateResults: isAggregateResults,
                 ),
               ),
             )
@@ -94,15 +137,60 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     );
   }
 
+  /// 单列结果遍历：0=搜索框、1=聚合开关、2..=结果条目。
+  /// 结果条目上下线性移动、左右停留；顶部/底部边界 → 状态栏。
+  TraversalFn _resultsTraversal(int count) {
+    return (current, direction, _) {
+      switch (direction) {
+        case DPad.up:
+          if (current > 1) return current - 1;
+          if (current == 1) return 0;
+          return -1;
+        case DPad.down:
+          if (current < count - 1) return current + 1;
+          return -1;
+        case DPad.left:
+          return current == 1 ? 0 : current;
+        case DPad.right:
+          return current == 0 ? 1 : current;
+      }
+    };
+  }
+
+  /// 搜索历史 chips 遍历：全方向线性（chips 在 Wrap 流式排布，上下/左右
+  /// 均逐项移动）；边界 → 状态栏。
+  TraversalFn _chipsTraversal(int count) {
+    return (current, direction, _) {
+      switch (direction) {
+        case DPad.up:
+        case DPad.left:
+          return current > 0 ? current - 1 : -1;
+        case DPad.down:
+        case DPad.right:
+          return current < count - 1 ? current + 1 : -1;
+      }
+    };
+  }
+
   Widget _buildScaffold(
     BuildContext ctx, {
     required bool isAggregate,
     required AsyncValue<List<MediaItem>> searchResults,
     required List<String> searchHistory,
+    int? resultOffset,
+    FocusSectionLayout? aggLayout,
+    bool isAggregateResults = false,
   }) {
     final useTv = isTvPlatform &&
         TvFocusManager.instance.getArea('search') != null;
     FocusNode? node(int i) => useTv ? ctx.getFocusNode('search', i) : null;
+    // 结果条目节点：单列模式 resultOffset=2（条目从索引 2 起线性排布）；
+    // 聚合模式按 FocusSectionLayout 定位（头部 2 元素 + 各行卡片）。
+    FocusNode? resultNode(String sectionId, int index) {
+      if (!useTv || aggLayout == null) return null;
+      return ctx.getFocusNode(
+          'search', aggLayout.indexOf(sectionId, index));
+    }
     return Scaffold(
       appBar: AppBar(
         title: TvInputField(
@@ -161,7 +249,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         ),
       ),
       body: _showResults
-          ? _buildSearchResults(searchResults)
+          ? _buildSearchResults(
+              searchResults,
+              resultOffset: resultOffset,
+              resultNode: resultNode,
+            )
           : _buildSearchHistory(searchHistory),
     );
   }
@@ -171,6 +263,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       return _buildEmptyState();
     }
     
+    final useTv = isTvPlatform &&
+        TvFocusManager.instance.getArea('search') != null;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -191,36 +285,86 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: history.map((query) => InputChip(
-            label: Text(query),
-            onPressed: () {
-              _searchController.text = query;
-              ref.read(searchQueryProvider.notifier).state = query;
-              setState(() => _showResults = true);
-            },
-            deleteIcon: const Icon(Icons.close, size: 16),
-            onDeleted: () => ref.read(searchHistoryProvider.notifier).removeQuery(query),
-          )).toList(),
+          children: [
+            for (var i = 0; i < history.length; i++)
+              _HistoryChip(
+                query: history[i],
+                // TV：chips 由 'search' 区域管理（索引 2+i）。
+                focusNode: useTv
+                    ? context.getFocusNode('search', 2 + i)
+                    : null,
+                onPressed: () {
+                  final query = history[i];
+                  _searchController.text = query;
+                  ref.read(searchQueryProvider.notifier).state = query;
+                  setState(() => _showResults = true);
+                },
+                onDeleted: () => ref
+                    .read(searchHistoryProvider.notifier)
+                    .removeQuery(history[i]),
+              ),
+          ],
         ),
       ],
     );
   }
+
+/// TV 可聚焦历史 chip（手机端 InputChip 原样）。
+class _HistoryChip extends StatelessWidget {
+  const _HistoryChip({
+    required this.query,
+    required this.onPressed,
+    required this.onDeleted,
+    this.focusNode,
+  });
+
+  final String query;
+  final VoidCallback onPressed;
+  final VoidCallback onDeleted;
+  final FocusNode? focusNode;
+
+  @override
+  Widget build(BuildContext context) {
+    final chip = InputChip(
+      label: Text(query),
+      onPressed: onPressed,
+      deleteIcon: const Icon(Icons.close, size: 16),
+      onDeleted: onDeleted,
+    );
+    if (!isTvPlatform || focusNode == null) return chip;
+    return TvFocusable(
+      onActivate: onPressed,
+      focusNode: focusNode,
+      borderRadius: 16,
+      child: chip,
+    );
+  }
+}
   
-  Widget _buildSearchResults(AsyncValue<List<MediaItem>> results) {
+  Widget _buildSearchResults(
+    AsyncValue<List<MediaItem>> results, {
+    int? resultOffset,
+    FocusNode? Function(String sectionId, int index)? resultNode,
+  }) {
     final server = ref.watch(currentServerProvider);
     if (!_showResults) return _buildSearchHistory(ref.watch(searchHistoryProvider));
     // 飞牛是媒体库 API，不兼容 Emby 的 SearchApi。单服搜索直接走飞牛后端，
     // 保留封面鉴权和 GUID，详情页也进入飞牛媒体详情而非旧 Emby 页面。
-    if (server?.sourceKind == SourceKind.feiniu &&
+    if (server != null &&
+        server.sourceKind == SourceKind.feiniu &&
         !ref.watch(aggregateSearchProvider)) {
-      return _buildFeiniuSearchResults(server!);
+      return _buildFeiniuSearchResults(
+        server,
+        resultOffset: resultOffset,
+        resultNode: resultNode,
+      );
     }
     final isAggregate = ref.watch(aggregateSearchProvider);
     if (isAggregate) {
       // 聚合模式独立渲染：Emby 分组 + 飞牛分组并行展示。
       // 不经过 searchResults 的 loading/empty 判断——聚合结果由
       // aggregateSearchResultsProvider / aggregateFeiniuSearchProvider 提供。
-      return _buildAggregateResults();
+      return _buildAggregateResults(resultNode: resultNode);
     }
     return results.when(
       data: (items) {
@@ -229,6 +373,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         }
         
         return ListView.builder(
+            // TV：cacheExtent 预构建，确保懒加载结果条目焦点节点挂载。
+            cacheExtent: 3000,
             padding: const EdgeInsets.all(16),
             itemCount: items.length,
             itemBuilder: (context, index) {
@@ -240,7 +386,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 maxWidth: 120,
                 preferThumb: item.type == 'Episode',
               );
-              return Card(
+              // TV：结果条目包 TvFocusable（遥控遍历 + OK 打开详情），
+              // 节点由 'search' 区域统一管理（resultOffset=2 起线性排布）。
+              final tile = Card(
                 margin: const EdgeInsets.only(bottom: 12),
                 child: ListTile(
                   onTap: () => context.push(mediaRouteForItem(item)),
@@ -279,8 +427,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                       )
                     : null,
               ),
-            ).appEntrance(index: index);
-          },
+              );
+              if (isTvPlatform && resultOffset != null) {
+                return TvFocusable(
+                  onActivate: () => context.push(mediaRouteForItem(item)),
+                  focusNode: context.getFocusNode('search', resultOffset + index),
+                  borderRadius: 12,
+                  child: tile,
+                );
+              }
+              return tile;
+            },
         );
       },
       loading: () => const AppLoadingIndicator(),
@@ -288,7 +445,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     );
   }
   
-  Widget _buildFeiniuSearchResults(ServerConfig server) {
+  Widget _buildFeiniuSearchResults(
+    ServerConfig server, {
+    int? resultOffset,
+    FocusNode? Function(String sectionId, int index)? resultNode,
+  }) {
     final query = ref.watch(searchQueryProvider);
     final entries = ref.watch(
       feiniuSearchResultsProvider((serverId: server.id, query: query)),
@@ -299,27 +460,30 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       data: (items) {
         if (items.isEmpty) return const Center(child: Text('没有找到结果'));
         return ListView.separated(
+          // TV：cacheExtent 预构建，确保懒加载结果条目焦点节点挂载。
+          cacheExtent: 3000,
           padding: const EdgeInsets.all(16),
           itemCount: items.length,
           separatorBuilder: (_, __) => const SizedBox(height: 10),
           itemBuilder: (context, index) {
             final entry = items[index];
-            return Card(
+            final open = () {
+              ref.read(currentServerProvider.notifier).state = server;
+              ref.read(authStateProvider.notifier).state =
+                  AuthState.authenticated;
+              context.push(
+                '/detail/${Uri.encodeComponent(entry.id)}',
+                extra: UnifiedMediaDetailRouteExtra(
+                  server: server,
+                  entry: unifiedEntryFromSource(entry),
+                ),
+              );
+            };
+            final tile = Card(
               clipBehavior: Clip.antiAlias,
               child: ListTile(
                 contentPadding: const EdgeInsets.all(10),
-                onTap: () {
-                  ref.read(currentServerProvider.notifier).state = server;
-                  ref.read(authStateProvider.notifier).state =
-                      AuthState.authenticated;
-                  context.push(
-                    '/detail/${Uri.encodeComponent(entry.id)}',
-                    extra: UnifiedMediaDetailRouteExtra(
-                      server: server,
-                      entry: unifiedEntryFromSource(entry),
-                    ),
-                  );
-                },
+                onTap: open,
                 leading: SizedBox(
                   width: 58,
                   height: 86,
@@ -348,14 +512,25 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 ),
                 trailing: const Icon(Icons.chevron_right_rounded),
               ),
-            ).appEntrance(index: index);
+            );
+            if (isTvPlatform && resultOffset != null) {
+              return TvFocusable(
+                onActivate: open,
+                focusNode: context.getFocusNode('search', resultOffset + index),
+                borderRadius: 12,
+                child: tile,
+              );
+            }
+            return tile;
           },
         );
       },
     );
   }
 
-  Widget _buildAggregateResults() {
+  Widget _buildAggregateResults({
+    FocusNode? Function(String sectionId, int index)? resultNode,
+  }) {
     // 复用共享的跨服务器聚合 provider（并行查询 + 失败记日志），不再在 UI 层
     // 自己串行遍历服务器，三端口径统一。每台服务器一行，横向滑动浏览封面。
     final aggregateAsync = ref.watch(aggregateSearchResultsProvider);
@@ -379,12 +554,25 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     }
 
     return ListView(
+      // TV：cacheExtent 预构建，确保聚合横向行焦点节点挂载。
+      cacheExtent: 3000,
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       children: [
         for (final group in aggregateData.entries)
-          _EmbyAggregateSection(serverName: group.key, items: group.value),
-        for (final group in feiniuGroups)
-          _FeiniuAggregateSection(group: group),
+          _EmbyAggregateSection(
+            serverName: group.key,
+            items: group.value,
+            nodeOf: resultNode == null
+                ? null
+                : (i) => resultNode('agg_${group.key}', i),
+          ),
+        for (var gi = 0; gi < feiniuGroups.length; gi++)
+          _FeiniuAggregateSection(
+            group: feiniuGroups[gi],
+            nodeOf: resultNode == null
+                ? null
+                : (i) => resultNode('feiniu_$gi', i),
+          ),
       ],
     );
   }
@@ -411,9 +599,14 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 }
 
 class _EmbyAggregateSection extends StatelessWidget {
-  const _EmbyAggregateSection({required this.serverName, required this.items});
+  const _EmbyAggregateSection({
+    required this.serverName,
+    required this.items,
+    this.nodeOf,
+  });
   final String serverName;
   final List<MediaItem> items;
+  final FocusNode? Function(int index)? nodeOf;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -426,11 +619,15 @@ class _EmbyAggregateSection extends StatelessWidget {
           SizedBox(
             height: 214,
             child: ListView.separated(
+              // TV：cacheExtent 覆盖整行，确保视口外卡片节点挂载。
+              cacheExtent: 5000,
               scrollDirection: Axis.horizontal,
               itemCount: items.length,
               separatorBuilder: (_, __) => const SizedBox(width: 12),
-              itemBuilder: (_, index) =>
-                  _AggregatePosterCard(item: items[index]),
+              itemBuilder: (_, index) => _AggregatePosterCard(
+                item: items[index],
+                focusNode: nodeOf?.call(index),
+              ),
             ),
           ),
           const SizedBox(height: 12),
@@ -439,8 +636,9 @@ class _EmbyAggregateSection extends StatelessWidget {
 }
 
 class _FeiniuAggregateSection extends ConsumerWidget {
-  const _FeiniuAggregateSection({required this.group});
+  const _FeiniuAggregateSection({required this.group, this.nodeOf});
   final FeiniuSearchGroup group;
+  final FocusNode? Function(int index)? nodeOf;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) => Column(
@@ -453,30 +651,33 @@ class _FeiniuAggregateSection extends ConsumerWidget {
           SizedBox(
             height: 214,
             child: ListView.separated(
+              // TV：cacheExtent 覆盖整行，确保视口外卡片节点挂载。
+              cacheExtent: 5000,
               scrollDirection: Axis.horizontal,
               itemCount: group.entries.length,
               separatorBuilder: (_, __) => const SizedBox(width: 12),
               itemBuilder: (context, index) {
                 final entry = group.entries[index];
-                return SizedBox(
+                final open = () {
+                  // 与历史页/详情页入口一致：先切当前服务器并标记已认证，
+                  // 再经 go_router 统一路由打开（带真实类型 entry），
+                  // 避免手动 Navigator.push 与 shell 混用导致灰屏。
+                  ref.read(currentServerProvider.notifier).state =
+                      group.server;
+                  ref.read(authStateProvider.notifier).state =
+                      AuthState.authenticated;
+                  context.push(
+                    '/detail/${Uri.encodeComponent(entry.id)}',
+                    extra: UnifiedMediaDetailRouteExtra(
+                      server: group.server,
+                      entry: unifiedEntryFromSource(entry),
+                    ),
+                  );
+                };
+                final card = SizedBox(
                   width: 110,
                   child: GestureDetector(
-                    onTap: () {
-                      // 与历史页/详情页入口一致：先切当前服务器并标记已认证，
-                      // 再经 go_router 统一路由打开（带真实类型 entry），
-                      // 避免手动 Navigator.push 与 shell 混用导致灰屏。
-                      ref.read(currentServerProvider.notifier).state =
-                          group.server;
-                      ref.read(authStateProvider.notifier).state =
-                          AuthState.authenticated;
-                      context.push(
-                        '/detail/${Uri.encodeComponent(entry.id)}',
-                        extra: UnifiedMediaDetailRouteExtra(
-                          server: group.server,
-                          entry: unifiedEntryFromSource(entry),
-                        ),
-                      );
-                    },
+                    onTap: open,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -501,6 +702,16 @@ class _FeiniuAggregateSection extends ConsumerWidget {
                     ),
                   ),
                 );
+                final node = nodeOf?.call(index);
+                if (isTvPlatform && node != null) {
+                  return TvFocusable(
+                    onActivate: open,
+                    focusNode: node,
+                    borderRadius: 12,
+                    child: card,
+                  );
+                }
+                return card;
               },
             ),
           ),
@@ -512,7 +723,8 @@ class _FeiniuAggregateSection extends ConsumerWidget {
 /// 聚合搜索一行内的封面卡：封面 + 下方标题。点按打开（跨服务器先切服务器）。
 class _AggregatePosterCard extends ConsumerWidget {
   final MediaItem item;
-  const _AggregatePosterCard({required this.item});
+  final FocusNode? focusNode;
+  const _AggregatePosterCard({required this.item, this.focusNode});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -520,7 +732,7 @@ class _AggregatePosterCard extends ConsumerWidget {
     const h = 165.0;
     final api = apiClientForItem(ref, item);
     final imageUrls = resolveMediaItemImageUrls(api, item, maxWidth: 240);
-    return SizedBox(
+    final card = SizedBox(
       width: w,
       child: GestureDetector(
         onTap: () => openMediaItem(ref, context, item),
@@ -556,6 +768,15 @@ class _AggregatePosterCard extends ConsumerWidget {
         ),
       ),
     );
+    if (isTvPlatform && focusNode != null) {
+      return TvFocusable(
+        onActivate: () => openMediaItem(ref, context, item),
+        focusNode: focusNode,
+        borderRadius: 12,
+        child: card,
+      );
+    }
+    return card;
   }
 }
 

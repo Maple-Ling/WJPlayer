@@ -13,7 +13,7 @@ import '../../../core/utils/platform_utils.dart';
 /// 右缘/左缘（Netflix 式），上下切换后焦点落点也稳定。
 void ensureVisibleSmartly(
   BuildContext context, {
-  Duration duration = const Duration(milliseconds: 180),
+  Duration duration = const Duration(milliseconds: 100),
   Curve curve = Curves.easeOutCubic,
 }) {
   final renderObject = context.findRenderObject();

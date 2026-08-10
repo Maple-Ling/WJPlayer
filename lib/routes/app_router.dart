@@ -41,7 +41,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   attachPluginNavigator(_rootNavigatorKey);
   return GoRouter(
     navigatorKey: _rootNavigatorKey,
-    observers: [appRouteObserver],
+    observers: [appRouteObserver, TvFocusRouteObserver()],
     initialLocation: '/discover',
     onException: (context, state, router) => router.go('/discover'),
     routes: [
@@ -418,6 +418,16 @@ class _MainShellState extends ConsumerState<MainShell> {
       LogicalKeyboardKey key, KeyEventSource source, bool isRepeat, bool isUp) {
     if (key != LogicalKeyboardKey.contextMenu) return KeyEventResult.ignored;
     if (isUp) return KeyEventResult.ignored; // KeyUp 不处理（避免双触发）。
+    if (!mounted) return KeyEventResult.ignored;
+    // 模态弹层（Dialog/BottomSheet）打开：状态栏在弹层之下，交还弹层处理。
+    if (TvFocusManager.instance.isSuspended) return KeyEventResult.ignored;
+    // push 子页（Navigator.push 的 MaterialPageRoute）覆盖在 shell 之上：
+    // currentPath 不变但 shell 路由已非栈顶——MENU 不得聚焦被覆盖的隐形
+    // tab 栏（方向键隐形切 tab）。吞掉防止落到原生通道默认分支再次劫持。
+    final shellRoute = ModalRoute.of(context);
+    if (shellRoute != null && !shellRoute.isCurrent) {
+      return KeyEventResult.handled;
+    }
     if (!_supportsFloatingTabBar) return KeyEventResult.ignored;
     // 双通道去抖：原生 MethodChannel 与 Flutter KeyEvent 通道可能同时到达
     // 同一次 MENU（部分设备/模拟器把 KEYCODE_MENU 同时发给两层），350ms 内
@@ -586,6 +596,10 @@ class _MainShellState extends ConsumerState<MainShell> {
       case '/search':
         // 状态栏上键 → 搜索框（tools[0]）；下键 → 搜索框（同）。
         TvFocusManager.instance.setCurrentPageArea('search');
+      case '/home':
+        // 服务器媒体首页：状态栏下键 → 继续观看首卡（index 0）。
+        TvFocusManager.instance
+            .setCurrentPageArea('home_media', firstCardIndex: 0);
       default:
         TvFocusManager.instance.setCurrentPageArea(null);
     }

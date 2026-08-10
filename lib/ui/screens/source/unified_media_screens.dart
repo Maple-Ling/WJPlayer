@@ -610,33 +610,77 @@ class _UnifiedMediaLibraryScreenState
                             Center(child: Text('暂无内容')),
                           ],
                         )
-                      : GridView.builder(
-                          clipBehavior: Clip.none,
-                          padding: const EdgeInsets.all(14),
-                          gridDelegate:
-                              const SliverGridDelegateWithMaxCrossAxisExtent(
-                            maxCrossAxisExtent: 138,
-                            childAspectRatio: 0.58,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 18,
-                          ),
-                          itemCount: _sortedItems.length,
-                          itemBuilder: (_, index) {
-                            final entry = _sortedItems[index];
-                            return _UnifiedMediaCard(
-                              entry: entry,
-                              onTap: () => Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (_) => UnifiedMediaDetailScreen(
-                                    server: widget.server,
-                                    entry: entry,
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
+                      : _buildGrid(),
                 ),
+    );
+  }
+
+  /// 内容网格：TV 用确定性 grid 遍历（列数 3，上下/左右逐卡移动）。
+  Widget _buildGrid() {
+    final grid = GridView.builder(
+      clipBehavior: Clip.none,
+      padding: const EdgeInsets.all(14),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 138,
+        childAspectRatio: 0.58,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 18,
+      ),
+      itemCount: _sortedItems.length,
+      itemBuilder: (_, index) {
+        final entry = _sortedItems[index];
+        return _UnifiedMediaCard(
+          entry: entry,
+          focusNode: isTvPlatform
+              ? TvFocusManager.instance.getArea('media_library_grid')?.nodes[index]
+              : null,
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => UnifiedMediaDetailScreen(
+                server: widget.server,
+                entry: entry,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    if (!isTvPlatform) return grid;
+    // TV：cacheExtent 预构建 + 3 列确定性遍历。
+    return TvFocusArea(
+      id: 'media_library_grid',
+      count: _sortedItems.length,
+      traversal: TraversalPolicies.grid(
+        columns: 3,
+        rowCount: (_sortedItems.length / 3).ceil(),
+      ),
+      child: GridView.builder(
+        clipBehavior: Clip.none,
+        padding: const EdgeInsets.all(14),
+        cacheExtent: 3000,
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 138,
+          childAspectRatio: 0.58,
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 18,
+        ),
+        itemCount: _sortedItems.length,
+        itemBuilder: (_, index) {
+          final entry = _sortedItems[index];
+          return _UnifiedMediaCard(
+            entry: entry,
+            focusNode: context.getFocusNode('media_library_grid', index),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => UnifiedMediaDetailScreen(
+                  server: widget.server,
+                  entry: entry,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -734,6 +778,8 @@ class _UnifiedMediaDetailScreenState
       LogicalKeyboardKey key, KeyEventSource source, bool isRepeat, bool isUp) {
     if (key != LogicalKeyboardKey.contextMenu) return KeyEventResult.ignored;
     if (isUp) return KeyEventResult.ignored;
+    // 弹层（链接 sheet/剧照/演员）打开期间：区域已挂起，不重复弹层。
+    if (TvFocusManager.instance.isSuspended) return KeyEventResult.ignored;
     final detail = _externalDetail;
     if (detail != null) _showLinks(detail);
     return KeyEventResult.handled;
@@ -1548,11 +1594,23 @@ class _UnifiedMediaDetailScreenState
       FocusSection(
           'resources',
           matchList.isNotEmpty ? matchList.length : _resources.length),
+      // 外部补充信息行（与页面渲染顺序一致）：演员/剧照/推荐/链接/工作室。
+      if (_peopleList.isNotEmpty) FocusSection('people', _peopleList.length),
+      if (_externalDetail?.images.isNotEmpty == true)
+        FocusSection('gallery', _externalDetail!.images.length),
+      if (_externalDetail?.recommendations.isNotEmpty == true)
+        FocusSection('recs', _externalDetail!.recommendations.length),
+      if (_externalDetail != null) const FocusSection('links', 3),
+      if (_externalDetail?.companies.isNotEmpty == true)
+        FocusSection('companies', _externalDetail!.companies.length),
     ];
     final layout = FocusSectionLayout(sections);
     _tvLayout = layout;
     final revision =
-        '${_selectedSeasonId}_${_episodes.length}_${matchList.length}';
+        '${_selectedSeasonId}_${_episodes.length}_${matchList.length}_'
+        '${_peopleList.length}_${_externalDetail?.images.length ?? 0}_'
+        '${_externalDetail?.recommendations.length ?? 0}_'
+        '${_externalDetail?.companies.length ?? 0}';
     return TvFocusArea(
       key: ValueKey('media_detail_$revision'),
       id: 'media_detail',
@@ -1944,20 +2002,30 @@ class _UnifiedMediaDetailScreenState
               error: (_, __) => const Center(child: Text('搜索失败')),
               data: (matches) => ListView(
                 padding: const EdgeInsets.all(18),
+                cacheExtent: 3000,
                 children: [
                   const Text('全部播放资源',
                       style:
                           TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 12),
                   for (final match in matches)
-                    ListTile(
-                      leading: const Icon(Icons.play_circle_outline_rounded),
-                      title: Text(match.serverName),
-                      subtitle: Text(match.item.name),
-                      onTap: () {
+                    // TV：弹层打开时焦点区域已挂起，条目经 Flutter 默认遍历
+                    // 聚焦（TvFocusable 自建节点）。
+                    TvFocusable(
+                      onActivate: () {
                         Navigator.pop(context);
                         _openCrossServerMatch(match);
                       },
+                      borderRadius: 12,
+                      child: ListTile(
+                        leading: const Icon(Icons.play_circle_outline_rounded),
+                        title: Text(match.serverName),
+                        subtitle: Text(match.item.name),
+                        onTap: () {
+                          Navigator.pop(context);
+                          _openCrossServerMatch(match);
+                        },
+                      ),
                     ),
                 ],
               ),
@@ -2039,6 +2107,7 @@ class _UnifiedMediaDetailScreenState
           separatorBuilder: (_, __) => const SizedBox(width: 9),
           itemBuilder: (_, index) => TvFocusable(
             onActivate: () => _showImage(images, index),
+            focusNode: _tvNode('gallery', index),
             borderRadius: 18,
             child: InkWell(
             onTap: () => _showImage(images, index),
@@ -2072,6 +2141,7 @@ class _UnifiedMediaDetailScreenState
             return TvFocusable(
               onActivate: () => Navigator.of(context).push(MaterialPageRoute<void>(
                   builder: (_) => ExternalMediaDetailScreen(entry: item))),
+              focusNode: _tvNode('recs', index),
               borderRadius: 18,
               child: InkWell(
               onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
@@ -2104,7 +2174,9 @@ class _UnifiedMediaDetailScreenState
         ),
       );
 
-  Widget _links(ExternalMediaDetail detail) {
+  /// [sheetMode] 为 true（底部弹层内）：使用自建焦点节点而非页面区域节点
+  /// （区域节点挂载在覆盖层之下，同一 FocusNode 不能双挂载）。
+  Widget _links(ExternalMediaDetail detail, {bool sheetMode = false}) {
     final query =
         Uri.encodeQueryComponent('${detail.title} ${detail.year ?? ''}'.trim());
     final values = <(String, String)>[
@@ -2128,12 +2200,13 @@ class _UnifiedMediaDetailScreenState
       ),
     ];
     return Wrap(spacing: 12, runSpacing: 10, children: [
-      for (final value in values)
+      for (var i = 0; i < values.length; i++)
         TvFocusable(
           onActivate: () => launchUrl(
-            Uri.parse(value.$2),
+            Uri.parse(values[i].$2),
             mode: LaunchMode.externalApplication,
           ),
+          focusNode: sheetMode ? null : _tvNode('links', i),
           borderRadius: 999,
           child: ActionChip(
           avatar: const Icon(Icons.open_in_new_rounded, size: 17),
@@ -2168,7 +2241,9 @@ class _UnifiedMediaDetailScreenState
         builder: (_) => SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(18),
-            child: _links(detail),
+            // sheet 内复用 _links 但使用自建节点（页面区域节点挂载在覆盖
+            // 层之下，同一节点不能双挂载）。
+            child: _links(detail, sheetMode: true),
           ),
         ),
       );
@@ -2181,6 +2256,7 @@ class _UnifiedMediaDetailScreenState
           separatorBuilder: (_, __) => const SizedBox(width: 12),
           itemBuilder: (_, index) => TvFocusable(
             onActivate: () {},
+            focusNode: _tvNode('companies', index),
             borderRadius: 999,
             child: ActionChip(
             avatar: companies[index].logoUrl == null
@@ -2210,6 +2286,7 @@ class _UnifiedMediaDetailScreenState
             return TvFocusable(
               onActivate: onTap ?? () {},
               enabled: onTap != null,
+              focusNode: _tvNode('people', index),
               borderRadius: 30,
               child: InkWell(
               onTap: onTap,
@@ -2904,25 +2981,30 @@ class _UnifiedMediaDetailScreenState
       barrierColor: Colors.black,
       builder: (_) => Dialog.fullscreen(
         backgroundColor: Colors.black,
-        child: Stack(children: [
-          PageView.builder(
-            controller: PageController(initialPage: initial),
-            itemCount: images.length,
-            itemBuilder: (_, index) => InteractiveViewer(
-              minScale: 1,
-              maxScale: 5,
-              child: Center(
-                child: MediaImage(imageUrl: images[index], fit: BoxFit.contain),
-              ),
-            ),
-          ),
-          SafeArea(
-            child: IconButton(
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.close_rounded, color: Colors.white, size: 30),
-            ),
-          ),
-        ]),
+        child: isTvPlatform
+            // TV：全屏看图改遥控操作——左右键翻页、OK/返回关闭。
+            ? TvImageGallery(images: images, initial: initial)
+            : Stack(children: [
+                PageView.builder(
+                  controller: PageController(initialPage: initial),
+                  itemCount: images.length,
+                  itemBuilder: (_, index) => InteractiveViewer(
+                    minScale: 1,
+                    maxScale: 5,
+                    child: Center(
+                      child: MediaImage(
+                          imageUrl: images[index], fit: BoxFit.contain),
+                    ),
+                  ),
+                ),
+                SafeArea(
+                  child: IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close_rounded,
+                        color: Colors.white, size: 30),
+                  ),
+                ),
+              ]),
       ),
     );
   }

@@ -29,6 +29,43 @@ typedef TraversalFn =
 /// （挂在 GoRouter.observers 上，供 RouteAware 页面订阅）。
 final appRouteObserver = RouteObserver<ModalRoute<void>>();
 
+/// 全局焦点路由观察器（挂在 GoRouter.observers）：
+///
+/// 任何路由被 push 到 Navigator 时，释放当前活跃 TvFocusArea 的 D-pad 接管：
+///  - 模态弹层（Dialog/BottomSheet，[PopupRoute]）：弹层内元素可经 Flutter
+///    默认遍历聚焦，方向键不再隐形操作底层页面；
+///  - 全屏页面（MaterialPageRoute 等）：页面若激活自己的 TvFocusArea 可重新
+///    接管；无焦点管理的页面（设置子页等）交还默认遍历。
+/// 路由全部关闭后恢复挂起前区域。
+///
+/// 背景（2026-08-10 全页面审计根因）：TvKeyboardListener 根 Focus 在任一
+/// 区域活跃时拦截所有方向键（moveDPad），而弹层是新路由不在区域里 →
+/// 弹层内元素永远不可达、方向键操作隐形底层。
+class TvFocusRouteObserver extends NavigatorObserver {
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    TvFocusManager.instance
+        .pushCover(modal: route is PopupRoute<dynamic>);
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    TvFocusManager.instance
+        .popCover(modal: route is PopupRoute<dynamic>);
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    TvFocusManager.instance
+        .popCover(modal: route is PopupRoute<dynamic>);
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    // 替换路由（GoRouter go 同层级替换）不改变覆盖深度。
+  }
+}
+
 /// 详情页等长页面的焦点分区。
 class FocusSection {
   final String id;
@@ -293,6 +330,72 @@ class TvFocusManager extends ChangeNotifier {
   /// 返回目标：进入状态栏（main_tabs）前活跃的区域，退出时归还焦点。
   String? _returnAreaId;
 
+  /// 覆盖层深度计数（由 TvFocusRouteObserver 维护）：
+  ///  - [_pageCoverDepth]：全屏页面路由（MaterialPageRoute push）覆盖数
+  ///  - [_modalCoverDepth]：模态弹层（Dialog/BottomSheet）覆盖数
+  /// 任一覆盖层打开时释放当前活跃区域焦点（交还 Flutter 默认遍历）；
+  /// 覆盖层页面若激活自己的 TvFocusArea 可重新接管；关闭时按栈恢复。
+  int _pageCoverDepth = 0;
+  int _modalCoverDepth = 0;
+
+  /// 覆盖层栈：每层进入前保存的活跃区域 id（Navigator LIFO 顺序）。
+  final List<String?> _coverStack = <String?>[];
+
+  /// 仅模态弹层打开时为 true（播放器遥控/页面 MENU 据此交还按键）。
+  bool get isSuspended => _modalCoverDepth > 0;
+
+  /// 有全屏页面覆盖。
+  bool get hasPageCover => _pageCoverDepth > 0;
+
+  /// 覆盖层（页面路由或弹层）打开：保存当前活跃区域并释放焦点接管。
+  /// [modal] 为 true 表示模态弹层（Dialog/BottomSheet），false 为全屏页面。
+  void pushCover({required bool modal}) {
+    if (modal) {
+      _modalCoverDepth++;
+    } else {
+      _pageCoverDepth++;
+    }
+    _coverStack.add(_activeAreaId);
+    final areaId = _activeAreaId;
+    if (areaId != null) {
+      final area = _areas[areaId];
+      final node = area?.nodes[area?.focusIndex ?? 0];
+      node?.unfocus();
+      _activeAreaId = null;
+    }
+  }
+
+  /// 覆盖层关闭：按栈恢复进入该层前的活跃区域。
+  void popCover({required bool modal}) {
+    if (modal) {
+      if (_modalCoverDepth > 0) _modalCoverDepth--;
+    } else {
+      if (_pageCoverDepth > 0) _pageCoverDepth--;
+    }
+    if (_coverStack.isEmpty) return;
+    final saved = _coverStack.removeLast();
+    if (_modalCoverDepth == 0 && _pageCoverDepth == 0) {
+      // 全部覆盖层关闭：顶层页面若激活了自己的区域则保持；否则恢复
+      // 进入最底层覆盖层前的区域（栈底）。
+      if (_activeAreaId != null) {
+        _coverStack.clear();
+        return;
+      }
+      final base = _coverStack.isNotEmpty ? _coverStack.first : saved;
+      _coverStack.clear();
+      _restoreArea(base ?? saved);
+    } else if (modal) {
+      // 弹层关闭但页面覆盖仍在：恢复弹层进入前的区域（若未被占用），
+      // 让页面自身的确定性遍历继续可用（如详情页弹层关闭后回到区域）。
+      if (_activeAreaId == null) _restoreArea(saved);
+    }
+  }
+
+  void _restoreArea(String? areaId) {
+    if (areaId == null || !_areas.containsKey(areaId)) return;
+    switchArea(areaId);
+  }
+
   /// 当前可见 tab 页面对应的页面区域 id（由 MainShell 随路由更新），
   /// 状态栏退出/下移时作为初始切入目标（如历史页刷新按钮/第一条卡片）。
   String? _currentPageAreaId;
@@ -323,7 +426,7 @@ class TvFocusManager extends ChangeNotifier {
   /// D-pad 接管条件：活动区域存在即接管（**不依赖节点是否已持有系统焦点**）——
   /// 覆盖层（状态栏）打开后方向键只操作当前显示层；节点未挂载/未聚焦时由
   /// [_requestFocus] 持续重试聚焦，避免方向键回退 Flutter 默认遍历
-  /// 控制后台页面/乱跳。
+  /// 控制后台页面/乱跳。覆盖层打开时 [pushCover] 已释放活跃区域。
   bool get canHandleDPad => hasManagedFocus;
 
   FocusArea? getArea(String areaId) => _areas[areaId];

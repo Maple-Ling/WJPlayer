@@ -2220,6 +2220,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     final service = _playerService;
     if (!service.isInitialized) return KeyEventResult.ignored;
 
+    // 模态弹层（弹幕搜索/倍速面板/聚合搜索 sheet 等）打开期间：播放器
+    // 不拦截任何按键，交还 Flutter 默认遍历让弹层内元素可聚焦（方向键
+    // 不再隐形快进快退/OK 播放暂停）。弹层关闭后自动恢复。
+    if (TvFocusManager.instance.isSuspended) return KeyEventResult.ignored;
+
     // 选集栏打开：方向键/OK 全部交给选集导航（左/右=滚动聚焦、OK=选集、
     // 上/下/MENU=关闭），不落到播放控制。
     if (_tvEpisodeBarOpen) {

@@ -342,7 +342,10 @@ class ConfigSyncChoiceScreen extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(title: const Text('配置同步')),
-      body: ListView(
+      body: TvListArea(
+        id: 'config_sync_choice',
+        onBoundary: (_) => Navigator.of(context).pop(),
+        child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           Text(
@@ -373,6 +376,7 @@ class ConfigSyncChoiceScreen extends StatelessWidget {
           ),
         ],
       ),
+      ),
     );
   }
 }
@@ -395,7 +399,7 @@ class _SyncChoiceCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return Card(
       clipBehavior: Clip.antiAlias,
-      child: ListTile(
+      child: TvListTile(
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         leading: Icon(icon, size: 30, color: scheme.primary),

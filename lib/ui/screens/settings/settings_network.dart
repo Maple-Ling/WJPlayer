@@ -87,7 +87,10 @@ class _NetworkSettingsScreenState extends ConsumerState<NetworkSettingsScreen> {
           ? AppColors.lightBackground
           : AppColors.darkBackground,
       appBar: AppBar(title: const Text('代理设置')),
-      body: ListView(
+      body: TvListArea(
+        id: 'settings_network',
+        onBoundary: (_) => Navigator.of(context).pop(),
+        child: body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
         children: [
           const _NetworkSectionLabel('代理协议'),
@@ -186,7 +189,7 @@ class _NetworkSettingsScreenState extends ConsumerState<NetworkSettingsScreen> {
               color: _testOk
                   ? Colors.green.withValues(alpha: 0.12)
                   : Colors.red.withValues(alpha: 0.12),
-              child: ListTile(
+              child: TvListTile(
                 leading: Icon(
                   _testOk ? Icons.check_circle : Icons.error,
                   color: _testOk ? Colors.green : Colors.red,
@@ -222,7 +225,8 @@ class _NetworkSettingsScreenState extends ConsumerState<NetworkSettingsScreen> {
             ],
           ),
         ],
-      ),
+      ),),
+
     );
   }
 }

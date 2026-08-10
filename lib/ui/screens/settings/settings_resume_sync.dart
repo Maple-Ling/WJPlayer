@@ -108,7 +108,10 @@ class _ResumeSyncScreenState extends ConsumerState<ResumeSyncScreen> {
           ? AppColors.lightBackground
           : AppColors.darkBackground,
       appBar: AppBar(title: const Text('同步记录')),
-      body: ListView(
+      body: TvListArea(
+        id: 'settings_resume_sync',
+        onBoundary: (_) => Navigator.of(context).pop(),
+        child: body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           const Padding(
@@ -160,7 +163,7 @@ class _ResumeSyncScreenState extends ConsumerState<ResumeSyncScreen> {
           ),
           if (writebackEnabled) ...[
             Card(
-              child: ListTile(
+              child: TvListTile(
                 leading: const Icon(Icons.dns_outlined),
                 title: const Text('回传目标'),
                 subtitle: Text(crossServerWritebackRangeLabel(writebackRange)),
@@ -188,7 +191,7 @@ class _ResumeSyncScreenState extends ConsumerState<ResumeSyncScreen> {
             ),
           ),
           Card(
-            child: ListTile(
+            child: TvListTile(
               leading: const Icon(Icons.history),
               title: const Text('本地观看记录'),
               subtitle: Text(
@@ -197,7 +200,7 @@ class _ResumeSyncScreenState extends ConsumerState<ResumeSyncScreen> {
             ),
           ),
           Card(
-            child: ListTile(
+            child: TvListTile(
               leading: const Icon(Icons.delete_outline, color: Colors.redAccent),
               title: const Text('清除本地观看记录'),
               subtitle: const Text('删除本机保存的全部续播记录'),
@@ -213,7 +216,8 @@ class _ResumeSyncScreenState extends ConsumerState<ResumeSyncScreen> {
             ),
           ),
         ],
-      ),
+      ),),
+
     );
   }
 }

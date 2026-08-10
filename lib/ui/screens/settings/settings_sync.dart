@@ -14,7 +14,10 @@ class SyncSettingsScreen extends ConsumerWidget {
           ? AppColors.lightBackground
           : AppColors.darkBackground,
       appBar: AppBar(title: const Text('同步服务')),
-      body: ListView(
+      body: TvListArea(
+        id: 'settings_sync',
+        onBoundary: (_) => Navigator.of(context).pop(),
+        child: body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           const Padding(
@@ -39,20 +42,30 @@ class SyncSettingsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 12),
           Card(
-            child: SwitchListTile(
-              secondary: const Icon(Icons.rocket_launch_outlined, size: 28),
-              title: const Text('Bangumi 国内加速'),
-              subtitle: const Text(
-                '通过反代访问 Bangumi 接口与图片，国内更快更稳；关闭则直连官方 api.bgm.tv。',
-                style: TextStyle(fontSize: 12),
+            // TV：SwitchListTile 整行包 TvFocusable（遥控遍历 + OK 切换），
+            // 节点由页面 TvListArea 自动分配。
+            child: TvFocusable(
+              onActivate: () => ref
+                  .read(bangumiMirrorProvider.notifier)
+                  .state = !ref.read(bangumiMirrorProvider),
+              focusNode: TvListArea.takeNode(context),
+              borderRadius: 12,
+              child: SwitchListTile(
+                secondary: const Icon(Icons.rocket_launch_outlined, size: 28),
+                title: const Text('Bangumi 国内加速'),
+                subtitle: const Text(
+                  '通过反代访问 Bangumi 接口与图片，国内更快更稳；关闭则直连官方 api.bgm.tv。',
+                  style: TextStyle(fontSize: 12),
+                ),
+                value: ref.watch(bangumiMirrorProvider),
+                onChanged: (v) =>
+                    ref.read(bangumiMirrorProvider.notifier).state = v,
               ),
-              value: ref.watch(bangumiMirrorProvider),
-              onChanged: (v) =>
-                  ref.read(bangumiMirrorProvider.notifier).state = v,
             ),
           ),
         ],
-      ),
+      ),),
+
     );
   }
 }
@@ -77,7 +90,7 @@ class _SyncServiceTile extends ConsumerWidget {
         ? '已连接${account!.username != null ? '：${account!.username}' : ''}'
         : description;
     return Card(
-      child: ListTile(
+      child: TvListTile(
         leading: Icon(icon, size: 32),
         title: Text(service.displayName),
         subtitle: Text(subtitle),

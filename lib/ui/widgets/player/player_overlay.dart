@@ -461,6 +461,15 @@ class PlayerOverlayState extends State<PlayerOverlay> {
     widget.onUiVisibilityChanged?.call(true);
     // 打开二级菜单时通知外部暂停自动隐藏计时器。
     widget.onMenuVisibilityChanged?.call(true);
+    // TV：二级菜单切换（一级→二级/同级切换）后重新聚焦菜单容器。
+    // 菜单容器 Focus 的 autofocus 仅在挂载时生效，而容器在整个菜单打开期间
+    // 常驻（只替换内容）→ 旧菜单项 dispose 后焦点丢失，方向键无法进入新
+    // 菜单项。手动 requestFocus 让 Flutter 默认遍历从容器重新开始。
+    if (isTvPlatform) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _menuFocusNode.requestFocus();
+      });
+    }
   }
 
   void _closeMenu() {
