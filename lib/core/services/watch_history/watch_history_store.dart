@@ -146,6 +146,24 @@ class WatchHistoryStore {
     });
   }
 
+  /// 批量删除记录（记录页合并卡片删除整组用，一次落盘）。
+  Future<void> deleteRecords(Iterable<String> recordIds) {
+    return _enqueueWrite(() async {
+      final document = await loadDocument();
+      final ids = recordIds.toSet();
+      final records = document.records
+          .where((entry) => !ids.contains(entry.recordId))
+          .toList(growable: false);
+      await _writeDocument(
+        WatchHistoryDocument(
+          schemaVersion: 1,
+          updatedAt: DateTime.now().toUtc(),
+          records: records,
+        ),
+      );
+    });
+  }
+
   Future<File> _resolveFile() async {
     final directory = await _directoryResolver();
     await directory.create(recursive: true);

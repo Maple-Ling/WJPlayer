@@ -6396,28 +6396,50 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   /// 导入外挂字幕（胶囊菜单用；逻辑与右侧面板一致）。
   Future<void> _pickExternalSubtitle() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['srt', 'ass', 'ssa', 'vtt', 'sup', 'pgs'],
-      );
-      if (result != null && result.files.single.path != null) {
-        final filePath = result.files.single.path!;
-        final logger = AppLogger();
-        logger.i('Player', '导入外部字幕: $filePath');
-
-        var pathToLoad = filePath;
-        final lowerExt = filePath.split('.').last.toLowerCase();
-        if (_playerService.coreType == PlayerCoreType.exoPlayer &&
-            (lowerExt == 'ass' || lowerExt == 'ssa') &&
-            !ref.read(exoLibassProvider)) {
-          pathToLoad = await SubtitleProcessor.convertAssToSrt(filePath);
-          logger.i('Player', '导入字幕: EXO内核已将 ASS/SSA 转为 SRT: $pathToLoad');
-        }
-        await _playerService.loadLibassSubtitle(pathToLoad);
+      // Android SAF 按 MIME 过滤时 ass/ssa/sup 等无标准关联的扩展名会被
+      // 文件管理器灰显/过滤导致「无法选择 ASS」，改用 FileType.any 后自行校验。
+      final result = await FilePicker.platform.pickFiles(type: FileType.any);
+      if (result == null || result.files.single.path == null) {
+        return;
+      }
+      final pickedPath = result.files.single.path!;
+      final logger = AppLogger();
+      final lowerExt = pickedPath.split('.').last.toLowerCase();
+      const allowedExtensions = {'srt', 'ass', 'ssa', 'vtt', 'sup', 'pgs'};
+      if (!allowedExtensions.contains(lowerExt)) {
         if (mounted) {
-          AppToast.show(context, '已导入并加载字幕: ${result.files.single.name}',
-              position: AppToastPosition.topCenter);
+          AppToast.show(context, '仅支持 srt/ass/ssa/vtt/sup/pgs 字幕文件',
+              kind: AppToastKind.error, position: AppToastPosition.topCenter);
         }
+        return;
+      }
+      logger.i('Player', '导入外部字幕: $pickedPath');
+
+      // 拷贝到应用私有临时目录（保留扩展名）：消除 SAF content:// 与作用域
+      // 存储路径权限问题，保证 EXO/MPV 都能稳定读取。
+      final tempDir = await getTemporaryDirectory();
+      final safeName =
+          'ext_subtitle_${DateTime.now().millisecondsSinceEpoch}.$lowerExt';
+      final localFile = await File(pickedPath).copy('${tempDir.path}/$safeName');
+
+      var pathToLoad = localFile.path;
+      if (_playerService.coreType == PlayerCoreType.exoPlayer &&
+          (lowerExt == 'ass' || lowerExt == 'ssa') &&
+          !ref.read(exoLibassProvider)) {
+        pathToLoad = await SubtitleProcessor.convertAssToSrt(localFile.path);
+        logger.i('Player', '导入字幕: EXO内核已将 ASS/SSA 转为 SRT: $pathToLoad');
+      }
+      await _playerService.loadLibassSubtitle(pathToLoad);
+      // EXO 原生端在轨道就绪后自动选轨存在时序竞态（一次性延迟，轨道未就绪
+      // 则永久漏选 →「提示加载成功但无字幕」），Dart 侧轮询兜底主动选中。
+      final selected = await _selectExternalSubtitleTrack(pathToLoad);
+      if (!mounted) return;
+      if (selected) {
+        AppToast.show(context, '已导入并加载字幕: ${result.files.single.name}',
+            position: AppToastPosition.topCenter);
+      } else {
+        AppToast.show(context, '字幕文件已导入，但播放器未识别到字幕轨',
+            position: AppToastPosition.topCenter);
       }
     } catch (e) {
       if (mounted) {
@@ -6425,6 +6447,50 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             kind: AppToastKind.error, position: AppToastPosition.topCenter);
       }
     }
+  }
+
+  /// 加载外挂字幕文件后，等待并主动选中新出现的字幕轨（EXO/MPV 共用）。
+  /// 返回是否成功选中。
+  Future<bool> _selectExternalSubtitleTrack(String subtitlePath) async {
+    final before = _playerService.tracksInfo
+        .where((t) => _isSubtitleTrack(t))
+        .map((t) => t['id']?.toString())
+        .toSet();
+    final ext = subtitlePath.split('.').last.toLowerCase();
+    final targetKeywords = switch (ext) {
+      'ass' || 'ssa' => const ['ssa', 'ass'],
+      'vtt' => const ['vtt', 'webvtt'],
+      'sup' || 'pgs' => const ['pgs', 'sup', 'hdmv'],
+      _ => const ['subrip', 'x-subrip', 'srt'],
+    };
+    for (int i = 0; i < 20; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      final tracks = _playerService.tracksInfo
+          .where((t) => _isSubtitleTrack(t))
+          .toList();
+      for (final track in tracks) {
+        final id = track['id']?.toString();
+        if (id == null || id.isEmpty || before.contains(id)) continue;
+        final mime = (track['mimeType']?.toString() ?? '').toLowerCase();
+        final codec = (track['codec']?.toString() ?? '').toLowerCase();
+        final label =
+            '${track['label']} ${track['title']} ${track['language']}'
+                .toLowerCase();
+        final matched = targetKeywords.any((k) =>
+            mime.contains(k) || codec.contains(k) || label.contains(k));
+        if (matched || i >= 15) {
+          // 匹配到新字幕轨；超时后兜底选最后出现的一条字幕轨。
+          await _playerService.selectSubtitleTrack(id);
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  bool _isSubtitleTrack(Map<String, dynamic> track) {
+    final type = track['type']?.toString();
+    return type == 'text' || type == 'bitmap' || type == 'sub';
   }
 
   void _showSkipDialog() {

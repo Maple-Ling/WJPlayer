@@ -6,6 +6,7 @@ import '../../../core/providers/media_providers.dart';
 import '../../../core/providers/server_providers.dart';
 import '../../../core/providers/watch_history_providers.dart';
 import '../../../core/services/tv_focus_manager.dart';
+import '../../../core/services/watch_history/watch_history_merge.dart';
 import '../../../core/services/watch_history/watch_history_models.dart';
 import '../../../core/sources/feiniu_backend.dart';
 import '../../../core/sources/media_source_backend.dart';
@@ -23,7 +24,10 @@ final watchHistoryRefreshProvider = StateProvider<int>((ref) => 0);
 final allWatchHistoryProvider =
     FutureProvider<List<WatchHistoryRecord>>((ref) async {
   ref.watch(watchHistoryRefreshProvider);
-  return ref.watch(watchHistoryProvider).loadAll();
+  final all = await ref.watch(watchHistoryProvider).loadAll();
+  // 记录页合并同一媒体：同一电影/电视剧（跨服务器、跨分集）只显示一条，
+  // 取最近一次播放的记录（含其服务器）为代表。
+  return mergeWatchHistoryRecords(all);
 });
 
 /// 飞牛封面需要 Authorization/Cookie/Authx；按服务器缓存请求头，避免记录列表每张卡
@@ -180,7 +184,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                       key: ValueKey(record.recordId),
                       direction: _selecting ? DismissDirection.none : DismissDirection.endToStart,
                       background: Container(color: Theme.of(context).colorScheme.errorContainer, alignment: Alignment.centerRight, padding: const EdgeInsets.only(right: 20), child: const Icon(Icons.delete_rounded)),
-                      onDismissed: (_) => _deleteOne(record.recordId),
+                      onDismissed: (_) => _deleteOne(record),
                       child: _HistoryTile(
                         record: record,
                         selected: _selectedIds.contains(record.recordId),
@@ -248,12 +252,19 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     if (!mounted) return;
     setState(() { _selectedIds..clear()..addAll(items.map((e) => e.recordId)); });
   }
-  Future<void> _deleteOne(String id) async {
-    await ref.read(watchHistoryProvider).deleteRecord(id);
+  Future<void> _deleteOne(WatchHistoryRecord record) async {
+    // 合并卡片删除以媒体为单位：同一电影/电视剧的跨服务器、全部分集记录一并清除。
+    await ref.read(watchHistoryProvider).deleteMediaGroup(record);
     ref.read(watchHistoryRefreshProvider.notifier).state++;
   }
   Future<void> _deleteSelected() async {
-    for (final id in _selectedIds.toList()) { await ref.read(watchHistoryProvider).deleteRecord(id); }
+    final items = await ref.read(allWatchHistoryProvider.future);
+    for (final id in _selectedIds.toList()) {
+      final record = items.where((e) => e.recordId == id).firstOrNull;
+      if (record != null) {
+        await ref.read(watchHistoryProvider).deleteMediaGroup(record);
+      }
+    }
     if (!mounted) return;
     setState(_selectedIds.clear);
     ref.read(watchHistoryRefreshProvider.notifier).state++;
@@ -536,7 +547,7 @@ class _HistoryTile extends ConsumerWidget {
       ),
     );
     if (confirmed != true) return;
-    await ref.read(watchHistoryProvider).deleteRecord(record.recordId);
+    await ref.read(watchHistoryProvider).deleteMediaGroup(record);
     ref.read(watchHistoryRefreshProvider.notifier).state++;
   }
 

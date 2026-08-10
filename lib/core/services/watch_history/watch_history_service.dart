@@ -1,5 +1,6 @@
 import '../../api/api_interfaces.dart';
 import 'watch_history_matcher.dart';
+import 'watch_history_merge.dart';
 import 'watch_history_models.dart';
 import 'watch_history_store.dart';
 
@@ -29,6 +30,21 @@ class WatchHistoryService {
   Future<void> deleteRecord(String recordId) {
     _lastProgressWriteAt.remove(recordId);
     return _store.deleteRecord(recordId);
+  }
+
+  /// 删除同一媒体的整组播放记录（跨服务器 + 全部分集）。
+  /// 记录页合并卡片后删除以媒体为单位，避免残留「幽灵」记录。
+  Future<void> deleteMediaGroup(WatchHistoryRecord representative) async {
+    final key = watchHistoryMergeGroupKey(representative);
+    final all = await _store.loadAll();
+    final ids = all
+        .where((record) => watchHistoryMergeGroupKey(record) == key)
+        .map((record) => record.recordId)
+        .toSet();
+    for (final id in ids) {
+      _lastProgressWriteAt.remove(id);
+    }
+    await _store.deleteRecords(ids);
   }
 
   Future<WatchHistoryFingerprint?> buildFingerprint(
@@ -71,34 +87,47 @@ class WatchHistoryService {
       return normalizedRemotePosition;
     }
 
-    // 候选进度：远端进度、本服本地记录进度，外加（可选）其它服务器的记录进度，取最大值。
+    // 候选进度：远端进度 + 本地记录进度。本地记录（本服 + 可选其它服务器）统一
+    // 按「最近一次播放」取——用户切换到其它服务器重新观看时，旧服务器更远的
+    // 进度**不应**覆盖新进度（原实现跨服务器取最大进度导致永远续到旧服务器）。
     var best = normalizedRemotePosition;
-    best = _maxPositionTicks(
-      best,
-      _normalizePositionTicks(
-        existing?.lastPositionTicks,
-        item.runTimeTicks ?? existing?.runTimeTicks,
-      ),
-    );
+    WatchHistoryRecord? latest =
+        (existing != null && !existing.played && existing.lastPositionTicks > 0)
+            ? existing
+            : null;
 
     if (crossServer) {
-      final crossPosition = await _resolveCrossServerPositionTicks(
+      final cross = await _resolveLatestCrossServerRecord(
         api: api,
         item: item,
         currentScopeKey: scopeKey,
       );
-      best = _maxPositionTicks(best, crossPosition);
+      if (cross != null &&
+          (latest == null || cross.lastPlayedAt.isAfter(latest.lastPlayedAt))) {
+        latest = cross;
+      }
+    }
+
+    if (latest != null) {
+      best = _maxPositionTicks(
+        best,
+        _normalizePositionTicks(
+          latest.lastPositionTicks,
+          item.runTimeTicks ?? latest.runTimeTicks,
+        ),
+      );
     }
 
     return best;
   }
 
-  /// 扫描其它服务器（scope）下的观看记录，找出与当前条目匹配的最远续播进度。
+  /// 扫描其它服务器（scope）下的观看记录，找出与当前条目匹配的
+  /// **最近一次播放**（lastPlayedAt 最新）的记录，用于续播。
   ///
   /// 复用 [matchWatchHistoryRecordToCandidate]：因为 canonicalKey/指纹与服务器无关
   /// （基于 TMDB / PresentationUniqueKey / 剧名+季集号等），同一部影片或同一集在
   /// 不同服务器之间也能匹配上。仅采用 strong / possible 级别，避免误续播。
-  Future<int?> _resolveCrossServerPositionTicks({
+  Future<WatchHistoryRecord?> _resolveLatestCrossServerRecord({
     required ApiClientFactory api,
     required MediaItem item,
     required String currentScopeKey,
@@ -109,7 +138,7 @@ class WatchHistoryService {
     }
     final seriesTmdbId = await resolveSeriesTmdbId(api, item);
 
-    int? best;
+    WatchHistoryRecord? best;
     for (final record in all) {
       // 本服记录已在上层处理。
       if (record.scopeKey == currentScopeKey) {
@@ -128,13 +157,9 @@ class WatchHistoryService {
           match.confidence != WatchHistoryMatchConfidence.possible) {
         continue;
       }
-      best = _maxPositionTicks(
-        best,
-        _normalizePositionTicks(
-          record.lastPositionTicks,
-          item.runTimeTicks ?? record.runTimeTicks,
-        ),
-      );
+      if (best == null || record.lastPlayedAt.isAfter(best.lastPlayedAt)) {
+        best = record;
+      }
     }
     return best;
   }

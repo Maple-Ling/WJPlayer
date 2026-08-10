@@ -782,7 +782,15 @@ final rankingCrossServerMatchProvider = StreamProvider.autoDispose
     yield const <ServerMatchInfo>[];
     return;
   }
-  final servers = ref.watch(serverListProvider);
+  // 只 watch「影响搜索范围」的字段签名（String 值比较），而非完整服务器列表。
+  // 播放器播放飞牛源时每 1~5 秒会 updateLastWatchedAt 刷新服务器列表（新 List
+  // 实例 → 依赖变更），若直接 watch 完整列表，本 stream 会被反复重启，聚合
+  // 菜单表现为「一直重置刷新」。lastWatchedAt 等无关字段变化不触发重启。
+  ref.watch(serverListProvider.select((list) => list
+      .map((s) =>
+          '${s.id}|${s.hidden}|${s.sourceKind.name}|${(s.authToken ?? '').isNotEmpty}|${s.sourceKind == SourceKind.feiniu ? (s.username ?? '').isNotEmpty : true}')
+      .join(';')));
+  final servers = ref.read(serverListProvider);
   final hiddenLibraries = ref.watch(hiddenLibrariesProvider);
   // 隐藏服务器默认排除；服务器列表三击显示（revealHiddenServersProvider）
   // 后同样参与跨服匹配（与列表可见性一致）。

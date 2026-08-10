@@ -665,12 +665,18 @@ class ExoPlayerPlugin(
                 .setId("ext_${externalSubtitles.size}")
                 .build()
 
+            externalSubtitles.clear()
             externalSubtitles.add(subtitleConfig)
             lastLoadedSubtitleMimeType = mimeType
 
             val currentMediaItem = exoPlayer.currentMediaItem
             if (currentMediaItem != null) {
-                val allSubtitles = currentMediaItem.localConfiguration?.subtitleConfigurations?.toMutableList() ?: mutableListOf()
+                // 只保留最新的外挂字幕轨：重建 mediaItem 前剔除旧的 ext_* 配置，
+                // 避免多次加载导致多个 und 语言外挂轨并存、自动选轨选到旧轨。
+                val existingSubs = currentMediaItem.localConfiguration?.subtitleConfigurations ?: emptyList()
+                val allSubtitles = existingSubs
+                    .filter { !(it.id?.startsWith("ext_") == true) }
+                    .toMutableList()
                 allSubtitles.add(subtitleConfig)
 
                 val currentPosition = exoPlayer.currentPosition
@@ -693,7 +699,7 @@ class ExoPlayerPlugin(
             }
         }
 
-        private fun forceSelectLatestSubtitleTrack() {
+        private fun forceSelectLatestSubtitleTrack(): Boolean {
             try {
                 val tracks = exoPlayer.currentTracks
                 val groups = tracks.groups
@@ -737,9 +743,12 @@ class ExoPlayerPlugin(
                     trackSelector.parameters = paramsBuilder.build()
                     val selectedMime = group.getTrackFormat(bestTrackIdx).sampleMimeType ?: "unknown"
                     emitEvent("subtitleType", if (selectedMime.contains("pgs", ignoreCase = true) || selectedMime.contains("hdmv", ignoreCase = true) || selectedMime.contains("vobsub", ignoreCase = true) || selectedMime.contains("dvb", ignoreCase = true)) "bitmap" else if (selectedMime.contains("ssa", ignoreCase = true) || selectedMime.contains("ass", ignoreCase = true)) "ass" else "text")
+                    return true
                 }
+                return false
             } catch (e: Exception) {
                 emitEvent("subtitleError", "forceSelect failed: ${e.message}")
+                return false
             }
         }
 
@@ -1075,8 +1084,12 @@ class ExoPlayerPlugin(
 
             if (lastLoadedSubtitleMimeType != null) {
                 instanceHandler.postDelayed({
-                    forceSelectLatestSubtitleTrack()
-                    lastLoadedSubtitleMimeType = null
+                    // 轨道可能尚未就绪（异步解析），选中成功才清空标记；
+                    // 失败保留，下一次 onTracksChanged 继续重试，杜绝「一次性
+                    // 延迟竞态导致外挂字幕轨永久漏选（提示成功却无字幕）」。
+                    if (forceSelectLatestSubtitleTrack()) {
+                        lastLoadedSubtitleMimeType = null
+                    }
                 }, 500)
             }
         }
