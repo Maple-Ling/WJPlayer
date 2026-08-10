@@ -696,6 +696,14 @@ class ExoPlayerPlugin(
                 exoPlayer.playWhenReady = playWhenReady
                 exoPlayer.setMediaItem(newMediaItem, currentPosition)
                 exoPlayer.prepare()
+                // 轨道就绪时 onTracksChanged 可能延迟/或已错过（prepare 前已经
+                // 触发过）：prepare 后直接首触一次确定性选轨；失败保留标记，
+                // 由后续 onTracksChanged 继续重试，直到外挂轨被真正选中。
+                instanceHandler.postDelayed({
+                    if (forceSelectLatestSubtitleTrack()) {
+                        lastLoadedSubtitleMimeType = null
+                    }
+                }, 300)
             }
         }
 
