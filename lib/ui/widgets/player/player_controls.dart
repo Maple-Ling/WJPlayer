@@ -7,6 +7,41 @@ import '../../../core/utils/platform_utils.dart';
 const Color playerUiBlue = Color(0xFF4A7BD0);
 const Color playerUiPink = Color(0xFFE94560);
 
+/// 播放器 UI 统一缩放因子（InheritedWidget）。
+///
+/// 平板/大屏：控制栏组件尺寸按 [scale] 放大，避免 UI 在平板上过小。
+/// 手机与 TV 尺寸基准为 1.0（TV 已有自己的大尺寸布局），不缩放。
+/// 读取：`final s = PlayerUiScale.of(context);`（无提供者时返回 1.0）。
+class PlayerUiScale extends InheritedWidget {
+  const PlayerUiScale({
+    super.key,
+    required this.scale,
+    required super.child,
+  });
+
+  final double scale;
+
+  static double of(BuildContext context) {
+    final widget =
+        context.dependOnInheritedWidgetOfExactType<PlayerUiScale>();
+    return widget?.scale ?? 1.0;
+  }
+
+  @override
+  bool updateShouldNotify(PlayerUiScale oldWidget) =>
+      oldWidget.scale != scale;
+}
+
+/// 计算播放器 UI 缩放因子：按屏幕最短边（竖屏=宽，横屏=高）判断。
+/// 基准 360dp 为 1.0（小屏手机），超过后线性放大、封顶 1.8（平板/大屏）。
+/// TV（isTvPlatform）始终 1.0——TV 控制栏已按遥控距离设计，无需放大。
+double playerUiScaleOf(Size screenSize, {required bool isTv}) {
+  if (isTv) return 1.0;
+  final shortest = screenSize.shortestSide;
+  if (shortest <= 360) return 1.0;
+  return (shortest / 360).clamp(1.0, 1.8);
+}
+
 /// 顶栏操作类型。
 enum PlayerTopAction {
   anime4k,
@@ -147,6 +182,7 @@ class TopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     return SafeArea(
       top: true,
       bottom: false,
@@ -173,18 +209,18 @@ class TopBar extends StatelessWidget {
             child: Padding(
               padding: EdgeInsets.fromLTRB(
                 MediaQuery.sizeOf(context).width * 0.08,
-                8,
+                8 * s,
                 MediaQuery.sizeOf(context).width * 0.08,
-                12,
+                12 * s,
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _buildSystemStatusBar(),
-                  const SizedBox(height: 8),
-                  _buildTopRow(),
-                  const SizedBox(height: 10),
-                  _buildServerMeta(),
+                  _buildSystemStatusBar(s),
+                  SizedBox(height: 8 * s),
+                  _buildTopRow(s),
+                  SizedBox(height: 10 * s),
+                  _buildServerMeta(s),
                 ],
               ),
             ),
@@ -194,7 +230,7 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  Widget _buildSystemStatusBar() {
+  Widget _buildSystemStatusBar(double s) {
     final safeBattery = batteryLevel.clamp(0, 100);
     final batteryColor = safeBattery <= 15
         ? Colors.orangeAccent
@@ -203,15 +239,15 @@ class TopBar extends StatelessWidget {
             : Colors.white70;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
+      padding: EdgeInsets.symmetric(horizontal: 4 * s),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
             timeText,
-            style: const TextStyle(
+            style: TextStyle(
               color: Colors.white70,
-              fontSize: 10.5,
+              fontSize: 10.5 * s,
               fontWeight: FontWeight.w500,
               letterSpacing: 0.2,
               height: 1,
@@ -224,15 +260,15 @@ class TopBar extends StatelessWidget {
               if (networkSpeed.isNotEmpty) ...[
                 Text(
                   networkSpeed,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white70,
-                    fontSize: 10.5,
+                    fontSize: 10.5 * s,
                     fontWeight: FontWeight.w500,
                     height: 1,
                     fontFeatures: [FontFeature.tabularFigures()],
                   ),
                 ),
-                const SizedBox(width: 9),
+                SizedBox(width: 9 * s),
               ],
               // 状态栏图标仅展示：Tooltip 自带 opaque 手势层会拦截点击，
               // 包 IgnorePointer 让图标区域点击穿透到底层手势层。
@@ -241,23 +277,23 @@ class TopBar extends StatelessWidget {
                   message: networkLabel,
                   child: Icon(
                     networkIcon,
-                    size: 15,
+                    size: 15 * s,
                     color: Colors.white70,
                   ),
                 ),
               ),
-              const SizedBox(width: 9),
+              SizedBox(width: 9 * s),
               Icon(
                 _batteryIcon,
-                size: 16,
+                size: 16 * s,
                 color: batteryColor,
               ),
-              const SizedBox(width: 3),
+              SizedBox(width: 3 * s),
               Text(
                 '$safeBattery%',
-                style: const TextStyle(
+                style: TextStyle(
                   color: Colors.white70,
-                  fontSize: 10.5,
+                  fontSize: 10.5 * s,
                   fontWeight: FontWeight.w500,
                   height: 1,
                 ),
@@ -269,15 +305,15 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  Widget _buildTopRow() {
+  Widget _buildTopRow(double s) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         _TransparentCircleButton(
           icon: Icons.arrow_back_ios_new,
           tooltip: '返回',
-          size: 38,
-          iconSize: 20,
+          size: 38 * s,
+          iconSize: 20 * s,
           background: Colors.black.withOpacity(0.4),
           onTap: onBack,
           focusNode: tvFocusNodes != null && tvFocusNodes!.isNotEmpty
@@ -285,9 +321,9 @@ class TopBar extends StatelessWidget {
               : null,
           focused: tvFocusIndex == 0,
         ),
-        const SizedBox(width: 10),
-        _buildLogo(),
-        const SizedBox(width: 10),
+        SizedBox(width: 10 * s),
+        _buildLogo(s),
+        SizedBox(width: 10 * s),
         Expanded(
           child: Align(
             alignment: Alignment.centerRight,
@@ -322,33 +358,33 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  Widget _buildLogo() {
+  Widget _buildLogo(double s) {
     final Widget content;
     if (logo != null) {
       content = logo!;
     } else if (logoImage != null) {
       content = Image(
         image: logoImage!,
-        width: logoWidth,
-        height: logoHeight,
+        width: logoWidth * s,
+        height: logoHeight * s,
         fit: BoxFit.contain,
         filterQuality: FilterQuality.high,
         gaplessPlayback: true,
         // 外部 logo 加载失败时回退到文本标题，避免显示破图/错乱占位。
-        errorBuilder: (_, __, ___) => _buildLogoText(),
+        errorBuilder: (_, __, ___) => _buildLogoText(s),
       );
     } else {
-      content = _buildLogoText();
+      content = _buildLogoText(s);
     }
 
     return SizedBox(
-      width: logoWidth,
-      height: logoHeight,
+      width: logoWidth * s,
+      height: logoHeight * s,
       child: content,
     );
   }
 
-  Widget _buildLogoText() {
+  Widget _buildLogoText(double s) {
     final text = logoText.trim().isEmpty ? 'WJPLAYER' : logoText.trim();
     // 无 logo 时显示媒体名称：使用适中的标题字号（不再放大到 logo 级字号），
     // 且标题后不再追加 V 形 chevron（豆瓣等源只有文字标题）。
@@ -356,9 +392,9 @@ class TopBar extends StatelessWidget {
       text,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: const TextStyle(
+      style: TextStyle(
         color: Colors.white,
-        fontSize: 20,
+        fontSize: 20 * s,
         fontWeight: FontWeight.w800,
         letterSpacing: 1,
         height: 1,
@@ -373,46 +409,46 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  Widget _buildServerMeta() {
+  Widget _buildServerMeta(double s) {
     return Padding(
-      padding: const EdgeInsets.only(left: 4),
+      padding: EdgeInsets.only(left: 4 * s),
       child: Row(
         children: [
           // 服务器图标纯装饰展示：IgnorePointer 让图标区域点击也穿透到
           // 底层手势层——点服务器名称/线路/图标均触发控制栏显隐切换。
           SizedBox(
-            width: 22,
-            height: 22,
+            width: 22 * s,
+            height: 22 * s,
             child: IgnorePointer(
               child: serverIcon ??
                   Container(
                     decoration: BoxDecoration(
                       color: playerUiBlue,
-                      borderRadius: BorderRadius.circular(6),
+                      borderRadius: BorderRadius.circular(6 * s),
                     ),
                     alignment: Alignment.center,
-                    child: const Icon(
+                    child: Icon(
                       Icons.dns_outlined,
                       color: Colors.white,
-                      size: 14,
+                      size: 14 * s,
                     ),
                   ),
             ),
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: 8 * s),
           Flexible(
             child: Text(
               serverName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 color: Colors.white,
-                fontSize: 13,
+                fontSize: 13 * s,
                 fontWeight: FontWeight.w600,
               ),
             ),
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: 8 * s),
           Flexible(
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -420,15 +456,15 @@ class TopBar extends StatelessWidget {
                 // 线路状态小圆点纯装饰：IgnorePointer 让该区域点击同样穿透。
                 IgnorePointer(
                   child: Container(
-                    width: 10,
-                    height: 10,
-                    decoration: const BoxDecoration(
+                    width: 10 * s,
+                    height: 10 * s,
+                    decoration: BoxDecoration(
                       color: playerUiBlue,
                       shape: BoxShape.circle,
                     ),
                   ),
                 ),
-                const SizedBox(width: 5),
+                SizedBox(width: 5 * s),
                 Flexible(
                   child: Text(
                     lineName,
@@ -436,7 +472,7 @@ class TopBar extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.6),
-                      fontSize: 10.5,
+                      fontSize: 10.5 * s,
                     ),
                   ),
                 ),
@@ -579,6 +615,7 @@ class _TopActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     return FocusableActionDetector(
       focusNode: focusNode,
       actions: {
@@ -595,9 +632,9 @@ class _TopActionButton extends StatelessWidget {
           behavior: HitTestBehavior.opaque,
           onTap: onTap,
           child: Container(
-            width: 36,
-            height: 36,
-            margin: const EdgeInsets.symmetric(horizontal: 2),
+            width: 36 * s,
+            height: 36 * s,
+            margin: EdgeInsets.symmetric(horizontal: 2 * s),
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color: selected
@@ -608,7 +645,7 @@ class _TopActionButton extends StatelessWidget {
                   ? Border.all(color: Colors.white, width: 2)
                   : null,
             ),
-            child: PlayerShadowIcon(icon: icon, size: 19),
+            child: PlayerShadowIcon(icon: icon, size: 19 * s),
           ),
         ),
       ),
@@ -688,6 +725,7 @@ class BottomBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     return SafeArea(
       top: false,
       child: Stack(
@@ -712,15 +750,15 @@ class BottomBar extends StatelessWidget {
             child: Padding(
               padding: EdgeInsets.fromLTRB(
                 MediaQuery.sizeOf(context).width * 0.08,
-                8,
+                8 * s,
                 MediaQuery.sizeOf(context).width * 0.08,
-                14,
+                14 * s,
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Padding(
-                    padding: const EdgeInsets.only(left: 4),
+                    padding: EdgeInsets.only(left: 4 * s),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -728,9 +766,9 @@ class BottomBar extends StatelessWidget {
                           title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: Colors.white,
-                            fontSize: 17,
+                            fontSize: 17 * s,
                             fontWeight: FontWeight.w700,
                             shadows: [
                               Shadow(
@@ -741,34 +779,34 @@ class BottomBar extends StatelessWidget {
                             ],
                           ),
                         ),
-                        const SizedBox(height: 2),
+                        SizedBox(height: 2 * s),
                         Text(
                           episode,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.78),
-                            fontSize: 12,
+                            fontSize: 12 * s,
                           ),
                         ),
-                        const SizedBox(height: 2),
+                        SizedBox(height: 2 * s),
                         Text(
                           meta,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.55),
-                            fontSize: 10.5,
+                            fontSize: 10.5 * s,
                             letterSpacing: 0.3,
                           ),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 6),
-                  _buildProgress(context, focused: tvFocusIndex == -2),
-                  const SizedBox(height: 6),
-                  _buildControls(),
+                  SizedBox(height: 6 * s),
+                  _buildProgress(context, focused: tvFocusIndex == -2, s: s),
+                  SizedBox(height: 6 * s),
+                  _buildControls(s),
                 ],
               ),
             ),
@@ -778,7 +816,8 @@ class BottomBar extends StatelessWidget {
     );
   }
 
-  Widget _buildProgress(BuildContext context, {required bool focused}) {
+  Widget _buildProgress(BuildContext context,
+      {required bool focused, required double s}) {
     final enabled = onProgressChanged != null || onProgressChangeEnd != null;
     final target = dragTargetPosition;
     final progressRow = Row(
@@ -786,12 +825,12 @@ class BottomBar extends StatelessWidget {
         SizedBox(
           // 时间文本自适应宽度：HH:MM:SS（8 字符）比 MM:SS（5 字符）宽，
           // 固定 42 会把长时长挤到下一行。
-          width: _durationTextWidth(_formatDuration(position)),
+          width: _durationTextWidth(_formatDuration(position), s),
           child: Text(
             _formatDuration(position),
             style: TextStyle(
               color: Colors.white.withOpacity(0.8),
-              fontSize: 11,
+              fontSize: 11 * s,
             ),
           ),
         ),
@@ -804,14 +843,14 @@ class BottomBar extends StatelessWidget {
                 : null,
             child: SliderTheme(
               data: SliderTheme.of(context).copyWith(
-                trackHeight: focused ? 6 : 4,
+                trackHeight: (focused ? 6 : 4) * s,
                 activeTrackColor: focused ? Colors.white : playerUiPink,
                 inactiveTrackColor: Colors.white.withOpacity(0.2),
                 secondaryActiveTrackColor: Colors.white.withOpacity(0.35),
                 thumbColor: Colors.white,
                 overlayColor: Colors.white.withOpacity(0.12),
                 thumbShape: RoundSliderThumbShape(
-                    enabledThumbRadius: focused ? 9 : 6.5),
+                    enabledThumbRadius: (focused ? 9 : 6.5) * s),
                 overlayShape: const RoundSliderOverlayShape(overlayRadius: 13),
               ),
               child: Slider(
@@ -826,13 +865,13 @@ class BottomBar extends StatelessWidget {
           ),
         ),
         SizedBox(
-          width: _durationTextWidth(_formatDuration(duration)),
+          width: _durationTextWidth(_formatDuration(duration), s),
           child: Text(
             _formatDuration(duration),
             textAlign: TextAlign.right,
             style: TextStyle(
               color: Colors.white.withOpacity(0.8),
-              fontSize: 11,
+              fontSize: 11 * s,
             ),
           ),
         ),
@@ -845,13 +884,13 @@ class BottomBar extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Padding(
-          padding: const EdgeInsets.only(bottom: 12),
+          padding: EdgeInsets.only(bottom: 12 * s),
           child: Center(
             child: Text(
               _formatDuration(target),
-              style: const TextStyle(
+              style: TextStyle(
                 color: Colors.white,
-                fontSize: 16,
+                fontSize: 16 * s,
                 fontWeight: FontWeight.w600,
                 shadows: [Shadow(color: Colors.black87, blurRadius: 4)],
               ),
@@ -863,7 +902,7 @@ class BottomBar extends StatelessWidget {
     );
   }
 
-  Widget _buildControls() {
+  Widget _buildControls(double s) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -879,7 +918,7 @@ class BottomBar extends StatelessWidget {
                   ? tvFocusNodes![1]
                   : null,
             ),
-            const SizedBox(width: 8),
+            SizedBox(width: 8 * s),
             _TransportButton(
               icon: isPlaying
                   ? Icons.pause_rounded
@@ -893,7 +932,7 @@ class BottomBar extends StatelessWidget {
                   ? tvFocusNodes![2]
                   : null,
             ),
-            const SizedBox(width: 8),
+            SizedBox(width: 8 * s),
             _TransportButton(
               icon: Icons.skip_next_rounded,
               tooltip: '下一集',
@@ -905,7 +944,7 @@ class BottomBar extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(width: 8),
+        SizedBox(width: 8 * s),
         Expanded(
           child: Align(
             alignment: Alignment.centerRight,
@@ -949,13 +988,13 @@ class BottomBar extends StatelessWidget {
 
   /// 进度条时间文本的精确宽度（fontSize 11 测量 + 2px 余量）。
   /// 时长带小时（HH:MM:SS）比纯 MM:SS 宽，固定宽度会把末位挤到下一行。
-  double _durationTextWidth(String text) {
+  double _durationTextWidth(String text, double s) {
     final tp = TextPainter(
       text: TextSpan(
         text: text,
         style: TextStyle(
           color: Colors.white.withOpacity(0.8),
-          fontSize: 11,
+          fontSize: 11 * s,
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -991,6 +1030,7 @@ class _TransportButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     return FocusableActionDetector(
       focusNode: focusNode,
       actions: {
@@ -1007,12 +1047,12 @@ class _TransportButton extends StatelessWidget {
           behavior: HitTestBehavior.opaque,
           onTap: onTap,
           child: SizedBox(
-            width: size,
-            height: size,
+            width: size * s,
+            height: size * s,
             child: Center(
               child: Container(
-                width: size,
-                height: size,
+                width: size * s,
+                height: size * s,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
@@ -1029,7 +1069,7 @@ class _TransportButton extends StatelessWidget {
                 ),
                 child: PlayerShadowIcon(
                   icon: icon,
-                  size: iconSize,
+                  size: iconSize * s,
                 ),
               ),
             ),
@@ -1095,6 +1135,7 @@ class _BottomActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     return FocusableActionDetector(
       focusNode: focusNode,
       actions: {
@@ -1111,14 +1152,15 @@ class _BottomActionButton extends StatelessWidget {
           behavior: HitTestBehavior.opaque,
           onTap: onTap,
           child: Container(
-            constraints: const BoxConstraints(minWidth: 44),
-            margin: const EdgeInsets.symmetric(horizontal: 1),
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+            constraints: BoxConstraints(minWidth: 44 * s),
+            margin: EdgeInsets.symmetric(horizontal: 1 * s),
+            padding: EdgeInsets.symmetric(
+                horizontal: 7 * s, vertical: 6 * s),
             decoration: BoxDecoration(
               color: selected
                   ? playerUiBlue.withOpacity(0.35)
                   : Colors.transparent,
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(10 * s),
               border: focused
                   ? Border.all(color: Colors.white, width: 2)
                   : null,
@@ -1126,13 +1168,13 @@ class _BottomActionButton extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              PlayerShadowIcon(icon: icon, size: 19),
-              const SizedBox(height: 3),
+              PlayerShadowIcon(icon: icon, size: 19 * s),
+              SizedBox(height: 3 * s),
               Text(
                 label,
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.85),
-                  fontSize: 9.5,
+                  fontSize: 9.5 * s,
                   letterSpacing: 0.2,
                 ),
               ),
@@ -1168,37 +1210,38 @@ class SideButtons extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     return SizedBox.expand(
       child: LayoutBuilder(
         builder: (context, constraints) {
           final height = constraints.maxHeight.isFinite
               ? constraints.maxHeight
               : MediaQuery.sizeOf(context).height;
-          final top = ((height - buttonSize) / 2).clamp(0.0, height);
+          final top = ((height - buttonSize * s) / 2).clamp(0.0, height);
 
           return Stack(
             children: [
               Positioned(
-                left: horizontalPadding,
+                left: horizontalPadding * s,
                 top: top,
                 child: _SideButton(
                   tooltip: '锁定屏幕',
                   icon: Icons.lock_outline_rounded,
                   iconBuilder: lockIconBuilder,
-                  buttonSize: buttonSize,
-                  iconSize: iconSize,
+                  buttonSize: buttonSize * s,
+                  iconSize: iconSize * s,
                   onTap: onLock,
                 ),
               ),
               Positioned(
-                right: horizontalPadding,
+                right: horizontalPadding * s,
                 top: top,
                 child: _SideButton(
                   tooltip: '旋转屏幕',
                   icon: Icons.screen_rotation_alt_rounded,
                   iconBuilder: rotateIconBuilder,
-                  buttonSize: buttonSize,
-                  iconSize: iconSize,
+                  buttonSize: buttonSize * s,
+                  iconSize: iconSize * s,
                   onTap: onRotate,
                 ),
               ),

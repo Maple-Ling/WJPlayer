@@ -12,6 +12,7 @@ import '../../../core/utils/platform_utils.dart';
 import '../../../core/utils/track_preference.dart';
 import '../common/danmaku_search_widget.dart';
 import '../common/playback_resource_card.dart';
+import 'player_controls.dart'; // PlayerUiScale（平板控制栏缩放）
 
 const Color popupMenuBlue = Color(0xFF4A7BD0);
 const Color popupMenuSelectedBlue = Color(0x664A7BD0);
@@ -174,11 +175,12 @@ class PopupMenuShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () {},
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(14 * s),
         child: BackdropFilter(
           filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
           child: DecoratedBox(
@@ -187,7 +189,7 @@ class PopupMenuShell extends StatelessWidget {
               border: Border.all(
                 color: Colors.white.withOpacity(0.12),
               ),
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(14 * s),
               boxShadow: const [
                 BoxShadow(
                   color: Color(0x99000000),
@@ -197,7 +199,7 @@ class PopupMenuShell extends StatelessWidget {
               ],
             ),
             child: Padding(
-              padding: const EdgeInsets.all(10),
+              padding: EdgeInsets.all(10 * s),
               // 菜单内容超高（弹幕设置等长菜单）时可在屏内下滑查看，
               // 高度上限与 _PopupMenuPositionDelegate 的可用高度对齐。
               child: ConstrainedBox(
@@ -226,18 +228,19 @@ class PopupMenuTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     return Padding(
-      padding: const EdgeInsets.only(
-        left: 8,
-        right: 8,
-        top: 2,
-        bottom: 8,
+      padding: EdgeInsets.only(
+        left: 8 * s,
+        right: 8 * s,
+        top: 2 * s,
+        bottom: 8 * s,
       ),
       child: Text(
         title,
         style: TextStyle(
           color: Colors.white.withOpacity(0.6),
-          fontSize: 10.5,
+          fontSize: 10.5 * s,
           letterSpacing: 0.5,
         ),
       ),
@@ -255,9 +258,10 @@ class PopupMenuCheck extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     return Container(
-      width: 16,
-      height: 16,
+      width: 16 * s,
+      height: 16 * s,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: selected ? popupMenuBlue : Colors.transparent,
@@ -271,8 +275,8 @@ class PopupMenuCheck extends StatelessWidget {
       ),
       child: selected
           ? Container(
-              width: 6,
-              height: 6,
+              width: 6 * s,
+              height: 6 * s,
               decoration: const BoxDecoration(
                 color: Colors.white,
                 shape: BoxShape.circle,
@@ -295,22 +299,23 @@ class PopupMenuSwitch extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     return TvMenuFocusable(
       onActivate: () => onChanged(!value),
-      borderRadius: 9,
+      borderRadius: 9 * s,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => onChanged(!value),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
-          width: 30,
-          height: 16,
-          padding: const EdgeInsets.all(2),
+          width: 30 * s,
+          height: 16 * s,
+          padding: EdgeInsets.all(2 * s),
           decoration: BoxDecoration(
             color: value
                 ? popupMenuBlue
                 : Colors.white.withOpacity(0.2),
-            borderRadius: BorderRadius.circular(9),
+            borderRadius: BorderRadius.circular(9 * s),
           ),
           child: AnimatedAlign(
             duration: const Duration(milliseconds: 180),
@@ -318,8 +323,8 @@ class PopupMenuSwitch extends StatelessWidget {
                 ? Alignment.centerRight
                 : Alignment.centerLeft,
             child: Container(
-              width: 12,
-              height: 12,
+              width: 12 * s,
+              height: 12 * s,
               decoration: const BoxDecoration(
                 color: Colors.white,
                 shape: BoxShape.circle,
@@ -354,13 +359,14 @@ class PopupMenuPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     Widget? end = trailing;
     if (end == null && showCheck) {
       end = PopupMenuCheck(selected: selected);
     }
     if (end == null && sub != null) {
       end = ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 150),
+        constraints: BoxConstraints(maxWidth: 150 * s),
         child: Text(
           sub!,
           maxLines: 1,
@@ -368,7 +374,7 @@ class PopupMenuPill extends StatelessWidget {
           textAlign: TextAlign.right,
           style: TextStyle(
             color: Colors.white.withOpacity(0.5),
-            fontSize: 11,
+            fontSize: 11 * s,
           ),
         ),
       );
@@ -381,16 +387,16 @@ class PopupMenuPill extends StatelessWidget {
         onTap: onTap,
         onLongPress: onLongPress,
         child: Container(
-          margin: const EdgeInsets.only(bottom: 4),
-          padding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 9,
+          margin: EdgeInsets.only(bottom: 4 * s),
+          padding: EdgeInsets.symmetric(
+            horizontal: 12 * s,
+            vertical: 9 * s,
           ),
           decoration: BoxDecoration(
             color: selected
                 ? popupMenuSelectedBlue
                 : Colors.white.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(9),
+            borderRadius: BorderRadius.circular(9 * s),
           ),
           child: Row(
             children: [
@@ -399,14 +405,14 @@ class PopupMenuPill extends StatelessWidget {
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white,
-                    fontSize: 13,
+                    fontSize: 13 * s,
                   ),
                 ),
               ),
               if (end != null) ...[
-                const SizedBox(width: 10),
+                SizedBox(width: 10 * s),
                 end,
               ],
             ],
@@ -462,36 +468,37 @@ class PopupMenuSliderRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     final effectiveMax = math.max(min, max);
     final clamped = value.clamp(min, effectiveMax).toDouble();
     final labelText = valueLabel ?? '${(value * 100).round()}%';
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+      padding: EdgeInsets.symmetric(horizontal: 4 * s, vertical: 6 * s),
       child: Row(
         children: [
           SizedBox(
-            width: 56,
+            width: 56 * s,
             child: Text(
               label,
               style: TextStyle(
                 color: Colors.white.withOpacity(0.75),
-                fontSize: 12,
+                fontSize: 12 * s,
               ),
             ),
           ),
           Expanded(
             child: SliderTheme(
               data: SliderTheme.of(context).copyWith(
-                trackHeight: 5,
+                trackHeight: 5 * s,
                 activeTrackColor: popupMenuBlue,
                 inactiveTrackColor: Colors.white.withOpacity(0.18),
                 thumbColor: Colors.white,
                 overlayColor: Colors.white.withOpacity(0.1),
-                thumbShape: const RoundSliderThumbShape(
-                  enabledThumbRadius: 5,
+                thumbShape: RoundSliderThumbShape(
+                  enabledThumbRadius: 5 * s,
                 ),
-                overlayShape: const RoundSliderOverlayShape(
-                  overlayRadius: 10,
+                overlayShape: RoundSliderOverlayShape(
+                  overlayRadius: 10 * s,
                 ),
               ),
               child: Slider(
@@ -503,13 +510,13 @@ class PopupMenuSliderRow extends StatelessWidget {
             ),
           ),
           SizedBox(
-            width: 34,
+            width: 34 * s,
             child: Text(
               labelText,
               textAlign: TextAlign.right,
-              style: const TextStyle(
+              style: TextStyle(
                 color: Colors.white,
-                fontSize: 11,
+                fontSize: 11 * s,
               ),
             ),
           ),
@@ -570,8 +577,9 @@ class AggregateSearchCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     return SizedBox(
-      width: 250,
+      width: 250 * s,
       child: PlaybackResourceCard(
         serverName: source.name,
         isCurrent: selected,
@@ -602,15 +610,16 @@ class PopupAggregateSearchMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     final visibleSources = sources.take(3).toList(growable: false);
     if (visibleSources.isEmpty) {
       return SizedBox(
-        height: 52,
+        height: 52 * s,
         child: Center(
           child: TextButton.icon(
             onPressed: onSearchMore,
-            icon: const Icon(Icons.search_rounded, size: 18),
-            label: const Text('搜索更多资源'),
+            icon: Icon(Icons.search_rounded, size: 18 * s),
+            label: Text('搜索更多资源'),
           ),
         ),
       );
@@ -618,14 +627,14 @@ class PopupAggregateSearchMenu extends StatelessWidget {
 
     // 资源卡直接位于播放器进度条锚点，不再叠加“菜单胶囊”内边距/背景。
     return SizedBox(
-      height: 155,
+      height: 155 * s,
       width: double.infinity,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
         padding: EdgeInsets.zero,
         itemCount: visibleSources.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        separatorBuilder: (_, __) => SizedBox(width: 10 * s),
         itemBuilder: (context, index) {
           final source = visibleSources[index];
           return AggregateSearchCard(
@@ -1035,6 +1044,7 @@ class _PopupMediaInfoMenuState extends State<PopupMediaInfoMenu> {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     final pages = _pages();
     final page = _page.clamp(0, pages.length - 1).toInt();
     if (page != _page) {
@@ -1049,7 +1059,7 @@ class _PopupMediaInfoMenuState extends State<PopupMediaInfoMenu> {
       children: [
         const PopupMenuTitle(title: '媒体信息'),
         SizedBox(
-          height: 184,
+          height: 184 * s,
           child: PageView.builder(
             controller: _pageController,
             itemCount: pages.length,
@@ -1065,13 +1075,13 @@ class _PopupMediaInfoMenuState extends State<PopupMediaInfoMenu> {
                 tooltip: '上一页',
                 visualDensity: VisualDensity.compact,
                 onPressed: page == 0 ? null : () => _goTo(page - 1),
-                icon: const Icon(Icons.chevron_left_rounded, size: 20),
+                icon: Icon(Icons.chevron_left_rounded, size: 20 * s),
               ),
               Text(
                 '${page + 1}/${pages.length}',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.58),
-                  fontSize: 11,
+                  fontSize: 11 * s,
                 ),
               ),
               IconButton(
@@ -1080,7 +1090,7 @@ class _PopupMediaInfoMenuState extends State<PopupMediaInfoMenu> {
                 onPressed: page == pages.length - 1
                     ? null
                     : () => _goTo(page + 1),
-                icon: const Icon(Icons.chevron_right_rounded, size: 20),
+                icon: Icon(Icons.chevron_right_rounded, size: 20 * s),
               ),
             ],
           ),
@@ -1292,8 +1302,9 @@ class _PopupInfoPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     return ListView.separated(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
+      padding: EdgeInsets.symmetric(horizontal: 8 * s),
       physics: const BouncingScrollPhysics(),
       itemCount: items.length,
       separatorBuilder: (_, __) => Divider(
@@ -1303,27 +1314,27 @@ class _PopupInfoPage extends StatelessWidget {
       itemBuilder: (_, index) {
         final item = items[index];
         return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
+          padding: EdgeInsets.symmetric(vertical: 8 * s),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               SizedBox(
-                width: 58,
+                width: 58 * s,
                 child: Text(
                   item.label,
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.55),
-                    fontSize: 11,
+                    fontSize: 11 * s,
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
+              SizedBox(width: 10 * s),
               Expanded(
                 child: Text(
                   item.value,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white,
-                    fontSize: 12,
+                    fontSize: 12 * s,
                     height: 1.35,
                   ),
                 ),
@@ -1531,6 +1542,7 @@ class PopupSubtitleSettingsMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     Widget row({
       required String label,
       required double value,
@@ -1540,32 +1552,32 @@ class PopupSubtitleSettingsMenu extends StatelessWidget {
       required ValueChanged<double> onChanged,
     }) {
       return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+        padding: EdgeInsets.symmetric(horizontal: 4 * s, vertical: 6 * s),
         child: Row(
           children: [
             SizedBox(
-              width: 56,
+              width: 56 * s,
               child: Text(
                 label,
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.75),
-                  fontSize: 12,
+                  fontSize: 12 * s,
                 ),
               ),
             ),
             Expanded(
               child: SliderTheme(
                 data: SliderTheme.of(context).copyWith(
-                  trackHeight: 5,
+                  trackHeight: 5 * s,
                   activeTrackColor: popupMenuBlue,
                   inactiveTrackColor: Colors.white.withOpacity(0.18),
                   thumbColor: Colors.white,
                   overlayColor: Colors.white.withOpacity(0.1),
-                  thumbShape: const RoundSliderThumbShape(
-                    enabledThumbRadius: 5,
+                  thumbShape: RoundSliderThumbShape(
+                    enabledThumbRadius: 5 * s,
                   ),
-                  overlayShape: const RoundSliderOverlayShape(
-                    overlayRadius: 10,
+                  overlayShape: RoundSliderOverlayShape(
+                    overlayRadius: 10 * s,
                   ),
                 ),
                 child: Slider(
@@ -1577,11 +1589,11 @@ class PopupSubtitleSettingsMenu extends StatelessWidget {
               ),
             ),
             SizedBox(
-              width: 40,
+              width: 40 * s,
               child: Text(
                 display,
                 textAlign: TextAlign.right,
-                style: const TextStyle(color: Colors.white, fontSize: 11),
+                style: TextStyle(color: Colors.white, fontSize: 11 * s),
               ),
             ),
           ],
@@ -1825,8 +1837,9 @@ class _PopupEpisodePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     return ListView.separated(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
+      padding: EdgeInsets.symmetric(horizontal: 8 * s),
       physics: scrollable
           ? const AlwaysScrollableScrollPhysics()
           : const NeverScrollableScrollPhysics(),
@@ -1845,16 +1858,16 @@ class _PopupEpisodePage extends StatelessWidget {
             behavior: HitTestBehavior.opaque,
             onTap: () => onEpisodeSelected(episode.index),
             child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 7),
+            padding: EdgeInsets.symmetric(vertical: 7 * s),
             child: Row(
               children: [
                 SizedBox(
-                  width: 42,
+                  width: 42 * s,
                   child: Text(
                     'EP${episode.index}',
                     style: TextStyle(
                       color: selected ? popupMenuBlue : Colors.white,
-                      fontSize: 12,
+                      fontSize: 12 * s,
                       fontWeight: selected
                           ? FontWeight.w700
                           : FontWeight.normal,
@@ -1868,7 +1881,7 @@ class _PopupEpisodePage extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: Colors.white.withOpacity(selected ? 1 : 0.78),
-                      fontSize: 12,
+                      fontSize: 12 * s,
                       fontWeight: selected
                           ? FontWeight.w600
                           : FontWeight.normal,
@@ -1876,10 +1889,10 @@ class _PopupEpisodePage extends StatelessWidget {
                   ),
                 ),
                 if (selected)
-                  const Icon(
+                  Icon(
                     Icons.check_rounded,
                     color: popupMenuBlue,
-                    size: 17,
+                    size: 17 * s,
                   ),
               ],
             ),

@@ -163,23 +163,119 @@ class AssConverter {
     return (b.startMs - a.endMs).abs() < 100 || (b.startMs >= a.startMs && b.startMs <= a.endMs + 100);
   }
   
-  /// 去除 ASS 标签（保留基础格式）
+  /// 将 ASS 文本块转换为 SRT 文本（保留颜色/粗体/斜体/下划线等基础样式；
+  /// 复杂特效如卡拉OK(\k)、位移(\move)、淡入淡出(\fad) 无法用 SRT 表达，丢弃）。
+  /// ASS 颜色为 BGR（&HBBGGRR&），SRT 用 <font color="#RRGGBB">。
   static String _stripAssTags(String text) {
-    var result = text;
-    
-    // 替换 \\N 和 \\n 为换行
+    final buffer = StringBuffer();
+    var inFont = false;
+    var inBold = false;
+    var inItalic = false;
+    var inUnderline = false;
+
+    void closeAll() {
+      if (inUnderline) {
+        buffer.write('</u>');
+        inUnderline = false;
+      }
+      if (inItalic) {
+        buffer.write('</i>');
+        inItalic = false;
+      }
+      if (inBold) {
+        buffer.write('</b>');
+        inBold = false;
+      }
+      if (inFont) {
+        buffer.write('</font>');
+        inFont = false;
+      }
+    }
+
+    final tagRe = RegExp(r'\{([^}]*)\}');
+    var last = 0;
+    for (final m in tagRe.allMatches(text)) {
+      buffer.write(text.substring(last, m.start));
+      final inner = m.group(1)!;
+      // 颜色：\c / \1c..\4c 后跟 &HBBGGRR&（主色 \c/\1c 常用）。
+      final colorMatch =
+          RegExp(r'\\(?:[1234]?c)&H([0-9a-fA-F]{6})&?').firstMatch(inner);
+      if (colorMatch != null) {
+        final bgr = colorMatch.group(1)!;
+        final rgb =
+            '#${bgr.substring(4, 6)}${bgr.substring(2, 4)}${bgr.substring(0, 2)}';
+        if (inFont) {
+          buffer.write('</font>');
+          inFont = false;
+        }
+        buffer.write('<font color="$rgb">');
+        inFont = true;
+        last = m.end;
+        continue;
+      }
+      // 样式复位 \r / \r样式名：关闭所有已开标签。
+      if (RegExp(r'\\r\w*').hasMatch(inner)) {
+        closeAll();
+        last = m.end;
+        continue;
+      }
+      // 粗体
+      final boldMatch = RegExp(r'\\b([01])').firstMatch(inner);
+      if (boldMatch != null) {
+        final on = boldMatch.group(1) == '1';
+        if (on && !inBold) {
+          buffer.write('<b>');
+          inBold = true;
+        } else if (!on && inBold) {
+          buffer.write('</b>');
+          inBold = false;
+        }
+        last = m.end;
+        continue;
+      }
+      // 斜体
+      final italicMatch = RegExp(r'\\i([01])').firstMatch(inner);
+      if (italicMatch != null) {
+        final on = italicMatch.group(1) == '1';
+        if (on && !inItalic) {
+          buffer.write('<i>');
+          inItalic = true;
+        } else if (!on && inItalic) {
+          buffer.write('</i>');
+          inItalic = false;
+        }
+        last = m.end;
+        continue;
+      }
+      // 下划线
+      final underMatch = RegExp(r'\\u([01])').firstMatch(inner);
+      if (underMatch != null) {
+        final on = underMatch.group(1) == '1';
+        if (on && !inUnderline) {
+          buffer.write('<u>');
+          inUnderline = true;
+        } else if (!on && inUnderline) {
+          buffer.write('</u>');
+          inUnderline = false;
+        }
+        last = m.end;
+        continue;
+      }
+      // 其余标签（特效/定位/透明度等）：丢弃。
+      last = m.end;
+    }
+    buffer.write(text.substring(last));
+    closeAll(); // 行尾闭合所有未闭合标签，避免样式泄漏到下一行
+
+    var result = buffer.toString();
+    // 替换 \N 和 \n 为换行（SRT 支持多行）
     result = result.replaceAll(r'\N', '\n');
     result = result.replaceAll(r'\n', '\n');
-    
-    // 去除所有 {\...} 标签
-    result = result.replaceAll(RegExp(r'\{[^}]*\}'), '');
-    
-    // 去除其他转义序列
-    result = result.replaceAll('\\h', ' ');  // 硬空格
-    
+    // 硬空格
+    result = result.replaceAll('\\h', ' ');
     // 清理多余空格
     result = result.replaceAll(RegExp(r' +'), ' ').trim();
-    
+
     return result;
   }
 }

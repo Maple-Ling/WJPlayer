@@ -163,6 +163,11 @@ class ExoPlayerPlugin(
                     "buffered" to (if (buf > 0) buf else 0),
                 ))
             }
+            "getDiagnostics" -> {
+                // 纯净播放诊断：mime/分辨率/实际解码器名/掉帧计数/硬解候选。
+                val playerId = call.argument<String>("playerId") ?: ""
+                result.success(getPlayer(playerId)?.getDiagnostics() ?: mapOf<String, Any?>())
+            }
             "getPosition" -> {
                 val playerId = call.argument<String>("playerId") ?: ""
                 val pos = getPlayer(playerId)?.exoPlayer?.currentPosition?.toInt() ?: 0
@@ -506,6 +511,80 @@ class ExoPlayerPlugin(
                 "width" to size.width,
                 "height" to size.height
             )
+        }
+
+        /// 纯净播放诊断（不改变播放架构）：
+        /// 返回 mime/分辨率/帧率/实际解码器名/掉帧计数/硬解候选。
+        /// 实际解码器名与掉帧计数 Media3 无公开 API，用反射读取
+        /// ExoPlayerImpl.renderers → MediaCodecRenderer 的 decoderName /
+        /// decoderCounters（Flutter release 未开启混淆，字段名保留）；
+        /// 任何反射失败静默降级，不影响播放。
+        @OptIn(UnstableApi::class)
+        fun getDiagnostics(): Map<String, Any?> {
+            val out = mutableMapOf<String, Any?>()
+            val fmt = exoPlayer.videoFormat
+            val size = exoPlayer.videoSize
+            out["mime"] = fmt?.sampleMimeType
+            out["codecs"] = fmt?.codecs
+            out["width"] = size.width
+            out["height"] = size.height
+            out["frameRate"] = fmt?.frameRate ?: 0
+            try {
+                val impl = exoPlayer as? androidx.media3.exoplayer.ExoPlayerImpl
+                if (impl != null) {
+                    val renderersField =
+                        androidx.media3.exoplayer.ExoPlayerImpl::class.java
+                            .getDeclaredField("renderers")
+                    renderersField.isAccessible = true
+                    val renderers = renderersField.get(impl) as Array<*>
+                    for (r in renderers) {
+                        if (r == null) continue
+                        val renderer = r as? androidx.media3.exoplayer.Renderer ?: continue
+                        if (renderer.trackType != C.TRACK_TYPE_VIDEO) continue
+                        // decoderName（MediaCodecRenderer 私有字段，反射向上找父类）
+                        var cls: Class<*>? = r.javaClass
+                        while (cls != null) {
+                            try {
+                                val df = cls.getDeclaredField("decoderName")
+                                df.isAccessible = true
+                                out["decoderName"] = df.get(r)?.toString()
+                                break
+                            } catch (_: NoSuchFieldException) {
+                                cls = cls.superclass
+                            }
+                        }
+                        // DecoderCounters（MediaCodecRenderer 私有字段）
+                        var dcClass: Class<*>? = r.javaClass
+                        while (dcClass != null) {
+                            try {
+                                val cf = dcClass.getDeclaredField("decoderCounters")
+                                cf.isAccessible = true
+                                val dc = cf.get(r) as
+                                    androidx.media3.exoplayer.DecoderCounters
+                                out["droppedFrames"] = dc.droppedOutputFrames
+                                out["renderedFrames"] = dc.renderedOutputFrames
+                                break
+                            } catch (_: NoSuchFieldException) {
+                                dcClass = dcClass.superclass
+                            }
+                        }
+                        break
+                    }
+                }
+            } catch (_: Exception) {
+                // 反射失败不影响播放，诊断字段缺失即可。
+            }
+            // 硬解候选（MediaCodec 层为该编码枚举出的解码器）
+            try {
+                val mime = fmt?.sampleMimeType
+                if (!mime.isNullOrEmpty()) {
+                    val infos = androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT
+                        .getDecoderInfos(mime, false, false)
+                    out["decoderCandidates"] = infos.joinToString(", ") { it.name }
+                }
+            } catch (_: Exception) {
+            }
+            return out
         }
 
         fun selectTrack(groupIndex: Int, trackIndex: Int, trackType: Int) {

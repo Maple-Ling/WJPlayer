@@ -59,13 +59,17 @@ class UnifiedMediaEntry {
         productionYear: year,
       );
 
-  UnifiedMediaEntry copyWith({int? indexNumber}) => UnifiedMediaEntry(
+  UnifiedMediaEntry copyWith({
+    int? indexNumber,
+    Map<String, String>? imageHeaders,
+  }) =>
+      UnifiedMediaEntry(
         id: id,
         name: name,
         type: type,
         posterUrl: posterUrl,
         backdropUrl: backdropUrl,
-        imageHeaders: imageHeaders,
+        imageHeaders: imageHeaders ?? this.imageHeaders,
         year: year,
         rating: rating,
         overview: overview,
@@ -159,6 +163,17 @@ abstract class UnifiedMediaAdapter {
   Future<UnifiedMediaDetail> detail(UnifiedMediaEntry entry);
   Future<List<UnifiedMediaEntry>> episodes(String seriesId, String seasonId);
   Future<List<UnifiedMediaResource>> mediaResources(UnifiedMediaEntry entry);
+
+  /// 从首页缓存恢复的 entry 补回实时图片鉴权头。
+  ///
+  /// 首页 preview/继续观看走 24h 本地缓存，缓存 JSON 只存展示字段、
+  /// 不存 imageHeaders（飞牛图片鉴权头含时效签名 Authx，不能进缓存）。
+  /// 飞牛图片 `/sys/img` 必须带 Authorization+Cookie+Authx 才能加载，
+  /// 缓存恢复后无头会 403 显示红色占位图；查看全部实时请求带全头所以正常。
+  /// Emby 图片 URL 自带鉴权（无需 header），默认原样返回。
+  Future<List<UnifiedMediaEntry>> refreshImageHeaders(
+          List<UnifiedMediaEntry> entries) async =>
+      entries;
 }
 
 UnifiedMediaAdapter unifiedMediaAdapterFor(
@@ -198,10 +213,19 @@ class EmbyUnifiedMediaAdapter implements UnifiedMediaAdapter {
       }).toList();
 
   @override
-  Future<List<UnifiedMediaEntry>> preview(String libraryId) async =>
-      (await api.home.getLatestItems(libraryId, limit: 12))
-          .map(_entry)
-          .toList();
+  Future<List<UnifiedMediaEntry>> preview(String libraryId) async {
+    // 与「查看全部」同源（/Users/{uid}/Items），不用 /Items/Latest：
+    // 部分服务器（魔改/第三方 Emby 兼容端）Latest 端点不兼容或返回空，
+    // 而 Items 端点稳定。按最近添加倒序取 12 条，与 Latest 语义一致。
+    return (await api.library.getLibraryItems(
+      libraryId: libraryId,
+      limit: 12,
+      sortBy: 'DateCreated',
+      sortOrder: 'Descending',
+    ))
+        .map(_entry)
+        .toList();
+  }
 
   @override
   Future<List<UnifiedMediaEntry>> libraryItems(String libraryId) async =>
@@ -444,6 +468,18 @@ class FeiniuUnifiedMediaAdapter implements UnifiedMediaAdapter {
   @override
   Future<List<UnifiedMediaEntry>> libraryItems(String libraryId) async =>
       (await backend.libraryItems(server, libraryId)).map(_entry).toList();
+
+  @override
+  Future<List<UnifiedMediaEntry>> refreshImageHeaders(
+      List<UnifiedMediaEntry> entries) async {
+    if (entries.isEmpty) return entries;
+    // 飞牛图片鉴权头是时效签名（Authx 含毫秒时间戳），每次加载实时重取，
+    // 不能从缓存恢复（缓存 JSON 不含 headers，恢复后 403 红图）。
+    final headers = await backend.imageHeaders(server);
+    return entries
+        .map((e) => e.copyWith(imageHeaders: headers))
+        .toList();
+  }
 
   @override
   Future<UnifiedMediaDetail> detail(UnifiedMediaEntry entry) async {

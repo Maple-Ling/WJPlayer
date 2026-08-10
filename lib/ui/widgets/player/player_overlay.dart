@@ -811,6 +811,7 @@ class PlayerOverlayState extends State<PlayerOverlay> {
   }
 
   Rect? _anchorRect(BuildContext context, Size size) {
+    final s = PlayerUiScale.of(context);
     final mediaPadding = MediaQuery.of(context).padding;
     final menu = _anchorMenu ?? activeMenu;
     if (menu == null) return null;
@@ -829,10 +830,11 @@ class PlayerOverlayState extends State<PlayerOverlay> {
     if (topIndex >= 0) {
       final rightIndex = topActions.length - topIndex - 1;
       final center = Offset(
-        size.width - 14 - ((rightIndex + 0.5) * 40),
-        mediaPadding.top + 8 + 14 + 8 + 19,
+        size.width - 14 * s - ((rightIndex + 0.5) * 40 * s),
+        mediaPadding.top + (8 + 14 + 8 + 19) * s,
       );
-      return Rect.fromCenter(center: center, width: 36, height: 36);
+      return Rect.fromCenter(
+          center: center, width: 36 * s, height: 36 * s);
     }
 
     const bottomActions = <PopupMenuId>[
@@ -847,10 +849,11 @@ class PlayerOverlayState extends State<PlayerOverlay> {
     if (bottomIndex >= 0) {
       final rightIndex = bottomActions.length - bottomIndex - 1;
       final center = Offset(
-        size.width - 14 - ((rightIndex + 0.5) * 46),
-        size.height - mediaPadding.bottom - 14 - 22,
+        size.width - 14 * s - ((rightIndex + 0.5) * 46 * s),
+        size.height - mediaPadding.bottom - (14 + 22) * s,
       );
-      return Rect.fromCenter(center: center, width: 44, height: 44);
+      return Rect.fromCenter(
+          center: center, width: 44 * s, height: 44 * s);
     }
     return null;
   }
@@ -882,6 +885,7 @@ class PlayerOverlayState extends State<PlayerOverlay> {
   }
 
   Widget _buildToast(Size size) {
+    final s = PlayerUiScale.of(context);
     return Positioned(
       left: 0,
       right: 0,
@@ -889,14 +893,15 @@ class PlayerOverlayState extends State<PlayerOverlay> {
       child: IgnorePointer(
         child: Center(
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+            padding: EdgeInsets.symmetric(
+                horizontal: 18 * s, vertical: 8 * s),
             decoration: BoxDecoration(
               color: Colors.black.withOpacity(0.85),
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(20 * s),
             ),
             child: Text(
               _toastMessage!,
-              style: const TextStyle(color: Colors.white, fontSize: 13),
+              style: TextStyle(color: Colors.white, fontSize: 13 * s),
             ),
           ),
         ),
@@ -909,6 +914,7 @@ class PlayerOverlayState extends State<PlayerOverlay> {
   /// 目标绝对时间水平居中、紧贴进度条上方（向上偏移约两字符高度），
   /// 由本组件统一渲染，保证 UI 隐藏时仍强制可见；不再存在屏幕中央提示。
   Widget _buildScrubbingProgress(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     final dragProgress = _currentProgress();
     final duration = widget.duration;
     final mediaPadding = MediaQuery.of(context).padding;
@@ -916,52 +922,52 @@ class PlayerOverlayState extends State<PlayerOverlay> {
     return Positioned(
       left: 0,
       right: 0,
-      bottom: mediaPadding.bottom + 18,
+      bottom: mediaPadding.bottom + 18 * s,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           // 目标绝对时间：进度条上方水平居中（跟随拖动预览值）。
           Text(
             _formatDuration(preview),
-            style: const TextStyle(
+            style: TextStyle(
               color: Colors.white,
-              fontSize: 16,
+              fontSize: 16 * s,
               fontWeight: FontWeight.w600,
               shadows: [Shadow(color: Colors.black87, blurRadius: 4)],
             ),
           ),
-          const SizedBox(height: 12),
+          SizedBox(height: 12 * s),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 40),
+            padding: EdgeInsets.symmetric(horizontal: 40 * s),
             child: Row(
               children: [
                 Text(
                   _formatDuration(preview),
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white70,
-                    fontSize: 11,
+                    fontSize: 11 * s,
                     shadows: [Shadow(color: Colors.black87, blurRadius: 3)],
                   ),
                 ),
-                const SizedBox(width: 10),
+                SizedBox(width: 10 * s),
                 Expanded(
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(2),
+                    borderRadius: BorderRadius.circular(2 * s),
                     child: LinearProgressIndicator(
                       value: dragProgress,
                       backgroundColor: Colors.white24,
                       valueColor:
                           const AlwaysStoppedAnimation(Color(0xFF5B8DEF)),
-                      minHeight: 4,
+                      minHeight: 4 * s,
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
+                SizedBox(width: 10 * s),
                 Text(
                   _formatDuration(duration),
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white70,
-                    fontSize: 11,
+                    fontSize: 11 * s,
                     shadows: [Shadow(color: Colors.black87, blurRadius: 3)],
                   ),
                 ),
@@ -982,6 +988,7 @@ class PlayerOverlayState extends State<PlayerOverlay> {
 
   /// 缓冲/卡顿时的网速 + 转圈。
   Widget _buildBufferingSpeed(BuildContext context) {
+    final s = PlayerUiScale.of(context);
     final rx = widget.rxSpeed;
     final tx = 0.0; // todo
     return Align(
@@ -992,10 +999,10 @@ class PlayerOverlayState extends State<PlayerOverlay> {
           const CircularProgressIndicator(
             valueColor: AlwaysStoppedAnimation(Colors.white),
           ),
-          const SizedBox(height: 12),
+          SizedBox(height: 12 * s),
           Text(
             '加载中 ${_formatSpeed(rx)}',
-            style: const TextStyle(color: Colors.white, fontSize: 14),
+            style: TextStyle(color: Colors.white, fontSize: 14 * s),
           ),
         ],
       ),
@@ -1026,8 +1033,12 @@ class PlayerOverlayState extends State<PlayerOverlay> {
             : MediaQuery.sizeOf(context).height;
         final size = Size(width, height);
         final info = SystemInfoService.instance;
+        // 平板/大屏自适应：控制栏整体按比例放大（TV 恒 1.0）。
+        final uiScale = playerUiScaleOf(size, isTv: isTvPlatform);
 
-        return Stack(
+        return PlayerUiScale(
+          scale: uiScale,
+          child: Stack(
           fit: StackFit.expand,
           children: [
             // 注意：这里不再放置全屏透传 GestureDetector。
@@ -1190,7 +1201,7 @@ class PlayerOverlayState extends State<PlayerOverlay> {
               if (widget.isLocked)
                 Positioned(
                   left: width * 0.08,
-                  top: (height - 48) / 2,
+                  top: (height - 48 * uiScale) / 2,
                   child: Material(
                     color: Colors.black.withValues(alpha: 0.35),
                     shape: const CircleBorder(),
@@ -1322,6 +1333,7 @@ class PlayerOverlayState extends State<PlayerOverlay> {
               // 卡顿缓冲时，中央显示网速 + 转圈。
               if (widget.isBuffering && !isUiVisible) _buildBufferingSpeed(context),
             ],
+          ),
         );
       },
     );

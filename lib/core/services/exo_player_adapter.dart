@@ -505,6 +505,21 @@ class ExoPlayerAdapter implements PlayerAdapter {
     } catch (_) {}
   }
 
+  /// 纯净播放诊断：mime/分辨率/实际解码器名/掉帧计数/硬解候选。
+  /// 供诊断页显示（不参与播放逻辑）。
+  Future<Map<String, dynamic>> getDiagnostics() async {
+    if (_playerId == null) return const {};
+    try {
+      final r = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'getDiagnostics',
+        {'playerId': _playerId},
+      );
+      return Map<String, dynamic>.from(r ?? const {});
+    } catch (_) {
+      return const {};
+    }
+  }
+
   @override
   Future<void> play() async {
     if (_playerId == null) return;

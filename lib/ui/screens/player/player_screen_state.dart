@@ -36,6 +36,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   bool _sourceProgressWriteInFlight = false;
   int _lastSourceProgressSecond = -1;
   bool _sourceCompletionReported = false;
+  // 播放完毕自动连播下一集的防重标志（重新起播/seek 后复位）。
+  bool _autoNextHandled = false;
   String? _sourceCoreOverride;
   // ExoPlayer 解码器初始化失败（DTS 等硬件不支持）时自动切 MPV 重试，只切一次。
   bool _autoCoreFallbackTried = false;
@@ -1874,6 +1876,44 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         !_sourceCompletionReported) {
       _sourceCompletionReported = true;
       unawaited(_reportSourceProgress(sp, force: true));
+    }
+    // 播放完毕自动连播下一集：isCompleted 置位后触发一次（防重复），
+    // 重新起播/seek 后自动复位（!isCompleted 分支）。
+    if (_playerService.isCompleted) {
+      if (!_autoNextHandled) {
+        _autoNextHandled = true;
+        unawaited(_autoPlayNextIfEnabled());
+      }
+    } else {
+      _autoNextHandled = false;
+    }
+  }
+
+  /// 自动连播：设置开启且有下一集时切换；电影/最后一集静默（不打扰）。
+  Future<void> _autoPlayNextIfEnabled() async {
+    if (!ref.read(autoPlayNextProvider)) return;
+    final sourcePlay = _activeSourcePlay;
+    if (sourcePlay != null && sourcePlay.playlist.isNotEmpty) {
+      final index = sourcePlay.playlistIndex;
+      if (index >= 0 && index < sourcePlay.playlist.length - 1) {
+        await _switchSourceEpisode(sourcePlay.playlist[index + 1]);
+      }
+      return;
+    }
+    final currentItem = ref.read(currentPlayingItemProvider);
+    if (currentItem?.seriesId == null) return; // 电影等单集：不自动切
+    try {
+      final episodes = await ref.read(apiClientProvider).media.getEpisodes(
+            currentItem!.seriesId!,
+            seasonId: currentItem.seasonId,
+          );
+      final currentIndex = episodes.indexWhere((e) => e.id == currentItem.id);
+      if (currentIndex >= 0 && currentIndex < episodes.length - 1) {
+        final nextEpisode = episodes[currentIndex + 1];
+        if (mounted) context.replace('/player/${nextEpisode.id}');
+      }
+    } catch (_) {
+      // 拉取剧集列表失败：静默放弃自动连播（不打断观看）。
     }
   }
 

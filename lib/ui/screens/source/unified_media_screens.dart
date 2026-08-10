@@ -239,6 +239,17 @@ class _UnifiedMediaHomeScreenState
         forceRefresh: forceRefresh,
       );
       if (!mounted || server.id != _serverId) return;
+      // 飞牛：缓存恢复丢图片鉴权头（时效签名不能进缓存），实时补回，
+      // 否则继续观看缩略图 403 红图。
+      final continueEntries = await adapter
+          .refreshImageHeaders(continueItems.map((e) => e.entry).toList());
+      final finalContinueItems = [
+        for (var i = 0; i < continueItems.length; i++)
+          UnifiedContinueItem(
+            entry: continueEntries[i],
+            progress: continueItems[i].progress,
+          ),
+      ];
       final hiddenLibraries = ref.read(hiddenLibrariesProvider);
       final visibleLibraries = libraries
           .where((library) => !hiddenLibraries.contains(library.id))
@@ -259,7 +270,10 @@ class _UnifiedMediaHomeScreenState
               // 24h 缓存：新入库媒体不显示、刷新无效）。
               forceRefresh: forceRefresh,
             );
-            return (library.id, items);
+            // 飞牛：缓存恢复丢图片鉴权头（时效签名不能进缓存），
+            // 实时补回，否则分类栏缩略图 403 红图。
+            final live = await adapter.refreshImageHeaders(items);
+            return (library.id, live);
           } catch (_) {
             return (library.id, <UnifiedMediaEntry>[]);
           }
@@ -268,7 +282,7 @@ class _UnifiedMediaHomeScreenState
       if (!mounted || server.id != _serverId) return;
       setState(() {
         _libraries = visibleLibraries;
-        _continueItems = continueItems;
+        _continueItems = finalContinueItems;
         for (final result in previewResults) {
           _previews[result.$1] = result.$2;
         }
