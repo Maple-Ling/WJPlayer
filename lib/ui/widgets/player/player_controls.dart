@@ -33,13 +33,14 @@ class PlayerUiScale extends InheritedWidget {
 }
 
 /// 计算播放器 UI 缩放因子：按屏幕最短边（竖屏=宽，横屏=高）判断。
-/// 基准 360dp 为 1.0（小屏手机），超过后线性放大、封顶 1.8（平板/大屏）。
+/// 手机（最短边 ≤ 480dp，含 6.8" 大屏手机）恒 1.0 不缩放；
+/// 平板/大屏（最短边 > 480dp）线性放大、封顶 1.8。
 /// TV（isTvPlatform）始终 1.0——TV 控制栏已按遥控距离设计，无需放大。
 double playerUiScaleOf(Size screenSize, {required bool isTv}) {
   if (isTv) return 1.0;
   final shortest = screenSize.shortestSide;
-  if (shortest <= 360) return 1.0;
-  return (shortest / 360).clamp(1.0, 1.8);
+  if (shortest <= 480) return 1.0;
+  return (shortest / 480).clamp(1.0, 1.8);
 }
 
 /// 顶栏操作类型。
