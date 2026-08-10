@@ -73,8 +73,11 @@ class _SourcePickerScreenState extends State<SourcePickerScreen> {
                           final t = types[index];
                           return _SourceTypeCard(
                             descriptor: t,
-                            focusNode: ctx.getFocusNode(
-                                'source_picker', index),
+                            // 手机端 TvFocusArea 不注册焦点区域，无条件
+                            // getFocusNode 会抛 StateError → 整页灰屏。
+                            focusNode: isTvPlatform
+                                ? ctx.getFocusNode('source_picker', index)
+                                : null,
                             onTap: () => _select(t.kind),
                           )
                               .animate()
