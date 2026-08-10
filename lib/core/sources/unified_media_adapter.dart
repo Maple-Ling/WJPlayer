@@ -239,6 +239,11 @@ class EmbyUnifiedMediaAdapter implements UnifiedMediaAdapter {
           .toList();
 
   @override
+  Future<List<UnifiedMediaEntry>> refreshImageHeaders(
+          List<UnifiedMediaEntry> entries) async =>
+      entries; // Emby 图片 URL 自带鉴权（无需 header），原样返回。
+
+  @override
   Future<UnifiedMediaDetail> detail(UnifiedMediaEntry entry) async {
     final item = await api.media.getItemDetails(entry.id);
     final seriesId = item.type == 'Series' ? item.id : item.seriesId;
