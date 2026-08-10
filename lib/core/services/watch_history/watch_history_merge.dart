@@ -29,6 +29,31 @@ String watchHistoryMergeGroupKey(WatchHistoryRecord record) {
   return 'series:key:${record.canonicalKey}';
 }
 
+/// 由指纹构造合并分组 key（与记录版 [watchHistoryMergeGroupKey] 同构）。
+/// 无法构造时返回 null（调用方应回退模糊匹配）。
+String? watchHistoryMergeGroupKeyFromFingerprint(
+  WatchHistoryFingerprint fingerprint,
+) {
+  if (fingerprint.mediaKind == WatchHistoryMediaKind.movie) {
+    final tmdb = fingerprint.tmdbId?.trim();
+    if (tmdb != null && tmdb.isNotEmpty) {
+      return 'movie:tmdb:$tmdb';
+    }
+    if (fingerprint.normalizedTitle.isNotEmpty) {
+      return 'movie:title:${fingerprint.normalizedTitle}:${fingerprint.year ?? 'unknown'}';
+    }
+    return null;
+  }
+  final seriesTmdb = fingerprint.seriesTmdbId?.trim();
+  if (seriesTmdb != null && seriesTmdb.isNotEmpty) {
+    return 'series:tmdb:$seriesTmdb';
+  }
+  if (fingerprint.normalizedSeriesTitle.isNotEmpty) {
+    return 'series:title:${fingerprint.normalizedSeriesTitle}';
+  }
+  return null;
+}
+
 /// 合并同一媒体多条播放记录：每组取 [WatchHistoryRecord.lastPlayedAt] 最新者
 /// 为代表（最新播放记录 + 最新播放服务器），返回按最近播放时间倒序的列表。
 List<WatchHistoryRecord> mergeWatchHistoryRecords(

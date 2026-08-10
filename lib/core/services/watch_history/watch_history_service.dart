@@ -79,35 +79,24 @@ class WatchHistoryService {
       return normalizedRemotePosition;
     }
 
-    final records = await _store.loadScope(scopeKey);
-    final existing = _findExistingRecord(records, fingerprint, item.id);
+    // 同一媒体（同电影 / 同系列，跨服务器、跨分集）全局只保留一条记录，
+    // 直接全量匹配取「最近一次播放」记录即可，无需区分本服/跨服。
+    final all = await _store.loadAll();
+    final groupRecords = _findGroupRecords(
+      fingerprint: fingerprint,
+      item: item,
+      all: all,
+    );
 
-    // 本服已标记看完时不续播（包括跨服务器场景，避免覆盖用户在此服的“已看完”）。
-    if (existing != null && existing.played) {
-      return normalizedRemotePosition;
-    }
-
-    // 候选进度：远端进度 + 本地记录进度。本地记录（本服 + 可选其它服务器）统一
-    // 按「最近一次播放」取——用户切换到其它服务器重新观看时，旧服务器更远的
-    // 进度**不应**覆盖新进度（原实现跨服务器取最大进度导致永远续到旧服务器）。
-    var best = normalizedRemotePosition;
-    WatchHistoryRecord? latest =
-        (existing != null && !existing.played && existing.lastPositionTicks > 0)
-            ? existing
-            : null;
-
-    if (crossServer) {
-      final cross = await _resolveLatestCrossServerRecord(
-        api: api,
-        item: item,
-        currentScopeKey: scopeKey,
-      );
-      if (cross != null &&
-          (latest == null || cross.lastPlayedAt.isAfter(latest.lastPlayedAt))) {
-        latest = cross;
+    WatchHistoryRecord? latest;
+    for (final record in groupRecords) {
+      if (record.played || record.lastPositionTicks <= 0) continue;
+      if (latest == null || record.lastPlayedAt.isAfter(latest.lastPlayedAt)) {
+        latest = record;
       }
     }
 
+    var best = normalizedRemotePosition;
     if (latest != null) {
       best = _maxPositionTicks(
         best,
@@ -121,47 +110,75 @@ class WatchHistoryService {
     return best;
   }
 
-  /// 扫描其它服务器（scope）下的观看记录，找出与当前条目匹配的
-  /// **最近一次播放**（lastPlayedAt 最新）的记录，用于续播。
-  ///
-  /// 复用 [matchWatchHistoryRecordToCandidate]：因为 canonicalKey/指纹与服务器无关
-  /// （基于 TMDB / PresentationUniqueKey / 剧名+季集号等），同一部影片或同一集在
-  /// 不同服务器之间也能匹配上。仅采用 strong / possible 级别，避免误续播。
-  Future<WatchHistoryRecord?> _resolveLatestCrossServerRecord({
-    required ApiClientFactory api,
+  /// 找出与当前条目同属一个媒体（同一部电影 / 同一系列剧集）的全部记录，
+  /// 按三层匹配递进：
+  /// 1. 合并分组 key 精确匹配（TMDB / 标题归一化，跨服务器、跨分集）；
+  /// 2. [matchWatchHistoryRecordToCandidate] 模糊匹配（strong/possible，
+  ///    覆盖标题归一化差异的跨源场景）；
+  /// 3. 标题主干互含兜底（飞牛等文件浏览型源的标题常带 SxxExx/分辨率后缀，
+  ///    与 Emby 干净标题不一致时的最后手段）。
+  List<WatchHistoryRecord> _findGroupRecords({
+    required WatchHistoryFingerprint fingerprint,
     required MediaItem item,
-    required String currentScopeKey,
-  }) async {
-    final all = await _store.loadAll();
-    if (all.isEmpty) {
-      return null;
+    required List<WatchHistoryRecord> all,
+  }) {
+    final groupKey = watchHistoryMergeGroupKeyFromFingerprint(fingerprint);
+    if (groupKey != null) {
+      final exact = all
+          .where((record) => watchHistoryMergeGroupKey(record) == groupKey)
+          .toList();
+      if (exact.isNotEmpty) {
+        return exact;
+      }
     }
-    final seriesTmdbId = await resolveSeriesTmdbId(api, item);
 
-    WatchHistoryRecord? best;
+    final matched = <WatchHistoryRecord>[];
     for (final record in all) {
-      // 本服记录已在上层处理。
-      if (record.scopeKey == currentScopeKey) {
-        continue;
-      }
-      if (record.played || record.lastPositionTicks <= 0) {
-        continue;
-      }
       final match = matchWatchHistoryRecordToCandidate(
         record: record,
         candidate: item,
-        candidateSeriesTmdbId: seriesTmdbId,
+        candidateSeriesTmdbId: fingerprint.seriesTmdbId,
         uniqueCandidate: true,
       );
-      if (match.confidence != WatchHistoryMatchConfidence.strong &&
-          match.confidence != WatchHistoryMatchConfidence.possible) {
-        continue;
-      }
-      if (best == null || record.lastPlayedAt.isAfter(best.lastPlayedAt)) {
-        best = record;
+      if (match.confidence == WatchHistoryMatchConfidence.strong ||
+          match.confidence == WatchHistoryMatchConfidence.possible) {
+        matched.add(record);
       }
     }
-    return best;
+    if (matched.isNotEmpty) {
+      return matched;
+    }
+
+    return all
+        .where((record) => _titleStemOverlap(record, fingerprint))
+        .toList();
+  }
+
+  /// 标题主干互含：去除 SxxExx / 第x集 / 分辨率等后缀后互含判定。
+  bool _titleStemOverlap(
+    WatchHistoryRecord record,
+    WatchHistoryFingerprint fingerprint,
+  ) {
+    String stem(String source) {
+      return normalizeWatchHistoryText(source
+          .replaceAll(RegExp(r'[Ss]\d{1,2}[Ee]\d{1,3}'), ' ')
+          .replaceAll(RegExp(r'第\s*\d+\s*[集话]'), ' ')
+          .replaceAll(RegExp(r'[第]\d+[季]'), ' '));
+    }
+
+    if (fingerprint.mediaKind == WatchHistoryMediaKind.movie) {
+      final a = stem(fingerprint.normalizedTitle);
+      final b = stem(record.title);
+      return a.isNotEmpty &&
+          b.isNotEmpty &&
+          (a.contains(b) || b.contains(a));
+    }
+    final a = stem(fingerprint.normalizedSeriesTitle);
+    final bRaw = stem(record.seriesTitle ?? '');
+    final b = bRaw.isNotEmpty ? bRaw : stem(record.title);
+    return a.isNotEmpty &&
+        b.isNotEmpty &&
+        (a.contains(b) || b.contains(a));
   }
 
   int? _maxPositionTicks(int? left, int? right) {
@@ -231,8 +248,18 @@ class WatchHistoryService {
       }
     }
 
-    final records = await _store.loadScope(scopeKey);
-    final existing = _findExistingRecord(records, fingerprint, item.id);
+    // 同一媒体（同电影/同系列，跨服务器、跨分集）全局只保留一条记录：
+    // 覆盖写入时删除同组全部旧记录，新记录以「最后播放的服务器」为 scopeKey。
+    final all = await _store.loadAll();
+    final groupRecords = _findGroupRecords(
+      fingerprint: fingerprint,
+      item: item,
+      all: all,
+    );
+    groupRecords.sort(
+      (left, right) => right.lastPlayedAt.compareTo(left.lastPlayedAt),
+    );
+    final existing = groupRecords.isEmpty ? null : groupRecords.first;
     final recordId = buildWatchHistoryRecordId(
       scopeKey: scopeKey,
       mediaKind: fingerprint.mediaKind,
@@ -252,8 +279,20 @@ class WatchHistoryService {
       runTimeTicks: item.runTimeTicks,
       watchedThresholdPercent: watchedThresholdPercent,
     );
-    final nextPlayCount = (existing?.playCount ?? 0) +
+    // 合并覆盖：累计观看次数取组内历史最大，首次观看时间取组内最早。
+    final historyPlayCount = groupRecords.fold<int>(
+      0,
+      (acc, record) => record.playCount > acc ? record.playCount : acc,
+    );
+    final nextPlayCount = historyPlayCount +
         (incrementPlayCount || existing == null ? 1 : 0);
+    DateTime? firstPlayed;
+    for (final record in groupRecords) {
+      final candidate = record.effectiveFirstPlayedAt;
+      if (firstPlayed == null || candidate.isBefore(firstPlayed)) {
+        firstPlayed = candidate;
+      }
+    }
 
     final record = WatchHistoryRecord(
       recordId: recordId,
@@ -275,7 +314,7 @@ class WatchHistoryService {
       played: played,
       playCount: nextPlayCount,
       lastPlayedAt: now,
-      firstPlayedAt: existing?.firstPlayedAt ?? existing?.lastPlayedAt ?? now,
+      firstPlayedAt: firstPlayed ?? now,
       lastEmbyItemId: item.id,
       matchConfidence:
           existing?.matchConfidence ?? WatchHistoryMatchConfidence.none,
@@ -289,24 +328,17 @@ class WatchHistoryService {
       seriesEntryId: item.seriesId ?? existing?.seriesEntryId,
     );
 
-    final replacedIds = <String>[
-      if (existing != null && existing.recordId != record.recordId)
-        existing.recordId,
-      if (fingerprint.mediaKind == WatchHistoryMediaKind.episode)
-        for (final old in records)
-          if (old.recordId != record.recordId &&
-              old.mediaKind == WatchHistoryMediaKind.episode &&
-              ((fingerprint.seriesTmdbId?.isNotEmpty == true &&
-                      old.seriesTmdbId == fingerprint.seriesTmdbId) ||
-                  (fingerprint.normalizedSeriesTitle.isNotEmpty &&
-                      normalizeWatchHistoryText(old.seriesTitle ?? '') ==
-                          fingerprint.normalizedSeriesTitle)))
-            old.recordId,
-    ];
+    // 同组旧记录（跨服务器、跨分集）全部替换为最新一条。
+    final replacedIds = groupRecords
+        .where((old) => old.recordId != record.recordId)
+        .map((old) => old.recordId)
+        .toList(growable: false);
     await _store.saveRecord(record, replaceRecordIds: replacedIds);
     _lastProgressWriteAt[recordId] = now;
-    if (existing != null && existing.recordId != recordId) {
-      _lastProgressWriteAt.remove(existing.recordId);
+    for (final old in groupRecords) {
+      if (old.recordId != recordId) {
+        _lastProgressWriteAt.remove(old.recordId);
+      }
     }
     return record;
   }
@@ -340,47 +372,5 @@ class WatchHistoryService {
       return positionTicks;
     }
     return positionTicks.clamp(0, runtimeTicks);
-  }
-
-  WatchHistoryRecord? _findExistingRecord(
-    List<WatchHistoryRecord> records,
-    WatchHistoryFingerprint fingerprint,
-    String itemId,
-  ) {
-    if (fingerprint.mediaKind == WatchHistoryMediaKind.episode) {
-      final seriesKey = fingerprint.seriesTmdbId?.trim();
-      final seriesTitle = fingerprint.normalizedSeriesTitle;
-      for (final record in records) {
-        if (record.mediaKind != WatchHistoryMediaKind.episode) continue;
-        if (seriesKey?.isNotEmpty == true && record.seriesTmdbId == seriesKey) {
-          return record;
-        }
-        if (seriesTitle.isNotEmpty &&
-            normalizeWatchHistoryText(record.seriesTitle ?? '') == seriesTitle) {
-          return record;
-        }
-      }
-    }
-    for (final record in records) {
-      if (record.canonicalKey == fingerprint.canonicalKey) {
-        return record;
-      }
-    }
-    for (final record in records) {
-      if (record.lastEmbyItemId == itemId) {
-        return record;
-      }
-    }
-    final candidatePuk = fingerprint.normalizedPresentationUniqueKey;
-    if (candidatePuk != null && candidatePuk.isNotEmpty) {
-      for (final record in records) {
-        final recordPuk =
-            normalizePresentationUniqueKey(record.presentationUniqueKey);
-        if (recordPuk == candidatePuk) {
-          return record;
-        }
-      }
-    }
-    return null;
   }
 }

@@ -774,10 +774,10 @@ class _UnifiedMediaDetailScreenState
   }
 
   Future<void> _loadPlaybackHistory() async {
-    final scopeKey = buildWatchHistoryScopeKey(widget.server);
-    if (scopeKey == null) return;
     try {
-      _scopeRecords = await ref.read(watchHistoryProvider).loadScope(scopeKey);
+      // 记录全局唯一（跨服务器合并），用全量匹配而非本服 loadScope，
+      // 保证从任意服务器进入详情页都能恢复上次观看内核。
+      _scopeRecords = await ref.read(watchHistoryProvider).loadAll();
       final matching = _scopeRecords.where((record) =>
           record.sourceEntryId == widget.entry.id ||
           record.lastEmbyItemId == widget.entry.id);
@@ -816,9 +816,10 @@ class _UnifiedMediaDetailScreenState
       // 外部详情（TMDB/豆瓣演员、剧照、推荐等）与季/集加载并行，
       // 避免外部接口慢时详情页长时间停在 loading（进入卡顿感）。
       unawaited(_loadExternalDetail(detail.entry));
-      final scopeKey = buildWatchHistoryScopeKey(widget.server);
-      if (scopeKey != null) {
-        _scopeRecords = await ref.read(watchHistoryProvider).loadScope(scopeKey);
+      // 记录全局唯一（跨服务器合并），用全量匹配而非本服 loadScope，
+      // 保证从任意服务器进入详情页都能恢复上次观看内核。
+      _scopeRecords = await ref.read(watchHistoryProvider).loadAll();
+      {
         final matching = _scopeRecords.where((record) =>
             record.sourceEntryId == widget.entry.id ||
             record.lastEmbyItemId == widget.entry.id);
